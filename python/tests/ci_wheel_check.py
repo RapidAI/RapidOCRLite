@@ -52,23 +52,38 @@ engine = RapidOCR(params={
     "Rec.model_type": "tiny",
     "Global.use_cls": False,
 })
-expected = json.loads((DATA / "expected_cpu_texts.json").read_text(encoding="utf-8"))
-for name, texts in expected.items():
-    result = engine(str(DATA / name))
-    got = list(result.txts or ())
-    times = []
-    for _ in range(3):
-        t0 = time.perf_counter()
-        engine(str(DATA / name))
-        times.append((time.perf_counter() - t0) * 1000)
-    times.sort()
-    print(f"timing {name} isa={isa} median_ms={times[1]:.1f} lines={len(got)}", flush=True)
-    if got != texts:
-        for i, (a, b) in enumerate(zip(got, texts)):
-            if a != b:
-                print("diff", i, repr(a), "!=", repr(b))
-        raise SystemExit(f"{name}: {len(got)} lines, expected {len(texts)}; text differs from the Linux CPU reference")
-    print("match", name, len(got))
+def check_reference(isa_name):
+    """Run the sample images in a child process under PPOCR_FORCE_ISA."""
+    code = (
+        "import json,os,sys,time\n"
+        "from rapidocr import RapidOCR, cpu_info\n"
+        "e=RapidOCR(params={'Det.model_path':os.environ['PPOCR_TEST_DET'],"
+        "'Rec.model_path':os.environ['PPOCR_TEST_REC'],'Rec.rec_keys_path':os.environ['PPOCR_TEST_DICT'],"
+        "'Det.model_type':'tiny','Rec.model_type':'tiny','Global.use_cls':False})\n"
+        "exp=json.load(open(sys.argv[1],encoding='utf-8'));bad=0\n"
+        "isa=cpu_info()['active_isa']\n"
+        "for n,t in exp.items():\n"
+        "    p=os.path.join(sys.argv[2],n);g=list(e(p).txts or ());ts=[]\n"
+        "    for _ in range(3):\n"
+        "        t0=time.perf_counter();e(p);ts.append((time.perf_counter()-t0)*1000)\n"
+        "    ts.sort();print(f'timing {n} isa={isa} median_ms={ts[1]:.1f} lines={len(g)}',flush=True)\n"
+        "    if g!=t:\n"
+        "        bad+=1;print('MISMATCH',n,len(g),len(t))\n"
+        "        [print('  diff',i,repr(x),'!=',repr(y)) for i,(x,y) in enumerate(zip(g,t)) if x!=y]\n"
+        "    else: print('match',n,len(g))\n"
+        "sys.exit(1 if bad else 0)\n"
+    )
+    env = dict(os.environ, PPOCR_FORCE_ISA=isa_name, PYTHONIOENCODING="utf-8")
+    print(f"== reference check, PPOCR_FORCE_ISA={isa_name}", flush=True)
+    return subprocess.call([sys.executable, "-c", code, str(DATA / "expected_cpu_texts.json"), str(DATA)], env=env)
+
+
+isas = ["avx512", "avx2"] if info["avx512"] else ["avx2"]
+if os.environ.get("PPOCR_CHECK_SCALAR"):
+    isas.append("scalar")
+failed = [name for name in isas if check_reference(name) != 0]
+if failed:
+    raise SystemExit(f"text differs from the Linux CPU reference under: {failed}")
 print("reference_texts_ok")
 
 env = dict(os.environ, PYTHONIOENCODING="utf-8")
