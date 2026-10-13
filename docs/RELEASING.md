@@ -32,8 +32,8 @@ source default when `glslangValidator` and `third_party/Vulkan-Headers` are
 present; `.github/workflows/vulkan-lavapipe.yml` runs that build on lavapipe.
 
 The wheel and sdist files are uploaded as the `rapidocr_ng-dist` artifact (files `rapidocr_ng-5.0.0a2-*.whl` and `rapidocr_ng-5.0.0a2.tar.gz`),
-with `SHA256SUMS`. PyPI publishing and the GitHub Release run only for a
-push of a `v5*` tag. They do not run for a branch push, a pull request, or a
+with `SHA256SUMS`. PyPI publishing runs only for a
+push of a `v5*` tag. It does not run for a branch push, a pull request, or a
 manual run from a branch.
 
 `5.0.0a2` is a pre-release, so install it with `pip install --pre rapidocr_ng`
@@ -53,10 +53,9 @@ requests `id-token: write` and uses the GitHub Environment named `pypi`.
 3. On GitHub, open Settings → Environments and create an environment named
    `pypi`. A required reviewer is optional. Do not put a PyPI password or
    API token in the repository.
-4. Settings → Actions → General → Workflow permissions must allow Actions
-   to request the `contents: write` permission, or the GitHub Release step
-   cannot attach files. The PyPI step only needs the `id-token` permission
-   that the publish job already sets.
+4. The publish job needs only the `id-token: write` permission it already
+   sets. The workflow does not create GitHub Releases: 5.x alphas are not
+   official RapidOCR versions. `SHA256SUMS` stays in the workflow artifact.
 5. The `ubuntu-24.04-arm` label has to be offered to this repository. Public
    repositories normally have it. If GitHub never assigns a runner, the
    QEMU job builds aarch64 instead.
@@ -71,7 +70,8 @@ git push origin v5.0.0a2
 ```
 
 That push runs the wheel build, then publishes `dist/*.whl` and the sdist to
-PyPI and opens a GitHub Release with those files and `SHA256SUMS`. Re-running
+PyPI. No GitHub Release is created; the files and `SHA256SUMS` remain in the
+`rapidocr_ng-dist` workflow artifact. Re-running
 a tag that is already on PyPI skips the existing file (`skip-existing`).
 
 ## PyPI credentials
