@@ -3398,10 +3398,38 @@ void SmallConvIm2colGemm(float* dst, const std::vector<const float*>& planes,
             valid[i] = iy >= 0 && iy < input_h && ix >= 0 && ix < input_w;
             offset[i] = valid[i] ? iy * input_w + ix : 0;
           }
+          // Runs of valid columns with a constant input step copy as
+          // (strided) blocks; same values as the per-element select.
+          static const bool runs = std::getenv("PPOCR_DISABLE_IM2COL_RUNS") == nullptr;
+          if (!runs) {
+            for (int c = 0; c < channels; ++c) {
+              const float* plane = planes[std::size_t(c)];
+              float* r = row + (std::size_t(c) * taps + ky * kernel_w + kx) * kStrip;
+              for (int i = 0; i < kStrip; ++i) r[i] = valid[i] ? plane[offset[i]] : 0.F;
+            }
+            continue;
+          }
+          int seg_i[kStrip], seg_n[kStrip], seg_off[kStrip], segs = 0;
+          bool any_invalid = false;
+          for (int i = 0; i < kStrip;) {
+            if (!valid[i]) { any_invalid = true; ++i; continue; }
+            int j = i + 1;
+            while (j < kStrip && valid[j] && offset[j] == offset[j - 1] + stride_w) ++j;
+            seg_i[segs] = i; seg_n[segs] = j - i; seg_off[segs] = offset[i]; ++segs;
+            i = j;
+          }
           for (int c = 0; c < channels; ++c) {
             const float* plane = planes[std::size_t(c)];
             float* r = row + (std::size_t(c) * taps + ky * kernel_w + kx) * kStrip;
-            for (int i = 0; i < kStrip; ++i) r[i] = valid[i] ? plane[offset[i]] : 0.F;
+            if (any_invalid) std::fill_n(r, kStrip, 0.F);
+            for (int g = 0; g < segs; ++g) {
+              float* d = r + seg_i[g];
+              const float* sp = plane + seg_off[g];
+              const int len = seg_n[g];
+              if (stride_w == 1) std::memcpy(d, sp, std::size_t(len) * sizeof(float));
+              else if (stride_w == 2) for (int t = 0; t < len; ++t) d[t] = sp[2 * t];
+              else for (int t = 0; t < len; ++t) d[t] = sp[t * stride_w];
+            }
           }
         }
       }
