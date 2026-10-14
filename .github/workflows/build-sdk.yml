@@ -175,8 +175,9 @@ jobs:
             PYBIN=/opt/python/cp312-cp312/bin
             test -x "$PYBIN/python"
             VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
-            yum install -y zip ninja-build
-            cmake -S . -B build -G Ninja \
+            yum install -y zip
+            # ninja-build is missing on some manylinux2014_aarch64 repos; Makefiles are fine.
+            cmake -S . -B build \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/io/prefix \
               -DPPOCR_BUILD_SHARED=ON \
@@ -234,8 +235,9 @@ jobs:
             PYBIN=/opt/python/cp312-cp312/bin
             test -x "$PYBIN/python"
             VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
-            yum install -y zip ninja-build
-            cmake -S . -B build -G Ninja \
+            yum install -y zip
+            # ninja-build is missing on some manylinux2014_aarch64 repos; Makefiles are fine.
+            cmake -S . -B build \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/io/prefix \
               -DPPOCR_BUILD_SHARED=ON \
@@ -297,8 +299,9 @@ jobs:
             PYBIN=/opt/python/cp312-cp312/bin
             test -x "$PYBIN/python"
             VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
-            yum install -y zip ninja-build
-            cmake -S . -B build -G Ninja \
+            yum install -y zip
+            # ninja-build is missing on some manylinux2014_aarch64 repos; Makefiles are fine.
+            cmake -S . -B build \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/io/prefix \
               -DPPOCR_BUILD_SHARED=ON \
