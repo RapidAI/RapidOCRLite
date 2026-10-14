@@ -235,7 +235,33 @@ class RapidOCR:
         if batch:
             options.rec_batch_size = int(batch)
         self._engine = _native.NativeOCR(det, rec, dictionary, options)
+        _log_active_backend(self._engine, int(options.backend))
         return self._engine
+
+
+_BACKEND_NAMES = {
+    _native.PPOCR_BACKEND_CPU: "cpu",
+    _native.PPOCR_BACKEND_GPU: "vulkan",
+    _native.PPOCR_BACKEND_HYBRID: "hybrid",
+    _native.PPOCR_BACKEND_METAL: "metal",
+}
+
+
+def _log_active_backend(engine: _native.NativeOCR, requested: int) -> None:
+    """Log the backend the engine really runs, never just the requested one."""
+    active = engine.active_backend()
+    if active is None:
+        return
+    name = _BACKEND_NAMES.get(active, str(active))
+    if requested == _native.PPOCR_BACKEND_METAL and active != _native.PPOCR_BACKEND_METAL:
+        note = engine.backend_note()
+        logger.warning(
+            "Metal was requested but the engine runs on the %s backend%s",
+            name,
+            f": {note}" if note else "",
+        )
+    else:
+        logger.info("Native engine backend: %s", name)
 
 
 def _as_bool(value: Any) -> bool:
@@ -266,8 +292,8 @@ def _apply_vulkan_options(cfg: ConfigNode, options: _native.Options) -> None:
         # Probe without initializing the GPU runtime: a Vulkan probe here
         # would fix the process on Vulkan before the engine asks for Metal.
         if _native.metal_available():
+            # The engine reports the backend it really uses after creation.
             options.backend = _native.PPOCR_BACKEND_METAL
-            logger.info("Using the Metal backend")
         else:
             logger.warning("Metal was requested but is not available; using the CPU backend")
             options.backend = _native.PPOCR_BACKEND_CPU

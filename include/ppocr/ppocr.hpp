@@ -184,12 +184,20 @@ class PPOCR_API OCR {
   void SetDetectionThresholds(float det_threshold, float det_box_threshold,
                               float det_unclip_ratio);
 
+  // The backend that runs the full det+rec pipeline: Backend::metal only when
+  // the Metal GPU graph is really in use, Backend::cpu_only after a Metal
+  // request fell back. BackendNote() says why a Metal request fell back
+  // (empty otherwise).
+  [[nodiscard]] Backend ActiveBackend() const noexcept;
+  [[nodiscard]] const std::string& BackendNote() const noexcept;
+
   [[nodiscard]] std::vector<Result> Recognize(const Image& image) const;
   // rapidocr 3.x use_det / use_rec. use_det=false recognizes the whole image
   // as one text line (one result whose box is the image). use_rec=false
   // returns detector boxes with empty text and the DB box score as
   // confidence. Both true is Recognize(). Both false is invalid. The partial
-  // modes run on the CPU graph; Backend::gpu_only throws for them.
+  // modes run on the CPU graph (also with Backend::metal); Backend::gpu_only
+  // throws for them.
   [[nodiscard]] std::vector<Result> Run(const Image& image, bool use_det, bool use_rec) const;
   // Runs a batch of independent page images. Results preserve input order;
   // each nested vector is identical to calling Recognize() for that image.

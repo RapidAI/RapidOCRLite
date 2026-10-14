@@ -371,7 +371,7 @@ C++ 默认值在 `include/ppocr/ppocr.hpp` 的 `ppocr::Options` 上（`det_limit
 | ONNX Runtime、OpenVINO、Paddle、PyTorch、TensorRT、MNN | 内置 PP-OCRv6 解释器。`EngineType.ONNXRUNTIME` 和 `EngineType.PPOCR_CPP` 都选它。其他引擎名抛 `NotImplementedError`。 |
 | PP-OCRv4 与 PP-OCRv5 模型库 | PP-OCRv6 ONNX 检测器和识别器。 |
 | 方向分类器（默认 `use_cls=True`） | `use_cls` 为真时仍会下载 cls 文件。原生引擎忽略它，并打一条警告。 |
-| `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。两者都为 False 抛 `RapidOCRError`。这两种模式走 CPU 图，严格 GPU 后端会拒绝。 |
+| `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。两者都为 False 抛 `RapidOCRError`。这两种模式走 CPU 图，`backend: metal` 时也可用（完整流程仍走 Metal）；严格 Vulkan GPU 后端会拒绝。与 rapidocr 3.x main 一样，调用时传入的参数会保存在引擎上，对之后的调用继续生效。 |
 | 单词框和单字框 | `return_word_box` / `return_single_char_box` 会警告。`word_results` 为空。 |
 | `elapse_list` 为 `[det, cls, rec]` | `[None, None, total]`。空白页是 `RapidOCROutput()`（`boxes` / `txts` / `img` 为 `None`）。 |
 | `vis()` 用 OpenCV 按 BGR 绘制 | `vis()` 用 Pillow 绘制并返回 RGB。 |

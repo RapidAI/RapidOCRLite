@@ -1342,6 +1342,10 @@ struct OCR::Impl {
   Options opt;
   std::vector<std::string> dict;
   bool keep_gpu_constants{};
+  // Backend::metal was requested and the Metal GPU-only graph is in use.
+  bool metal{};
+  // Why a requested Metal backend is not in use (empty when it is).
+  std::string backend_note;
   // GPU services may encounter a one-off 4K/8K page. Retain small-model
   // immutable weights but reclaim completed transient arena buffers after
   // every public request by default, so a later tiny request does not inherit
@@ -1937,18 +1941,34 @@ OCR::OCR(const std::string& det_model,const std::string& rec_model,std::string d
     // Metal runs the GPU-only graph. Anything missing (not built, no
     // device, Vulkan already chosen for this process, or an incomplete
     // graph) keeps the CPU path rather than failing construction.
-    const bool metal = MetalAvailable() && detail::RequestMetalDriver() &&
-                       detail::MetalDriverRequested() &&
-                       QueryBackendInfo().full_graph_gpu_available;
-    options.backend = metal ? Backend::gpu_only : Backend::cpu_only;
-    if (metal) {
+    std::string note;
+    if (!detail::MetalBackendBuilt()) {
+      note = "this library was built without Metal";
+    } else if (!detail::MetalDeviceAvailable()) {
+      note = "no Metal device (or PPOCR_DISABLE_METAL is set)";
+    } else if (!detail::RequestMetalDriver() || !detail::MetalDriverRequested()) {
+      note = "the GPU runtime of this process was already initialized for Vulkan "
+             "(a Vulkan/hybrid engine or ppocr_query_backend_info ran before the first "
+             "Metal engine); Metal can only be chosen before that";
+    } else if (!QueryBackendInfo().full_graph_gpu_available) {
+      note = "the Metal GPU graph is unavailable";
+    }
+    if (note.empty()) {
+      options.backend = Backend::gpu_only;
       impl_ = std::make_unique<Impl>(det_model, rec_model, options);
-      if (!impl_->det.SupportsGpuOnly() || !impl_->rec.SupportsGpuOnly()) impl_.reset();
+      if (!impl_->det.SupportsGpuOnly() || !impl_->rec.SupportsGpuOnly()) {
+        impl_.reset();
+        note = "the detector or recognizer has operators without a GPU kernel";
+      } else {
+        impl_->metal = true;
+      }
     }
     if (!impl_) {
-      std::fprintf(stderr, "ppocr: Metal backend unavailable; using CPU\n");
+      std::fprintf(stderr, "ppocr: Metal backend requested but not used (%s); using CPU\n",
+                   note.c_str());
       options.backend = Backend::cpu_only;
       impl_ = std::make_unique<Impl>(det_model, rec_model, options);
+      impl_->backend_note = std::move(note);
     }
     impl_->dict = ReadDict(dictionary_path);
     return;
@@ -1961,6 +1981,10 @@ OCR::OCR(const std::string& det_model,const std::string& rec_model,std::string d
   }
   impl_->dict=ReadDict(dictionary_path);
 }
+Backend OCR::ActiveBackend() const noexcept {
+  return impl_->metal ? Backend::metal : impl_->opt.backend;
+}
+const std::string& OCR::BackendNote() const noexcept { return impl_->backend_note; }
 OCR::~OCR()=default;OCR::OCR(OCR&&) noexcept=default;OCR& OCR::operator=(OCR&&) noexcept=default;
 void OCR::SetDetectionThresholds(float det_threshold, float det_box_threshold,
                                  float det_unclip_ratio) {
@@ -1979,16 +2003,27 @@ std::vector<Result> OCR::Recognize(const Image& image) const { return Run(image,
 std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) const {
   if (!use_det && !use_rec) Fail("use_det and use_rec cannot both be false");
   const bool full = use_det && use_rec;
-  if (!full && impl_->opt.backend == Backend::gpu_only) {
+  // Metal runs the full det+rec pipeline on the GPU. Detection-only and
+  // recognition-only requests use the CPU graph of the same models (same
+  // text as Backend::cpu_only); strict Vulkan gpu_only still refuses them.
+  const bool partial_on_cpu = !full && impl_->metal;
+  if (!full && impl_->opt.backend == Backend::gpu_only && !partial_on_cpu) {
     throw UnsupportedError("ppocr: use_det=false or use_rec=false runs on the CPU graph; "
                            "the gpu_only backend does not fall back to it");
+  }
+  if (partial_on_cpu) {
+    static std::once_flag logged;
+    std::call_once(logged, [] {
+      std::fprintf(stderr, "ppocr: use_det=false / use_rec=false run on the CPU graph; "
+                           "Metal is used for the full pipeline\n");
+    });
   }
   std::lock_guard lock(impl_->recognize_mutex);
   std::unique_lock<std::recursive_mutex> gpu_lock(SharedGpuMutex(), std::defer_lock);
   if (impl_->opt.backend != Backend::cpu_only) gpu_lock.lock();
   if(image.empty()) Fail("invalid RGB image");
   if(impl_->det.outputs().empty()) Fail("detector has no output");
-  if (impl_->opt.backend == Backend::gpu_only) {
+  if (impl_->opt.backend == Backend::gpu_only && !partial_on_cpu) {
     auto result = RecognizeGpuOnly(impl_->det, impl_->rec, impl_->opt, impl_->dict, image,
                                    impl_->keep_gpu_constants);
     // Stable-service memory policy: all activations and temporary DB buffers

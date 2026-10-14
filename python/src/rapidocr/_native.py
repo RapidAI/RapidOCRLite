@@ -6,6 +6,7 @@ import ctypes
 import ctypes.util
 import os
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
@@ -172,6 +173,14 @@ def _bind(lib: ctypes.CDLL) -> None:
     if query_backend is not None:
         query_backend.argtypes = [ctypes.POINTER(BackendInfo)]
         query_backend.restype = None
+    active = getattr(lib, "ppocr_active_backend", None)
+    if active is not None:
+        active.argtypes = [ctypes.c_void_p]
+        active.restype = ctypes.c_int
+    note = getattr(lib, "ppocr_backend_note", None)
+    if note is not None:
+        note.argtypes = [ctypes.c_void_p]
+        note.restype = ctypes.c_char_p
     request_device = getattr(lib, "ppocr_request_vulkan_device", None)
     if request_device is not None:
         request_device.argtypes = [ctypes.c_int]
@@ -187,6 +196,17 @@ class NativeOCR:
         if not handle:
             raise RuntimeError(self._error() or "ppocr_create failed")
         self.handle = handle
+
+    def active_backend(self) -> Optional[int]:
+        """PPOCR_BACKEND_* that runs the full pipeline, or None on an old build."""
+        query = getattr(self.lib, "ppocr_active_backend", None)
+        return None if query is None else int(query(self.handle))
+
+    def backend_note(self) -> str:
+        """Why a requested Metal backend fell back to CPU ("" otherwise)."""
+        query = getattr(self.lib, "ppocr_backend_note", None)
+        raw = query(self.handle) if query is not None else None
+        return raw.decode("utf-8", errors="replace") if raw else ""
 
     def close(self) -> None:
         if getattr(self, "handle", None):

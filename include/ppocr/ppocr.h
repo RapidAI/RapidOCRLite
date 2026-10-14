@@ -162,6 +162,13 @@ PPOCR_API int ppocr_vulkan_validation_error_count(void);
 /* 1 when this library has the Metal backend and the system has a Metal
    device. Does not initialize the GPU runtime. */
 PPOCR_API int ppocr_metal_available(void);
+/* PPOCR_BACKEND_* that actually runs this handle's full pipeline:
+   PPOCR_BACKEND_METAL only when the Metal GPU graph is in use, and
+   PPOCR_BACKEND_CPU when a Metal request fell back. -1 for NULL. */
+PPOCR_API int ppocr_active_backend(const ppocr_ocr* ocr);
+/* Why a Metal request fell back to CPU; "" when it did not. Owned by the
+   handle. */
+PPOCR_API const char* ppocr_backend_note(const ppocr_ocr* ocr);
 PPOCR_API void ppocr_query_cpu_info(ppocr_cpu_info* info);
 
 /* Thread-local. Pointer is valid until the next API call on this thread. */

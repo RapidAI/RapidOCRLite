@@ -371,7 +371,7 @@ keep the same names. `result.txts`, `result.scores`, `result.boxes`, `result.ela
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | Built-in PP-OCRv6 interpreter. `EngineType.ONNXRUNTIME` and `EngineType.PPOCR_CPP` both select it. Other engine names raise `NotImplementedError`. |
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer. |
 | Angle classifier (`use_cls=True` by default) | The cls file is still downloaded when `use_cls` is true. The native engine ignores it and logs one warning. |
-| `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput` (boxes, DB scores); `use_det=False` returns `TextRecOutput` for the whole image. Both False raises `RapidOCRError`. These modes run on the CPU graph; the strict GPU backend rejects them. |
+| `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput` (boxes, DB scores); `use_det=False` returns `TextRecOutput` for the whole image. Both False raises `RapidOCRError`. These modes run on the CPU graph, also with `backend: metal` (Metal keeps the full pipeline); the strict Vulkan GPU backend rejects them. Per-call arguments are stored on the engine and stay in effect for later calls, as in rapidocr 3.x main. |
 | Word and character boxes | `return_word_box` / `return_single_char_box` warn. `word_results` is empty. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. An empty page is `RapidOCROutput()` (`boxes` / `txts` / `img` are `None`). |
 | `vis()` draws with OpenCV in BGR | `vis()` draws with Pillow and returns RGB. |

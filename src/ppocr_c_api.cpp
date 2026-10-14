@@ -319,6 +319,21 @@ int ppocr_vulkan_validation_error_count(void) {
   return ppocr::detail::VulkanValidationErrorCount();
 }
 
+int ppocr_active_backend(const ppocr_ocr* ocr) {
+  if (!ocr) return -1;
+  switch (ocr->engine.ActiveBackend()) {
+    case ppocr::Backend::cpu_only: return PPOCR_BACKEND_CPU;
+    case ppocr::Backend::gpu_only: return PPOCR_BACKEND_GPU;
+    case ppocr::Backend::hybrid: return PPOCR_BACKEND_HYBRID;
+    case ppocr::Backend::metal: return PPOCR_BACKEND_METAL;
+  }
+  return -1;
+}
+
+const char* ppocr_backend_note(const ppocr_ocr* ocr) {
+  return ocr ? ocr->engine.BackendNote().c_str() : "";
+}
+
 int ppocr_metal_available(void) {
   try {
     return ppocr::MetalAvailable() ? 1 : 0;
