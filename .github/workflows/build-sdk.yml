@@ -175,7 +175,7 @@ jobs:
             PYBIN=/opt/python/cp312-cp312/bin
             test -x "$PYBIN/python"
             VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
-            yum install -y zip ninja-build >/dev/null 2>&1 || yum install -y zip
+            yum install -y zip ninja-build && command -v ninja
             if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
             cmake -S . -B build "${GEN[@]}" \
               -DCMAKE_BUILD_TYPE=Release \
@@ -235,7 +235,7 @@ jobs:
             PYBIN=/opt/python/cp312-cp312/bin
             test -x "$PYBIN/python"
             VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
-            yum install -y zip ninja-build >/dev/null 2>&1 || yum install -y zip
+            yum install -y zip ninja-build && command -v ninja
             if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
             cmake -S . -B build "${GEN[@]}" \
               -DCMAKE_BUILD_TYPE=Release \
@@ -299,7 +299,7 @@ jobs:
             PYBIN=/opt/python/cp312-cp312/bin
             test -x "$PYBIN/python"
             VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
-            yum install -y zip ninja-build >/dev/null 2>&1 || yum install -y zip
+            yum install -y zip ninja-build && command -v ninja
             if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
             cmake -S . -B build "${GEN[@]}" \
               -DCMAKE_BUILD_TYPE=Release \
