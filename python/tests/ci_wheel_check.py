@@ -20,7 +20,9 @@ info = rapidocr.cpu_info()
 print(rapidocr.__version__, platform.platform(), info, flush=True)
 isa = info["active_isa"]
 if platform.machine().lower() in {"x86_64", "amd64"}:
-    assert info["avx2_compiled"] and info["avx512_compiled"], info
+    # 32-bit (win32) builds ship AVX2 + scalar only.
+    assert info["avx2_compiled"], info
+    assert info["avx512_compiled"] or sys.maxsize < 2**32, info
     assert isa in {"avx2", "avx512"}, info
 print("isa_dispatch_ok", isa)
 
@@ -78,13 +80,17 @@ def check_reference(isa_name):
     return subprocess.call([sys.executable, "-c", code, str(DATA / "expected_cpu_texts.json"), str(DATA)], env=env)
 
 
-isas = ["avx512", "avx2"] if info["avx512"] else ["avx2"]
+isas = ["avx512", "avx2"] if info["avx512"] and info["avx512_compiled"] else ["avx2"]
 if os.environ.get("PPOCR_CHECK_SCALAR"):
     isas.append("scalar")
+if os.environ.get("PPOCR_CHECK_ISAS"):  # e.g. "avx512" under Intel SDE
+    isas = os.environ["PPOCR_CHECK_ISAS"].split(",")
 failed = [name for name in isas if check_reference(name) != 0]
 if failed:
     raise SystemExit(f"text differs from the Linux CPU reference under: {failed}")
-print("reference_texts_ok")
+print("reference_texts_ok", isas)
+if os.environ.get("PPOCR_CHECK_TEXTS_ONLY"):
+    sys.exit(0)
 
 env = dict(os.environ, PYTHONIOENCODING="utf-8")
 args = [str(DATA / "hello.png"), "--model-type", "tiny", "--det", os.environ["PPOCR_TEST_DET"],

@@ -171,8 +171,14 @@ if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
     set_source_files_properties(src/kernels_avx2.cpp PROPERTIES COMPILE_OPTIONS
         "-mavx2;-mfma;-mno-avx512f;-mno-avx512bw;-mno-avx512vl;-mno-avx512dq")
   endif()
+  # 32-bit MSVC builds compile the AVX-512 kernels but they produce wrong
+  # results there (truncated recognition), so x86 (win32) keeps AVX2 + scalar.
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+    message(STATUS "AVX-512 kernels disabled for this 32-bit build")
+  else()
   target_sources(ppocr_objects PRIVATE src/kernels_avx512.cpp)
   target_compile_definitions(ppocr_objects PRIVATE PPOCR_HAS_AVX512_KERNELS=1)
+  endif()
   if(MSVC)
     set_source_files_properties(src/kernels_avx512.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX512;/fp:fast")
   else()

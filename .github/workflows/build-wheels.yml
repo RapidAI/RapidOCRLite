@@ -248,6 +248,17 @@ jobs:
           ls wheelhouse
           test "$(ls wheelhouse/*-win_amd64.whl | wc -l)" -eq 5
 
+      # GitHub's Windows runners are usually AVX2-only, so run the AVX-512
+      # kernels under Intel SDE (Sapphire Rapids) against the reference texts.
+      - name: AVX-512 check under Intel SDE
+        shell: bash
+        run: |
+          curl -sSL -o sde.tar.xz https://downloadmirror.intel.com/843185/sde-external-9.48.0-2024-11-25-win.tar.xz
+          mkdir sde && tar -xf sde.tar.xz -C sde --strip-components=1
+          python -m pip install wheelhouse/*cp312-cp312-win_amd64.whl
+          PPOCR_CHECK_ISAS=avx512 PPOCR_CHECK_TEXTS_ONLY=1 PYTHONIOENCODING=utf-8 \
+            ./sde/sde.exe -spr -- python python/tests/ci_wheel_check.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: rapidocr_ng-wheels-windows-x64
