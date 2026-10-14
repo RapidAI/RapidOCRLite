@@ -42,6 +42,9 @@ for name in ("libppocr.so.5.0.0", "libppocr.so.5", "libppocr.so",
         break
 else:
     raise SystemExit("installed libppocr not found")
+libs = sorted(p.name for p in root.glob("libppocr*") if p.is_file())
+if len(libs) != 1:
+    raise SystemExit(f"expected one bundled libppocr, found {libs}")
 PY
 )
 export PPOCR_LIBRARY="$LIB"

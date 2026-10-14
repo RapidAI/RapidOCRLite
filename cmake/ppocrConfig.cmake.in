@@ -1,5 +1,9 @@
 @PACKAGE_INIT@
 
+include(CMakeFindDependencyMacro)
+# ppocr::static links Threads::Threads.
+find_dependency(Threads)
+
 include("${CMAKE_CURRENT_LIST_DIR}/ppocrTargets.cmake")
 
 check_required_components(ppocr)

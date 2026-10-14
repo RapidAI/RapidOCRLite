@@ -57,7 +57,7 @@ jobs:
           NAME="RapidOCRLite-SDK-win_amd64-${VER}"
           mkdir -p dist
           mv prefix "$NAME"
-          powershell -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath 'dist/${NAME}.zip'"
+          python tools/zip_dir.py "$NAME" "dist/${NAME}.zip"
           ls -la dist
           test -f "dist/${NAME}.zip"
 
@@ -103,7 +103,7 @@ jobs:
           NAME="RapidOCRLite-SDK-win32-${VER}"
           mkdir -p dist
           mv prefix "$NAME"
-          powershell -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath 'dist/${NAME}.zip'"
+          python tools/zip_dir.py "$NAME" "dist/${NAME}.zip"
           ls -la dist
           test -f "dist/${NAME}.zip"
 
@@ -180,6 +180,7 @@ jobs:
             cmake -S . -B build \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DCMAKE_INSTALL_LIBDIR=lib \
               -DPPOCR_BUILD_SHARED=ON \
               -DPPOCR_BUILD_STATIC=ON \
               -DPPOCR_BUILD_EXAMPLES=OFF \
@@ -193,12 +194,16 @@ jobs:
             rm -rf "$NAME"
             mv prefix "$NAME"
             tar -czf "dist/${NAME}.tar.gz" "$NAME"
-            zip -qr "dist/${NAME}.zip" "$NAME"
+            zip -qry "dist/${NAME}.zip" "$NAME"
             so=$(find "$NAME" -name "libppocr.so*" | head -1)
             test -n "$so"
             file "$so"
             if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
               echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            if nm "$NAME/lib/libppocr.a" "$NAME/lib/libppocr.so" 2>/dev/null | grep "_finite"; then
+              echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
               exit 1
             fi
             ls -la dist
@@ -240,6 +245,7 @@ jobs:
             cmake -S . -B build \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DCMAKE_INSTALL_LIBDIR=lib \
               -DPPOCR_BUILD_SHARED=ON \
               -DPPOCR_BUILD_STATIC=ON \
               -DPPOCR_BUILD_EXAMPLES=OFF \
@@ -253,12 +259,16 @@ jobs:
             rm -rf "$NAME"
             mv prefix "$NAME"
             tar -czf "dist/${NAME}.tar.gz" "$NAME"
-            zip -qr "dist/${NAME}.zip" "$NAME"
+            zip -qry "dist/${NAME}.zip" "$NAME"
             so=$(find "$NAME" -name "libppocr.so*" | head -1)
             test -n "$so"
             file "$so"
             if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
               echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            if nm "$NAME/lib/libppocr.a" "$NAME/lib/libppocr.so" 2>/dev/null | grep "_finite"; then
+              echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
               exit 1
             fi
             ls -la dist
@@ -304,6 +314,7 @@ jobs:
             cmake -S . -B build \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DCMAKE_INSTALL_LIBDIR=lib \
               -DPPOCR_BUILD_SHARED=ON \
               -DPPOCR_BUILD_STATIC=ON \
               -DPPOCR_BUILD_EXAMPLES=OFF \
@@ -317,12 +328,16 @@ jobs:
             rm -rf "$NAME"
             mv prefix "$NAME"
             tar -czf "dist/${NAME}.tar.gz" "$NAME"
-            zip -qr "dist/${NAME}.zip" "$NAME"
+            zip -qry "dist/${NAME}.zip" "$NAME"
             so=$(find "$NAME" -name "libppocr.so*" | head -1)
             test -n "$so"
             file "$so"
             if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
               echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            if nm "$NAME/lib/libppocr.a" "$NAME/lib/libppocr.so" 2>/dev/null | grep "_finite"; then
+              echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
               exit 1
             fi
             ls -la dist
@@ -336,11 +351,115 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  sdk-smoke:
+    name: SDK smoke ${{ matrix.plat }} (${{ matrix.link }})
+    needs: [sdk-windows-x64, sdk-macos-arm64, sdk-linux-x86_64]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { plat: linux_x86_64, os: ubuntu-latest, ext: tar.gz, link: shared }
+          - { plat: linux_x86_64, os: ubuntu-latest, ext: tar.gz, link: static }
+          - { plat: win_amd64, os: windows-latest, ext: zip, link: shared }
+          - { plat: win_amd64, os: windows-latest, ext: zip, link: static }
+          - { plat: macosx_arm64, os: macos-14, ext: tar.gz, link: shared }
+          - { plat: macosx_arm64, os: macos-14, ext: tar.gz, link: static }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: rapidocrlite-sdk-${{ matrix.plat }}
+          path: sdk-dist
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Models and test image
+        run: |
+          set -euo pipefail
+          python python/tests/fetch_ci_models.py
+          python -m pip install -q Pillow
+          python -c "from PIL import Image; Image.open('python/tests/data/hello.png').convert('RGB').save('hello.ppm')"
+
+      - name: Extract SDK archive and check layout
+        run: |
+          set -euo pipefail
+          ls -la sdk-dist
+          ARCHIVE=$(ls sdk-dist/RapidOCRLite-SDK-${{ matrix.plat }}-*.${{ matrix.ext }})
+          mkdir sdk
+          if [ "${{ matrix.ext }}" = zip ]; then
+            python - "$ARCHIVE" <<'PY'
+          import sys, zipfile
+          zf = zipfile.ZipFile(sys.argv[1])
+          bad = [n for n in zf.namelist() if "\\" in n]
+          assert not bad, f"backslash entries: {bad}"
+          zf.extractall("sdk")
+          PY
+          else
+            tar -xzf "$ARCHIVE" -C sdk
+          fi
+          SDK=$(cd sdk/RapidOCRLite-SDK-* && pwd)
+          echo "SDK=$SDK" >> "$GITHUB_ENV"
+          find "$SDK" | sort
+          test -f "$SDK/README.md"
+          test -f "$SDK/LICENSE"
+          test -f "$SDK/include/ppocr/ppocr.h"
+          test -f "$SDK/lib/cmake/ppocr/ppocrConfig.cmake"
+
+      - name: Build example via find_package (CMAKE_PREFIX_PATH)
+        run: |
+          set -euo pipefail
+          cmake -S examples/sdk_consumer -B consumer -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$SDK" -DPPOCR_SDK_LINK=${{ matrix.link }}
+          cmake --build consumer --config Release
+          EXE=$(find consumer -name 'sdk_consumer' -o -name 'sdk_consumer.exe' | head -1)
+          test -n "$EXE"
+          echo "EXE=$EXE" >> "$GITHUB_ENV"
+
+      - name: Run OCR (CPU)
+        run: |
+          set -euo pipefail
+          export PATH="$SDK/bin:$PATH"
+          "$EXE" ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt hello.ppm "Hello" cpu | tee out.txt
+          grep -q sdk_consumer_ok out.txt
+
+      - name: Run OCR (Metal)
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          "$EXE" ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt hello.ppm "Hello" metal | tee out.txt
+          grep -q sdk_consumer_ok out.txt
+
+      - name: Check shared library dependencies
+        if: matrix.link == 'shared'
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Linux) ldd "$EXE" ;;
+            macOS) otool -L "$EXE"; otool -L "$SDK"/lib/libppocr.*.dylib ;;
+            Windows) objdump -p "$SDK/bin/ppocr.dll" | grep "DLL Name" || true ;;
+          esac
+
   attach-release:
     name: Attach SDKs to GitHub Release
-    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64, sdk-linux-x86_64, sdk-linux-aarch64, sdk-linux-aarch64-qemu]
+    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64, sdk-linux-x86_64, sdk-linux-aarch64, sdk-linux-aarch64-qemu, sdk-smoke]
     if: >-
       always() &&
+      needs.sdk-smoke.result == 'success' &&
       needs.sdk-windows-x64.result == 'success' &&
       needs.sdk-windows-x86.result == 'success' &&
       needs.sdk-macos-arm64.result == 'success' &&
@@ -372,3 +491,11 @@ jobs:
         run: |
           # --clobber so re-dispatch can refresh assets on an existing release.
           gh release upload "$TAG" dist/RapidOCRLite-SDK-* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - uses: actions/checkout@v4
+
+      - name: Refresh SHA256SUMS (wheels + sdist + SDKs)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+        run: bash tools/release_sha256sums.sh "$TAG"

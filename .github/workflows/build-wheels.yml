@@ -410,3 +410,13 @@ jobs:
             dist/SHA256SUMS
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}
+
+      - uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Refresh SHA256SUMS (wheels + sdist + SDKs)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: bash src/tools/release_sha256sums.sh "$TAG"
