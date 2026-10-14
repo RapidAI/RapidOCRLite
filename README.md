@@ -129,11 +129,11 @@ Same SWHL sets and settings as above; `full` is det+rec on the 212 det images (`
 | x86, `PPOCR_FORCE_ISA=avx2` | det-only | 0.3215 | 0.1668 | 1.9× faster |
 | x86, `PPOCR_FORCE_ISA=avx2` | rec-only | 0.0078 | 0.0109 | 1.40× slower |
 | x86, `PPOCR_FORCE_ISA=avx2` | full page | 0.3909 | 0.2503 | 1.6× faster |
-| Mac mini M4 (CPU, Accelerate) | det-only | 0.1145 | 0.0817 | 1.40× faster |
-| Mac mini M4 (CPU, Accelerate) | rec-only | 0.00587 | 0.00543 | 1.08× faster |
-| Mac mini M4 (CPU, Accelerate) | full page | 0.3142 | 0.1075 | 2.9× faster |
+| Mac mini M4 (CPU, Accelerate) | det-only | 0.1113 | 0.0728 | 1.53× faster |
+| Mac mini M4 (CPU, Accelerate) | rec-only | 0.00571 | 0.00505 | 1.13× faster |
+| Mac mini M4 (CPU, Accelerate) | full page | 0.2961 | 0.0977 | 3.0× faster |
 
-3.x uses onnxruntime 1.31.0, which on M4 runs its GEMMs on the SME matrix unit; RapidOCRLite reaches the matrix unit through Accelerate (`PPOCR_DISABLE_ACCELERATE=1` falls back to NEON). M4 rows: commit b4cebec, idle machine, interleaved median of 5. On x86, single-line rec-only is still about even (AVX-512) or slower (AVX2); x86 rows are from b9f3866 on a loaded host.
+3.x uses onnxruntime 1.31.0, which on M4 runs its GEMMs on the SME matrix unit; RapidOCRLite reaches the matrix unit through Accelerate (`PPOCR_DISABLE_ACCELERATE=1` falls back to NEON). M4 rows: commit ef9922f, otherwise idle machine, interleaved median of 5. On x86, single-line rec-only is still about even (AVX-512) or slower (AVX2); x86 rows are from b9f3866 on a loaded host.
 
 ### 🛠️ Installation
 

@@ -129,11 +129,11 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 | x86，`PPOCR_FORCE_ISA=avx2` | 仅检测 | 0.3215 | 0.1668 | 快 1.9 倍 |
 | x86，`PPOCR_FORCE_ISA=avx2` | 仅识别 | 0.0078 | 0.0109 | 慢 1.40 倍 |
 | x86，`PPOCR_FORCE_ISA=avx2` | 整页 | 0.3909 | 0.2503 | 快 1.6 倍 |
-| Mac mini M4（CPU，Accelerate） | 仅检测 | 0.1145 | 0.0817 | 快 1.40 倍 |
-| Mac mini M4（CPU，Accelerate） | 仅识别 | 0.00587 | 0.00543 | 快 1.08 倍 |
-| Mac mini M4（CPU，Accelerate） | 整页 | 0.3142 | 0.1075 | 快 2.9 倍 |
+| Mac mini M4（CPU，Accelerate） | 仅检测 | 0.1113 | 0.0728 | 快 1.53 倍 |
+| Mac mini M4（CPU，Accelerate） | 仅识别 | 0.00571 | 0.00505 | 快 1.13 倍 |
+| Mac mini M4（CPU，Accelerate） | 整页 | 0.2961 | 0.0977 | 快 3.0 倍 |
 
-3.x 使用 onnxruntime 1.31.0，在 M4 上用 SME 矩阵单元做 GEMM；RapidOCRLite 通过 Accelerate 使用矩阵单元（`PPOCR_DISABLE_ACCELERATE=1` 回退到 NEON）。M4 各行：提交 b4cebec，机器空闲，交替运行取 5 次中位数。x86 上单行仅识别仍大致持平（AVX-512）或更慢（AVX2）；x86 各行来自 b9f3866，测试时机器有负载。
+3.x 使用 onnxruntime 1.31.0，在 M4 上用 SME 矩阵单元做 GEMM；RapidOCRLite 通过 Accelerate 使用矩阵单元（`PPOCR_DISABLE_ACCELERATE=1` 回退到 NEON）。M4 各行：提交 ef9922f，机器无其他任务，交替运行取 5 次中位数。x86 上单行仅识别仍大致持平（AVX-512）或更慢（AVX2）；x86 各行来自 b9f3866，测试时机器有负载。
 
 ### 🛠️ 安装
 
