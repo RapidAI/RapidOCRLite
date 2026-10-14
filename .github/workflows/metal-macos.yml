@@ -3,10 +3,10 @@ name: metal macos
 on:
   push:
     branches:
-      - V5_NG
+      - main
   pull_request:
     branches:
-      - V5_NG
+      - main
   workflow_dispatch:
 
 concurrency:

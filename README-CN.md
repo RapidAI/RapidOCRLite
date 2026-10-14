@@ -17,10 +17,10 @@
 <a href="https://colab.research.google.com/github/RapidAI/RapidOCR/blob/main/assets/RapidOCRDemo.ipynb" target="_blank"><img src="https://raw.githubusercontent.com/RapidAI/RapidOCR/main/assets/colab-badge.svg" alt="Open in Colab"></a>
 <a href=""><img src="https://img.shields.io/badge/Python->=3.9-aff.svg"></a>
 <a href=""><img src="https://img.shields.io/badge/OS-Linux%2C%20Win%2C%20Mac-pink.svg"></a>
-<a href="https://github.com/RapidAI/RapidOCR/graphs/contributors"><img src="https://img.shields.io/github/contributors/RapidAI/RapidOCR?color=9ea"></a>
+<a href="https://github.com/RapidAI/RapidOCRLite/graphs/contributors"><img src="https://img.shields.io/github/contributors/RapidAI/RapidOCRLite?color=9ea"></a>
 <a href="https://pepy.tech/project/rapidocr"><img src="https://static.pepy.tech/personalized-badge/rapidocr?period=total&units=abbreviation&left_color=grey&right_color=blue&left_text=Downloads%20rapidocr"></a>
-<a href="https://pypi.org/project/rapidocr_ng/"><img alt="PyPI" src="https://img.shields.io/pypi/v/rapidocr_ng"></a>
-<a href="https://github.com/RapidAI/RapidOCR/stargazers"><img src="https://img.shields.io/github/stars/RapidAI/RapidOCR?color=ccf"></a>
+<a href="https://pypi.org/project/RapidOCRLite/"><img alt="PyPI" src="https://img.shields.io/pypi/v/RapidOCRLite"></a>
+<a href="https://github.com/RapidAI/RapidOCRLite/stargazers"><img src="https://img.shields.io/github/stars/RapidAI/RapidOCRLite?color=ccf"></a>
 <a href="https://semver.org/"><img alt="SemVer2.0" src="https://img.shields.io/badge/SemVer-2.0-brightgreen"></a>
 <a href="https://github.com/psf/black"><img src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
 
@@ -29,7 +29,7 @@
 简体中文 | [English](./README.md)
 </div>
 
-本分支（`V5_NG`）是 **rapidocr 5.0.0a2**：C++ 实现的 PP-OCRv6 引擎，带 C ABI、C++ API，以及导入名仍为 `rapidocr` 的 Python 包。3.x 线（最新标签 `v3.9.2`）留在 [`main`](https://github.com/RapidAI/RapidOCR/tree/main)。上方徽章里的在线演示跑的是 3.x。
+**RapidOCRLite**（PyPI 名 `RapidOCRLite`，5.0.0a6）是 RapidOCR 的轻量快速版：C++ 实现的 PP-OCRv6 引擎，带 C ABI、C++ API，以及导入名仍为 `rapidocr`、API 与 RapidOCR 完全兼容的 Python 包。基于 ONNX Runtime 的 3.x 线（最新标签 `v3.9.2`）留在 [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR)。上方徽章里的在线演示跑的是 3.x。
 
 ### 📝 简介
 
@@ -100,13 +100,13 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 
 ### 🛠️ 安装
 
-这一版在 PyPI 上的名字是 **`rapidocr_ng`**，import 名仍是 `rapidocr`，用法与 `main` 一致：`pip install rapidocr_ng`，然后 `from rapidocr import RapidOCR`。两个发行包安装的是同一个 `rapidocr` 包目录，所以不要在同一个环境里同时安装 `rapidocr_ng` 和官方 `rapidocr`；先执行 `pip uninstall rapidocr`。
+这一版在 PyPI 上的名字是 **`RapidOCRLite`**，import 名仍是 `rapidocr`，用法与 `main` 一致：`pip install RapidOCRLite`，然后 `from rapidocr import RapidOCR`。两个发行包安装的是同一个 `rapidocr` 包目录，所以不要在同一个环境里同时安装 `RapidOCRLite` 和官方 `rapidocr`；先执行 `pip uninstall rapidocr`。
 
-`5.0.0a2` 是预发布版，推送 `v5*` 标签（见[发布](#-发布)）之后才会出现在 PyPI 上。之后这样安装：
+`5.0.0a6` 是预发布版，推送 `v5*` 标签（见[发布](#-发布)）之后才会出现在 PyPI 上。之后这样安装：
 
 ```bash
 pip uninstall rapidocr   # 如果装过官方包
-pip install --pre rapidocr_ng
+pip install --pre RapidOCRLite
 ```
 
 ```python
@@ -123,7 +123,7 @@ pip install .
 
 ```bash
 pip wheel . -w dist
-pip install dist/rapidocr_ng-*.whl
+pip install dist/rapidocrlite-*.whl
 ```
 
 在检出目录里 `pip install ./python` 也可以，它让 CMake 指向父目录，但打不出自包含的 sdist。仓库根目录的 `pip install .` 可以。
@@ -381,7 +381,7 @@ C++ 默认值在 `include/ppocr/ppocr.hpp` 的 `ppocr::Options` 上（`det_limit
 
 ### 📦 发布
 
-wheel 和 sdist 由 [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml) 在推送到 `V5_NG` 时构建。只有推送 `v5*` 标签时才会发布到 PyPI 并创建 GitHub Release。步骤、可信发布者设置和打标签命令见 [`docs/RELEASING.md`](docs/RELEASING.md)。
+wheel 和 sdist 由 [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml) 在推送到 `main` 时构建。只有推送 `v5*` 标签时才会发布到 PyPI（不创建 GitHub Release）。步骤、可信发布者设置和打标签命令见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 ### 👥 谁在使用？([更多](https://github.com/RapidAI/RapidOCR/network/dependents))
 
@@ -391,10 +391,10 @@ wheel 和 sdist 由 [`.github/workflows/build-wheels.yml`](.github/workflows/bui
 
 - [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 提供了本引擎所实现的模型与 OCR 流程。
 - [PaddleOCR2Pytorch](https://github.com/frotms/PaddleOCR2Pytorch) 与 [PaddleX](https://github.com/PaddlePaddle/PaddleX) 为整个 RapidOCR 项目提供了转换模型和文档模型。
-- [贡献者](https://github.com/RapidAI/RapidOCR/graphs/contributors) 图上的每一位。
+- [贡献者](https://github.com/RapidAI/RapidOCRLite/graphs/contributors) 图上的每一位。
 
 <p align="left">
-  <a href="https://github.com/RapidAI/RapidOCR/graphs/contributors">
+  <a href="https://github.com/RapidAI/RapidOCRLite/graphs/contributors">
     <img src="https://contrib.rocks/image?repo=RapidAI/RapidOCR&max=400&columns=10" width="60%"/>
   </a>
 </p>

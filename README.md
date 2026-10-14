@@ -17,10 +17,10 @@
 <a href="https://colab.research.google.com/github/RapidAI/RapidOCR/blob/main/assets/RapidOCRDemo.ipynb" target="_blank"><img src="https://raw.githubusercontent.com/RapidAI/RapidOCR/main/assets/colab-badge.svg" alt="Open in Colab"></a>
 <a href=""><img src="https://img.shields.io/badge/Python->=3.9-aff.svg"></a>
 <a href=""><img src="https://img.shields.io/badge/OS-Linux%2C%20Win%2C%20Mac-pink.svg"></a>
-<a href="https://github.com/RapidAI/RapidOCR/graphs/contributors"><img src="https://img.shields.io/github/contributors/RapidAI/RapidOCR?color=9ea"></a>
+<a href="https://github.com/RapidAI/RapidOCRLite/graphs/contributors"><img src="https://img.shields.io/github/contributors/RapidAI/RapidOCRLite?color=9ea"></a>
 <a href="https://pepy.tech/project/rapidocr"><img src="https://static.pepy.tech/personalized-badge/rapidocr?period=total&units=abbreviation&left_color=grey&right_color=blue&left_text=Downloads%20rapidocr"></a>
-<a href="https://pypi.org/project/rapidocr_ng/"><img alt="PyPI" src="https://img.shields.io/pypi/v/rapidocr_ng"></a>
-<a href="https://github.com/RapidAI/RapidOCR/stargazers"><img src="https://img.shields.io/github/stars/RapidAI/RapidOCR?color=ccf"></a>
+<a href="https://pypi.org/project/RapidOCRLite/"><img alt="PyPI" src="https://img.shields.io/pypi/v/RapidOCRLite"></a>
+<a href="https://github.com/RapidAI/RapidOCRLite/stargazers"><img src="https://img.shields.io/github/stars/RapidAI/RapidOCRLite?color=ccf"></a>
 <a href="https://semver.org/"><img alt="SemVer2.0" src="https://img.shields.io/badge/SemVer-2.0-brightgreen"></a>
 <a href="https://github.com/psf/black"><img src="https://img.shields.io/badge/code%20style-black-000000.svg"></a>
 
@@ -29,7 +29,7 @@ Join our [Discord](https://discord.gg/33eyQJq498)
 [简体中文](./README-CN.md) | English
 </div>
 
-This branch (`V5_NG`) is **rapidocr 5.0.0a2**: a C++ PP-OCRv6 engine with a C ABI, a C++ API, and a Python package whose import name is still `rapidocr`. The 3.x line (latest tag `v3.9.2`) stays on [`main`](https://github.com/RapidAI/RapidOCR/tree/main). Hosted demos linked from the badges above run that 3.x line.
+**RapidOCRLite** (PyPI `RapidOCRLite` 5.0.0a6) is the lightweight, fast edition of RapidOCR: a C++ PP-OCRv6 engine with a C ABI, a C++ API, and a Python package whose import name is still `rapidocr` and whose Python API is fully compatible with RapidOCR. The ONNX Runtime 3.x line (latest tag `v3.9.2`) stays in [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR). Hosted demos linked from the badges above run that 3.x line.
 
 ### 📝 Introduction
 
@@ -102,7 +102,7 @@ MoltenVK does not report per-dispatch timestamps, so `PPOCR_GPU_PROFILE` shows o
 
 Method follows the [open-source OCR model comparison](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/): datasets [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset) (212 images) and [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset) (310 crops) loaded with `datasets`, metrics from [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 and [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1. Speed is Python wall clock per image, one process at a time.
 
-Machine: 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Python 3.12. `rapidocr==3.10.0` with onnxruntime 1.31.0 (default intra/inter threads); `rapidocr_ng==5.0.0a5` native CPU engine (AVX-512 path, 8 threads). Both run the same PP-OCRv6 **small** det/rec ONNX files (the 3.x defaults; 5.0.0a5 has the same default but its model download URL failed, so the 3.x files were passed via `Det.model_path` / `Rec.model_path`). `use_cls=False`, `text_score=0`, other settings are the shared `config.yaml` defaults.
+Machine: 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Python 3.12. `rapidocr==3.10.0` with onnxruntime 1.31.0 (default intra/inter threads); `RapidOCRLite==5.0.0a5` native CPU engine (AVX-512 path, 8 threads). Both run the same PP-OCRv6 **small** det/rec ONNX files (the 3.x defaults; 5.0.0a5 has the same default but its model download URL failed, so the 3.x files were passed via `Det.model_path` / `Rec.model_path`). `use_cls=False`, `text_score=0`, other settings are the shared `config.yaml` defaults.
 
 The native engine always runs det and rec together, so the comparable rows run the full pipeline on both datasets. On the recognition set this means the detector runs on each small crop first, which is why those numbers are far below rec-only.
 
@@ -127,13 +127,13 @@ With the same det model, 5.0.0a5 finds about 10 points fewer ground-truth boxes 
 
 ### 🛠️ Installation
 
-The PyPI name of this line is **`rapidocr_ng`**; the import name stays `rapidocr`, so code is the same as on `main`: `pip install rapidocr_ng`, then `from rapidocr import RapidOCR`. Both distributions install the same `rapidocr` package directory, so do not install `rapidocr_ng` and the official `rapidocr` in one environment; run `pip uninstall rapidocr` first.
+The PyPI name of this line is **`RapidOCRLite`**; the import name stays `rapidocr`, so code is the same as on `main`: `pip install RapidOCRLite`, then `from rapidocr import RapidOCR`. Both distributions install the same `rapidocr` package directory, so do not install `RapidOCRLite` and the official `rapidocr` in one environment; run `pip uninstall rapidocr` first.
 
-`5.0.0a2` is a pre-release. It is on PyPI only after a `v5*` tag is published (see [Releasing](#-releasing)). Then install it with:
+`5.0.0a6` is a pre-release. It is on PyPI only after a `v5*` tag is published (see [Releasing](#-releasing)). Then install it with:
 
 ```bash
 pip uninstall rapidocr   # if the official package is installed
-pip install --pre rapidocr_ng
+pip install --pre RapidOCRLite
 ```
 
 ```python
@@ -150,7 +150,7 @@ That build follows `pyproject.toml`: shared `libppocr`, examples and tests off, 
 
 ```bash
 pip wheel . -w dist
-pip install dist/rapidocr_ng-*.whl
+pip install dist/rapidocrlite-*.whl
 ```
 
 `pip install ./python` also works from a checkout. It points CMake at the parent tree and does not produce a self-contained sdist. The repository-root `pip install .` does.
@@ -408,7 +408,7 @@ There is no 4.x tag in this repository. Details and the C ABI are in [`docs/API.
 
 ### 📦 Releasing
 
-Wheel and sdist builds run from [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml) on pushes to `V5_NG`. PyPI publishing and the GitHub Release run only when a `v5*` tag is pushed. The steps, the trusted-publisher settings, and the tag command are in [`docs/RELEASING.md`](docs/RELEASING.md).
+Wheel and sdist builds run from [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml) on pushes to `main`. PyPI publishing runs only when a `v5*` tag is pushed. The steps, the trusted-publisher settings, and the tag command are in [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ### 👥 Who use? ([more](https://github.com/RapidAI/RapidOCR/network/dependents))
 
@@ -418,10 +418,10 @@ Projects that depend on the `rapidocr` package include [Docling](https://github.
 
 - [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) for the models and the OCR pipeline this engine implements.
 - [PaddleOCR2Pytorch](https://github.com/frotms/PaddleOCR2Pytorch) and [PaddleX](https://github.com/PaddlePaddle/PaddleX) for the conversions and document models used by the wider RapidOCR project.
-- Everyone listed on the [contributors](https://github.com/RapidAI/RapidOCR/graphs/contributors) graph.
+- Everyone listed on the [contributors](https://github.com/RapidAI/RapidOCRLite/graphs/contributors) graph.
 
 <p align="left">
-  <a href="https://github.com/RapidAI/RapidOCR/graphs/contributors">
+  <a href="https://github.com/RapidAI/RapidOCRLite/graphs/contributors">
     <img src="https://contrib.rocks/image?repo=RapidAI/RapidOCR&max=400&columns=10" width="60%"/>
   </a>
 </p>

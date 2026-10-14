@@ -1,13 +1,12 @@
-# rapidocr 5
+# RapidOCRLite
 
-`rapidocr_ng` 5.0.0a2 is published on PyPI as
-[rapidocr_ng](https://pypi.org/project/rapidocr_ng/), separate from the official
+`RapidOCRLite` (RapidOCRLite) is published on PyPI as
+[RapidOCRLite](https://pypi.org/project/RapidOCRLite/), separate from the official
 [rapidocr](https://pypi.org/project/rapidocr/). The import name is still
-`rapidocr`: `pip install rapidocr_ng`, then `from rapidocr import RapidOCR`.
+`rapidocr`: `pip install RapidOCRLite`, then `from rapidocr import RapidOCR`.
 Both projects install the same `rapidocr` package directory, so do not install
-them in one environment (run `pip uninstall rapidocr` first). This line is the native PP-OCRv6 engine on the `V5_NG` branch.
-The 3.x line (latest tag `v3.9.2`) stays on `main`. This repository has no
-4.x release.
+them in one environment (run `pip uninstall rapidocr` first). RapidOCRLite is the lightweight native PP-OCRv6 engine with a RapidOCR-compatible API.
+The ONNX Runtime 3.x line (latest tag `v3.9.2`) stays in RapidAI/RapidOCR.
 
 ```python
 from rapidocr import RapidOCR, __version__
@@ -104,16 +103,16 @@ older OCR version.
 ## Wheels and publishing
 
 `.github/workflows/build-wheels.yml` builds the manylinux2014 wheels and the
-sdist. It runs on pushes and pull requests to `V5_NG`, on tags named `v5*`,
+sdist. It runs on pushes and pull requests to `main`, on tags named `v5*`,
 and from the Actions “Run workflow” button. A normal push does not upload
 anything to PyPI. Publishing happens only when a `v5*` tag is pushed.
 
-`5.0.0a2` is a pre-release: `pip install --pre rapidocr_ng` or
-`pip install rapidocr_ng==5.0.0a2`. `pip install rapidocr` installs the
+`5.0.0a6` is a pre-release: `pip install --pre RapidOCRLite` or
+`pip install RapidOCRLite==5.0.0a6`. `pip install rapidocr` installs the
 official 3.x package instead.
 
-How to turn on PyPI Trusted Publishing, which tag to push, and the Actions
-permission the GitHub Release step needs are in
+How to turn on PyPI Trusted Publishing (or the API-token fallback) and which
+tag to push are in
 [`docs/RELEASING.md`](../docs/RELEASING.md).
 
 ### Ported from `main` (#755)

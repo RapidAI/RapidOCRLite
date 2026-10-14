@@ -1,6 +1,6 @@
-# Releasing rapidocr_ng 5.x
+# Releasing RapidOCRLite
 
-The PyPI distribution name is `rapidocr_ng`. The import name is still `rapidocr`.
+The PyPI distribution name is `RapidOCRLite`. The import name is still `rapidocr`.
 
 The workflow is `.github/workflows/build-wheels.yml`.
 
@@ -20,9 +20,9 @@ reads the hello image on Metal.
 
 Triggers:
 
-- push to `V5_NG`
-- pull request targeting `V5_NG`
-- tag `v5*` (for example `v5.0.0a2`)
+- push to `main`
+- pull request targeting `main`
+- tag `v5*` (for example `v5.0.0a6`)
 - Actions → Run workflow
 
 The wheel build passes `-DPPOCR_ENABLE_VULKAN=OFF`. Shaders stay out of the
@@ -31,13 +31,13 @@ wheel does not gain a `libvulkan` dependency. A Vulkan-enabled build is the
 source default when `glslangValidator` and `third_party/Vulkan-Headers` are
 present; `.github/workflows/vulkan-lavapipe.yml` runs that build on lavapipe.
 
-The wheel and sdist files are uploaded as the `rapidocr_ng-dist` artifact (files `rapidocr_ng-5.0.0a2-*.whl` and `rapidocr_ng-5.0.0a2.tar.gz`),
+The wheel and sdist files are uploaded as the `rapidocrlite-dist` artifact (files `rapidocrlite-5.0.0a6-*.whl` and `rapidocrlite-5.0.0a6.tar.gz`),
 with `SHA256SUMS`. PyPI publishing runs only for a
 push of a `v5*` tag. It does not run for a branch push, a pull request, or a
 manual run from a branch.
 
-`5.0.0a2` is a pre-release, so install it with `pip install --pre rapidocr_ng`
-or `pip install rapidocr_ng==5.0.0a2`. `pip install rapidocr` still installs
+`5.0.0a6` is a pre-release, so install it with `pip install --pre RapidOCRLite`
+or `pip install RapidOCRLite==5.0.0a6`. `pip install rapidocr` still installs
 the official 3.x package, which is a different project.
 
 ## Trusted publisher
@@ -45,14 +45,18 @@ the official 3.x package, which is a different project.
 Daniel configures this once on PyPI and GitHub. The workflow already
 requests `id-token: write` and uses the GitHub Environment named `pypi`.
 
-1. On the `rapidocr_ng` project at PyPI (a new name, so use a pending
+1. On the `RapidOCRLite` project at PyPI (a new name, so use a pending
    publisher), open Publishing → Add a new pending
    publisher (or an ordinary publisher if the project already exists).
-2. Owner: `RapidAI`. Repository: `RapidOCR`. Workflow name:
+2. Owner: `RapidAI`. Repository: `RapidOCRLite`. Workflow name:
    `build-wheels.yml`. Environment name: `pypi`.
 3. On GitHub, open Settings → Environments and create an environment named
    `pypi`. A required reviewer is optional. Do not put a PyPI password or
-   API token in the repository.
+   API token in the repository files. A pending publisher is the only way
+   to publish a brand-new name: PyPI cannot issue a project-scoped token for
+   a project that does not exist yet. After the first upload, a
+   project-scoped token can be stored as repository secret
+   `PYPI_API_TOKEN_V5_NG` (used instead of Trusted Publishing when set).
 4. The publish job needs only the `id-token: write` permission it already
    sets. The workflow does not create GitHub Releases: 5.x alphas are not
    official RapidOCR versions. `SHA256SUMS` stays in the workflow artifact.
@@ -62,16 +66,16 @@ requests `id-token: write` and uses the GitHub Environment named `pypi`.
 
 ## Trigger a release
 
-From `V5_NG`, with the version in `pyproject.toml` already set:
+From `main`, with the version in `pyproject.toml` already set:
 
 ```bash
-git tag v5.0.0a2
-git push origin v5.0.0a2
+git tag v5.0.0a6
+git push origin v5.0.0a6
 ```
 
 That push runs the wheel build, then publishes `dist/*.whl` and the sdist to
 PyPI. No GitHub Release is created; the files and `SHA256SUMS` remain in the
-`rapidocr_ng-dist` workflow artifact. Re-running
+`rapidocrlite-dist` workflow artifact. Re-running
 a tag that is already on PyPI skips the existing file (`skip-existing`).
 
 ## PyPI credentials
@@ -79,5 +83,5 @@ a tag that is already on PyPI skips the existing file (`skip-existing`).
 The `publish` job runs only on a pushed `v5*` tag, in GitHub environment `pypi`.
 If repository secret `PYPI_API_TOKEN_V5_NG` is set, it uploads with that token;
 otherwise it uses PyPI Trusted Publishing (owner `RapidAI`, repository
-`RapidOCR`, workflow `build-wheels.yml`, environment `pypi`). The tag must equal
-`v` + the package version (e.g. `v5.0.0a2`), or the job stops before uploading.
+`RapidOCRLite`, workflow `build-wheels.yml`, environment `pypi`). The tag must equal
+`v` + the package version (e.g. `v5.0.0a6`), or the job stops before uploading.
