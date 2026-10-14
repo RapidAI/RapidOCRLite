@@ -2776,25 +2776,37 @@ void ExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weig
   if (dst && src && expand_weights && project_weights && channels > 0 && hidden > 0 &&
       plane > 0 &&
       AccelerateEnabled(std::int64_t(channels) * hidden * std::int64_t(plane))) {
-    thread_local std::vector<float> hidden_act;
-    hidden_act.resize(std::size_t(hidden) * plane);
-    for (int h = 0; h < hidden; ++h)
-      std::fill_n(hidden_act.data() + std::size_t(h) * plane, plane,
-                  expand_bias ? expand_bias[h] : 0.F);
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, hidden, int(plane), channels,
-                1.F, expand_weights, channels, src, int(plane), 1.F, hidden_act.data(),
-                int(plane));
-    Gelu(hidden_act.data(), hidden_act.data(), hidden_act.size(), hidden_act.size());
-    for (int c = 0; c < channels; ++c) {
-      float* row = dst + std::size_t(c) * plane;
-      const float* r = src + std::size_t(c) * plane;
-      const float b = project_bias ? project_bias[c] : 0.F;
-      // dst may alias src: the expand GEMM above has already consumed src.
-      for (std::size_t i = 0; i < plane; ++i) row[i] = r[i] + b;
-    }
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, channels, int(plane), hidden,
-                1.F, project_weights, hidden, hidden_act.data(), int(plane), 1.F, dst,
-                int(plane));
+    // Column tiles keep the [hidden x tile] activation in cache and let the
+    // pool run GELU/bias work in parallel; each tile is an independent GEMM
+    // pair (same per-element arithmetic for any tiling or thread count).
+    const std::size_t kTile = plane >= 4096 ? 512 : 64;
+    const int tiles = int((plane + kTile - 1) / kTile);
+    const auto body = [&](int first, int last) {
+      thread_local std::vector<float> hidden_act;
+      hidden_act.resize(std::size_t(hidden) * kTile);
+      for (int t = first; t < last; ++t) {
+        const std::size_t c0 = std::size_t(t) * kTile;
+        const int n = int(std::min(kTile, plane - c0));
+        for (int h = 0; h < hidden; ++h)
+          std::fill_n(hidden_act.data() + std::size_t(h) * n, n,
+                      expand_bias ? expand_bias[h] : 0.F);
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, hidden, n, channels, 1.F,
+                    expand_weights, channels, src + c0, int(plane), 1.F, hidden_act.data(), n);
+        const std::size_t count = std::size_t(hidden) * n;
+        Gelu(hidden_act.data(), hidden_act.data(), count, count);
+        for (int c = 0; c < channels; ++c) {
+          float* row = dst + std::size_t(c) * plane + c0;
+          const float* r = src + std::size_t(c) * plane + c0;
+          const float b = project_bias ? project_bias[c] : 0.F;
+          // dst may alias src: this tile's expand GEMM already consumed it.
+          for (int i = 0; i < n; ++i) row[i] = r[i] + b;
+        }
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, channels, n, hidden, 1.F,
+                    project_weights, hidden, hidden_act.data(), n, 1.F, dst + c0, int(plane));
+      }
+    };
+    if (tiles > 1) ParallelFor(tiles, body);
+    else body(0, tiles);
     return;
   }
 #endif
@@ -6213,17 +6225,28 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
     }
     cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, vocab, depth, 1.F, left,
                 depth, right, vocab, 1.F, logits.data(), vocab);
-    for (int sequence = 0; sequence < rows / steps; ++sequence) {
-      int previous = -1;
-      for (int step = 0; step < steps; ++step) {
-        const int r = sequence * steps + step;
-        const float* row = logits.data() + std::size_t(r) * vocab;
+    // Per-row argmax + softmax denominator in parallel (rows are
+    // independent); the CTC collapse below stays sequential.
+    std::vector<float> denoms(static_cast<std::size_t>(rows));
+    const float* all = logits.data();
+    ParallelFor(rows, [&](int first, int last) {
+      for (int r = first; r < last; ++r) {
+        const float* row = all + std::size_t(r) * vocab;
         int best = 0;
         float maximum = row[0];
         for (int c = 1; c < vocab; ++c) if (row[c] > maximum) { maximum = row[c]; best = c; }
         float denom = 0.F;
         for (int c = 0; c < vocab; ++c) denom += std::exp(row[c] - maximum);
         indices[r] = best;
+        denoms[std::size_t(r)] = denom;
+      }
+    });
+    for (int sequence = 0; sequence < rows / steps; ++sequence) {
+      int previous = -1;
+      for (int step = 0; step < steps; ++step) {
+        const int r = sequence * steps + step;
+        const int best = indices[r];
+        const float denom = denoms[std::size_t(r)];
         probabilities[r] = (best != 0 && best != previous && denom > 0.F) ? 1.F / denom : 0.F;
         previous = best;
       }
