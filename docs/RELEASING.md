@@ -36,7 +36,7 @@ with `SHA256SUMS`. PyPI publishing runs only for a
 push of a `v5*` tag. It does not run for a branch push, a pull request, or a
 manual run from a branch.
 
-`5.0.0a6` is a pre-release, so install it with `pip install --pre RapidOCRLite`
+`5.0.0a6` is a pre-release, so install it with `pip install --pre rapidocrlite`
 or `pip install rapidocrlite==5.0.0a6`. `pip install rapidocr` still installs
 the official 3.x package, which is a different project.
 
@@ -57,9 +57,10 @@ requests `id-token: write` and uses the GitHub Environment named `pypi`.
    a project that does not exist yet. After the first upload, a
    project-scoped token can be stored as repository secret
    `PYPI_API_TOKEN_V5_NG` (used instead of Trusted Publishing when set).
-4. The publish job needs only the `id-token: write` permission it already
-   sets. The workflow does not create GitHub Releases: 5.x alphas are not
-   official RapidOCR versions. `SHA256SUMS` stays in the workflow artifact.
+4. The publish job needs `id-token: write` (PyPI Trusted Publishing) and
+   `contents: write` (GitHub Release). After PyPI upload it creates a
+   GitHub Release for the tag, attaches wheels/sdist/`SHA256SUMS`, and
+   marks alpha/beta/rc tags as prerelease.
 5. The `ubuntu-24.04-arm` label has to be offered to this repository. Public
    repositories normally have it. If GitHub never assigns a runner, the
    QEMU job builds aarch64 instead.
@@ -73,10 +74,11 @@ git tag v5.0.0a6
 git push origin v5.0.0a6
 ```
 
-That push runs the wheel build, then publishes `dist/*.whl` and the sdist to
-PyPI. No GitHub Release is created; the files and `SHA256SUMS` remain in the
-`rapidocrlite-dist` workflow artifact. Re-running
-a tag that is already on PyPI skips the existing file (`skip-existing`).
+That push runs the wheel build, publishes `dist/*.whl` and the sdist to
+PyPI, then creates a GitHub Release for the tag with the same files and
+`SHA256SUMS` attached (prerelease when the tag contains `a`, `b`, or `rc`).
+Re-running a tag that is already on PyPI skips the existing file
+(`skip-existing`); the Release step updates/creates the GitHub Release.
 
 ## PyPI credentials
 
