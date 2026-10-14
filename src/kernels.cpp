@@ -1,6 +1,8 @@
 #include "kernels.hpp"
 
 #include <algorithm>
+#include <array>
+#include <limits>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -6216,6 +6218,68 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
     }
   };
   const auto work = std::size_t(rows) * depth * vocab;
+#if defined(PPOCR_HAS_AVX512_KERNELS)
+  // One sequence (a single recognized line, e.g. use_det=False) used to run
+  // the whole [steps x vocab] head on one thread: about 3 ms of a 15 ms small
+  // recognizer call. Split the vocabulary into a fixed number of 32-column
+  // panel ranges, run them in parallel, then merge the per-range argmax and
+  // online softmax sums in range order. The split does not depend on the
+  // thread count, and the strict ">" merge keeps the lowest index on ties,
+  // so the argmax equals the serial kernel and results are deterministic.
+  // `PPOCR_DISABLE_CTC_VOCAB_SPLIT` restores the serial head.
+  static const bool vocab_split = std::getenv("PPOCR_DISABLE_CTC_VOCAB_SPLIT") == nullptr &&
+      std::getenv("PPOCR_DISABLE_CTC_PACKED_FULL_M") == nullptr &&
+      std::getenv("PPOCR_DISABLE_CTC_ONLINE") == nullptr;
+  if (vocab_split && sequences == 1 && use_packed_b && HasAvx512() && vocab >= 4096 &&
+      work >= 65536) {
+    constexpr int kChunks = 8;
+    const auto packed = PackedCtcB32(right, depth, vocab);
+    const int panels = (vocab + 31) / 32;
+    const std::size_t n = static_cast<std::size_t>(steps);
+    std::vector<int> args(kChunks * n);
+    std::vector<float> maxima(kChunks * n), sums(kChunks * n);
+    std::array<int, kChunks + 1> panel_start{};
+    for (int c = 0; c <= kChunks; ++c) panel_start[std::size_t(c)] = int(std::int64_t(panels) * c / kChunks);
+    ParallelFor(kChunks, [&](int c0, int c1) {
+      for (int c = c0; c < c1; ++c) {
+        const int p0 = panel_start[std::size_t(c)], p1 = panel_start[std::size_t(c) + 1];
+        const std::size_t at = std::size_t(c) * n;
+        if (p1 <= p0) {
+          for (std::size_t i = 0; i < n; ++i) {
+            args[at + i] = 0;
+            maxima[at + i] = -std::numeric_limits<float>::infinity();
+            sums[at + i] = 0.F;
+          }
+          continue;
+        }
+        const int col0 = p0 * 32;
+        const int cols = std::min(vocab, p1 * 32) - col0;
+        Avx512GemmPacked32(nullptr, left, packed->data() + std::size_t(p0) * depth * 32,
+                           bias ? bias + col0 : nullptr, steps, cols, depth,
+                           args.data() + at, maxima.data() + at, sums.data() + at);
+        for (std::size_t i = 0; i < n; ++i) args[at + i] += col0;
+      }
+    });
+    int previous = -1;
+    for (int step = 0; step < steps; ++step) {
+      float best_max = -std::numeric_limits<float>::infinity();
+      int best = 0;
+      for (int c = 0; c < kChunks; ++c) {
+        const std::size_t i = std::size_t(c) * n + std::size_t(step);
+        if (maxima[i] > best_max) { best_max = maxima[i]; best = args[i]; }
+      }
+      float denom = 0.F;
+      for (int c = 0; c < kChunks; ++c) {
+        const std::size_t i = std::size_t(c) * n + std::size_t(step);
+        if (sums[i] > 0.F) denom += sums[i] * std::exp(maxima[i] - best_max);
+      }
+      indices[step] = best;
+      probabilities[step] = (best != 0 && best != previous && denom > 0.F) ? 1.F / denom : 0.F;
+      previous = best;
+    }
+    return;
+  }
+#endif
   if (sequences >= 2 && work >= 65536) ParallelFor(sequences, body);
   else body(0, sequences);
 }
