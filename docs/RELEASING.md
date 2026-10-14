@@ -66,7 +66,7 @@ Native C/C++ SDK archives (`RapidOCRLite-SDK-{win32,win_amd64,macosx_arm64,linux
 are built by `.github/workflows/build-sdk.yml` (MSVC Win32/x64, macOS-14, and manylinux2014 x86_64/aarch64
 arm64 with Metal). On a `v5*` tag they are attached to the same GitHub
 Release. To attach SDKs to an existing release without retagging, run that
-workflow with `workflow_dispatch` and set `release_tag` (e.g. `v5.0.0a6`).
+workflow with `workflow_dispatch` and set `release_tag` (e.g. `v5.0.0a6`). On a tag push the SDK job creates the release from the existing tag if build-wheels has not yet (no tag is created or moved).
 
 5. The `ubuntu-24.04-arm` label has to be offered to this repository. Public
    repositories normally have it. If GitHub never assigns a runner, the

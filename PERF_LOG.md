@@ -69,3 +69,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - im2col conv scratch made thread_local (was fresh zeroed vector per call, up to 0.9 MB): M4 MaxPool.0_concat_conv 0.39 -> 0.20 ms; rec 5.43 -> 5.37 ms, det .0817 -> .0810. Identical outputs x86 (512/AVX2) + M4.
 - M4 thread/chunk/spin sweeps: all ~5.4 ms (4 threads best). CTC head 0.57 ms is bandwidth on 28 MB fp32 weights.
 - 20:17 README/README-CN M4 rows updated (ff59346). x86 still loaded (load 6-10) -> x86 rows not re-measured. Open: x86 rec-only (AVX2 esp.), M4 rec needs ~10% more.
+- 22:15 RELEASED 5.0.0a7 (473d185, tag v5.0.0a7 annotated): PyPI 25 wheels + sdist; GH prerelease with wheels, 7 SDK archives, SHA256SUMS. Tag-push SDK attach raced release creation ('release not found'); fixed via documented workflow_dispatch release_tag=v5.0.0a7 (success).

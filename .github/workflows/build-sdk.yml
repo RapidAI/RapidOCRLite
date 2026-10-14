@@ -489,6 +489,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
         run: |
+          # On a tag push this job can finish before build-wheels creates the
+          # release ("release not found" on v5.0.0a7). Create it from the
+          # existing tag if missing (never creates or moves a tag:
+          # --verify-tag); build-wheels' action-gh-release then adds wheels to
+          # the same release. Retry once in case both jobs race the create.
+          case "$TAG" in *a*|*b*|*rc*) pre=--prerelease ;; *) pre= ;; esac
+          for attempt in 1 2 3; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then break; fi
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
+              --title "$TAG" --generate-notes && break
+            sleep 20
+          done
           # --clobber so re-dispatch can refresh assets on an existing release.
           gh release upload "$TAG" dist/RapidOCRLite-SDK-* --repo "$GITHUB_REPOSITORY" --clobber
 
