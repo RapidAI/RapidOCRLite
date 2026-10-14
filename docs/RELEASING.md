@@ -61,6 +61,13 @@ requests `id-token: write` and uses the GitHub Environment named `pypi`.
    `contents: write` (GitHub Release). After PyPI upload it creates a
    GitHub Release for the tag, attaches wheels/sdist/`SHA256SUMS`, and
    marks alpha/beta/rc tags as prerelease.
+
+Native C/C++ SDK archives (`RapidOCRLite-SDK-{win32,win_amd64,macosx_arm64}-<version>`)
+are built by `.github/workflows/build-sdk.yml` (MSVC Win32/x64 and macOS-14
+arm64 with Metal). On a `v5*` tag they are attached to the same GitHub
+Release. To attach SDKs to an existing release without retagging, run that
+workflow with `workflow_dispatch` and set `release_tag` (e.g. `v5.0.0a6`).
+
 5. The `ubuntu-24.04-arm` label has to be offered to this repository. Public
    repositories normally have it. If GitHub never assigns a runner, the
    QEMU job builds aarch64 instead.

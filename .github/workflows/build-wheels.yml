@@ -328,7 +328,10 @@ jobs:
       - name: Write SHA256SUMS
         run: |
           rm -f dist/SHA256SUMS
-          (cd dist && sha256sum ./*.whl ./*.tar.gz | tee SHA256SUMS)
+          (cd dist && {
+            sha256sum ./*.whl ./*.tar.gz
+            ls ./*.zip >/dev/null 2>&1 && sha256sum ./*.zip || true
+          } | tee SHA256SUMS)
 
       - uses: actions/upload-artifact@v4
         with:
@@ -403,6 +406,7 @@ jobs:
           files: |
             dist/*.whl
             dist/*.tar.gz
+            dist/*.zip
             dist/SHA256SUMS
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, 'a') || contains(github.ref_name, 'b') || contains(github.ref_name, 'rc') }}

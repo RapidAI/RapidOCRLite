@@ -1,0 +1,178 @@
+name: build sdk
+
+on:
+  push:
+    branches: [main]
+    tags: ["v5*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "If set, upload SDK archives to this existing GitHub Release tag (e.g. v5.0.0a6)"
+        required: false
+        default: ""
+
+concurrency:
+  group: sdk-${{ github.workflow }}-${{ github.ref }}-${{ github.event.inputs.release_tag || 'none' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-windows-x64:
+    name: SDK Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=ON \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build --config Release -j"$(nproc 2>/dev/null || echo 4)"
+          cmake --install build --config Release
+          NAME="RapidOCRLite-SDK-win_amd64-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          # Prefer PowerShell Compress-Archive for a portable zip on Windows.
+          powershell -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath 'dist/${NAME}.zip'"
+          ls -la dist
+          test -f "dist/${NAME}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdk-win_amd64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  sdk-windows-x86:
+    name: SDK Windows x86 (win32)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=ON \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build --config Release -j"$(nproc 2>/dev/null || echo 4)"
+          cmake --install build --config Release
+          NAME="RapidOCRLite-SDK-win32-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          powershell -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath 'dist/${NAME}.zip'"
+          ls -la dist
+          test -f "dist/${NAME}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdk-win32
+          path: dist/*.zip
+          if-no-files-found: error
+
+  sdk-macos-arm64:
+    name: SDK macOS arm64 (Metal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install shader tools
+        run: brew install glslang spirv-cross ninja
+
+      - name: Build and package SDK
+        run: |
+          set -euo pipefail
+          VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=ON \
+            -DPPOCR_REQUIRE_METAL=ON | tee configure.log
+          grep -q "Metal backend enabled" configure.log
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+          cmake --install build
+          NAME="RapidOCRLite-SDK-macosx_arm64-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          tar -czf "dist/${NAME}.tar.gz" "$NAME"
+          ls -la dist
+          test -f "dist/${NAME}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdk-macosx_arm64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  attach-release:
+    name: Attach SDKs to GitHub Release
+    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64]
+    if: >-
+      always() &&
+      needs.sdk-windows-x64.result == 'success' &&
+      needs.sdk-windows-x86.result == 'success' &&
+      needs.sdk-macos-arm64.result == 'success' &&
+      (
+        (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v5')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+      )
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rapidocrlite-sdk-*
+          merge-multiple: true
+          path: dist
+
+      - name: List SDK archives
+        run: |
+          ls -la dist
+          test "$(ls dist/RapidOCRLite-SDK-*.zip dist/RapidOCRLite-SDK-*.tar.gz 2>/dev/null | wc -l)" -ge 3
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          files: |
+            dist/RapidOCRLite-SDK-*.zip
+            dist/RapidOCRLite-SDK-*.tar.gz
+          fail_on_unmatched_files: true
+          # Do not change release body/draft state; only attach assets.
+          append_body: false
