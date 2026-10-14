@@ -87,7 +87,7 @@ What does not carry over from 3.x:
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | Built-in PP-OCRv6 interpreter. `EngineType.ONNXRUNTIME` and `EngineType.PPOCR_CPP` both select it. The other engine names raise `NotImplementedError`. |
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer only. |
 | Angle classifier (`use_cls=True` by default) | The cls file is downloaded like 3.x. The native engine does not run it, and logs one warning. |
-| `use_det=False` or `use_rec=False` | Raises `RapidOCRError`. Detection and recognition always run together. |
+| `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput`, `use_det=False` returns `TextRecOutput`. Both False raises `RapidOCRError`. |
 | Word and character boxes | `return_word_box` / `return_single_char_box` warn. `word_results` is empty. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. The native call is one timed region. An empty page is `RapidOCROutput()` (`boxes`/`txts`/`img` are `None`), same as 3.x. |
 | `vis()` draws with OpenCV in BGR | `vis()` draws with Pillow and returns RGB. |
@@ -97,8 +97,7 @@ What does not carry over from 3.x:
 
 A call that only reads `txts`, `scores`, and `boxes` from a PP-OCRv6 model
 can switch by installing this package and leaving `use_cls` at its default.
-Set `use_cls=False` to skip the warning. Do not pass `use_det=False` or an
-older OCR version.
+Set `use_cls=False` to skip the warning. Do not pass an older OCR version.
 
 ## Wheels and publishing
 

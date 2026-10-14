@@ -46,7 +46,7 @@ If this project helps your work, a ⭐ Star helps it reach the next person.
 - Optional Vulkan compute. Source builds embed SPIR-V when `third_party/Vulkan-Headers` and `glslangValidator` are present (`PPOCR_ENABLE_VULKAN` defaults to `ON`). The loader is `dlopen` / `LoadLibrary` of `libvulkan.so.1` or `vulkan-1.dll`, so Vulkan is not a `DT_NEEDED` dependency. Published wheels pass `-DPPOCR_ENABLE_VULKAN=OFF`.
 - C ABI (`include/ppocr/ppocr.h`), C++ API (`include/ppocr/ppocr.hpp`), and the Python package `rapidocr`. Python calls the C ABI with ctypes.
 - The Python call shape follows 3.x: `RapidOCR(params={"Section.key": value})`, then `result.txts`, `result.scores`, `result.boxes`, `result.elapse`, `to_json()`, `to_markdown()`, and `vis()`.
-- Missing model files are downloaded from the ModelScope URLs in `default_models.yaml` (the same `v3.9.2` file names as 3.x) into `Global.model_root_dir`, and the SHA256 is checked.
+- Missing model files are downloaded from the ModelScope URLs in `default_models.yaml` (the same file names as 3.x; PP-OCRv6 files from tag `v3.10.0`) into `Global.model_root_dir`, and the SHA256 is checked.
 
 ### 🎥 Visualization
 
@@ -58,7 +58,7 @@ The animation is the RapidOCR 3.x web demo. On this branch the checked line samp
 
 ### ⚡ Performance
 
-Models are PP-OCRv6 **tiny** ONNX. `use_cls=False`, so the angle classifier does not run.
+These timings use the PP-OCRv6 **tiny** ONNX files. The Python default (`RapidOCR()` with no model paths) is PP-OCRv6 **small**, the same as 3.x. `use_cls=False`, so the angle classifier does not run.
 
 | Sample | Size | What it contains |
 | --- | --- | --- |
@@ -100,30 +100,21 @@ MoltenVK does not report per-dispatch timestamps, so `PPOCR_GPU_PROFILE` shows o
 
 ### 📊 Accuracy (text_det / text_rec test sets)
 
-Method follows the [open-source OCR model comparison](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/): datasets [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset) (212 images) and [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset) (310 crops) loaded with `datasets`, metrics from [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 and [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1. Speed is Python wall clock per image, one process at a time.
+Method follows the [open-source OCR model comparison](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/): datasets [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset) (212 images) and [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset) (310 crops) loaded with `datasets`, metrics from [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 and [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1. Detection is det-only (`use_det=True, use_cls=False, use_rec=False`); recognition is rec-only on the crops (`use_det=False, use_cls=False, use_rec=True`). Speed is Python wall clock per image after one warmup, one process at a time.
 
-Machine: 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Python 3.12. `rapidocr==3.10.0` with onnxruntime 1.31.0 (default intra/inter threads); `RapidOCRLite==5.0.0a5` native CPU engine (AVX-512 path, 8 threads). Both run the same PP-OCRv6 **small** det/rec ONNX files (the 3.x defaults; 5.0.0a5 has the same default but its model download URL failed, so the 3.x files were passed via `Det.model_path` / `Rec.model_path`). `use_cls=False`, `text_score=0`, other settings are the shared `config.yaml` defaults.
+Machine: shared 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Python 3.12; other jobs were running on the host (load average about 6–7), so the speed columns are indicative only. `rapidocr==3.10.0` with onnxruntime 1.31.0 (default intra/inter threads). RapidOCRLite built from source at this commit, native CPU engine (AVX-512, 8 threads). Both use their default models, which are the same PP-OCRv6 **small** det/rec ONNX files (identical SHA256); RapidOCRLite downloaded them through `default_models.yaml`. All other settings are the shared `config.yaml` defaults.
 
-The native engine always runs det and rec together, so the comparable rows run the full pipeline on both datasets. On the recognition set this means the detector runs on each small crop first, which is why those numbers are far below rec-only.
-
-| Dataset | Metric | rapidocr 3.10.0 | rapidocr_ng 5.0.0a5 |
+| Dataset | Metric | rapidocr 3.10.0 | RapidOCRLite |
 | --- | --- | ---: | ---: |
-| text_det | Precision | 0.8578 | 0.8368 |
-| text_det | Recall | 0.8434 | 0.7426 |
-| text_det | H-mean | 0.8505 | 0.7869 |
-| text_det | Speed (s/img, det+rec) | 0.4240 | 0.3255 |
-| text_rec (det+rec on crops) | Exact Match | 0.4903 | 0.6742 |
-| text_rec (det+rec on crops) | Char Match | 0.5885 | 0.8177 |
-| text_rec (det+rec on crops) | Speed (s/img) | 0.4272 | 0.4022 |
+| text_det | Precision | 0.8540 | 0.8524 |
+| text_det | Recall | 0.8445 | 0.8468 |
+| text_det | H-mean | 0.8492 | 0.8496 |
+| text_det | Speed (s/img) | 0.2820 | 0.2591 |
+| text_rec | Exact Match | 0.8419 | 0.8355 |
+| text_rec | Char Match | 0.9515 | 0.9510 |
+| text_rec | Speed (s/img) | 0.0077 | 0.0162 |
 
-3.x-only reference rows, as in the article (det-only and rec-only, not possible on 5.x):
-
-| Models | Det P / R / H-mean | Det s/img | Rec Exact / Char | Rec s/img |
-| --- | --- | ---: | --- | ---: |
-| PP-OCRv6 small | 0.8540 / 0.8445 / 0.8492 | 0.3208 | 0.8419 / 0.9515 | 0.0085 |
-| PP-OCRv4 mobile | 0.8595 / 0.8434 / 0.8514 | 0.1857 | 0.8290 / 0.9432 | 0.0112 |
-
-With the same det model, 5.0.0a5 finds about 10 points fewer ground-truth boxes than 3.x on text_det; the cause has not been investigated yet; it is not a model difference.
+A second 3.10.0 run on the same host gave 0.3040 s/img for detection and 0.0079 s/img for recognition, with the same metrics. On text_rec, 9 of 310 lines decode differently from 3.x, mostly long lines where the bilinear resize differs slightly from OpenCV's.
 
 ### 🛠️ Installation
 
@@ -380,20 +371,19 @@ keep the same names. `result.txts`, `result.scores`, `result.boxes`, `result.ela
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | Built-in PP-OCRv6 interpreter. `EngineType.ONNXRUNTIME` and `EngineType.PPOCR_CPP` both select it. Other engine names raise `NotImplementedError`. |
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer. |
 | Angle classifier (`use_cls=True` by default) | The cls file is still downloaded when `use_cls` is true. The native engine ignores it and logs one warning. |
-| `use_det=False` or `use_rec=False` | Raises `RapidOCRError`. Detection and recognition always run together. |
+| `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput` (boxes, DB scores); `use_det=False` returns `TextRecOutput` for the whole image. Both False raises `RapidOCRError`. These modes run on the CPU graph; the strict GPU backend rejects them. |
 | Word and character boxes | `return_word_box` / `return_single_char_box` warn. `word_results` is empty. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. An empty page is `RapidOCROutput()` (`boxes` / `txts` / `img` are `None`). |
 | `vis()` draws with OpenCV in BGR | `vis()` draws with Pillow and returns RGB. |
 | `EngineConfig` CUDA, OpenVINO, TensorRT, MNN, … | Those keys load and can be read. They are not applied. Vulkan keys above are applied. |
 
-A caller that only reads `txts`, `scores`, and `boxes` from a PP-OCRv6 model can switch by installing this package. Set `use_cls=False` to skip the warning. Do not pass `use_det=False` or an older OCR version.
+A caller that only reads `txts`, `scores`, and `boxes` from a PP-OCRv6 model can switch by installing this package. Set `use_cls=False` to skip the warning. Do not pass an older OCR version.
 
 There is no 4.x tag in this repository. Details and the C ABI are in [`docs/API.md`](docs/API.md) and [`python/README.md`](python/README.md).
 
 ### ⚠️ Known limits
 
 - No direction classifier. `use_cls` does not rotate boxes.
-- No detection-only or recognition-only call. `use_det=False` and `use_rec=False` raise `RapidOCRError`.
 - No per-word or per-character boxes. `word_results` stays empty.
 - The native engine runs PP-OCRv6 ONNX graphs. PP-OCRv4 / v5 files are not executed.
 - GPU-only mode has no CPU neural fallback. Hybrid stays on CPU unless `PPOCR_ENABLE_HYBRID_GPU_GRAPH` is set.

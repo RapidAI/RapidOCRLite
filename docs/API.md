@@ -147,7 +147,7 @@ pip install ./python
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | built-in PP-OCRv6 interpreter only (`EngineType.ONNXRUNTIME` or `EngineType.PPOCR_CPP`) |
 | PP-OCRv4 and v5 model zoo | PP-OCRv6 ONNX detector + recognizer |
 | angle classifier (`use_cls=True` by default) | flag is accepted and ignored, with one warning |
-| `use_det=False` / `use_rec=False` | raises `RapidOCRError` |
+| `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`); both False raises `RapidOCRError`; C ABI `ppocr_run` with `PPOCR_TASK_DET` / `PPOCR_TASK_REC` |
 | word and character boxes | `return_word_box` warns; `word_results` is empty |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]` because the native call is one timed region |
 | OpenCV drawing in `vis` | Pillow polygons |

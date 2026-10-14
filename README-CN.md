@@ -46,7 +46,7 @@ RapidOCR 是面向小模型、离线部署的开源 OCR。5.x 保留 3.x 应用�
 - 可选 Vulkan 计算。源码构建在存在 `third_party/Vulkan-Headers` 和 `glslangValidator` 时嵌入 SPIR-V（`PPOCR_ENABLE_VULKAN` 默认 `ON`）。加载器通过 `dlopen` / `LoadLibrary` 打开 `libvulkan.so.1` 或 `vulkan-1.dll`，因此 Vulkan 不是 `DT_NEEDED` 依赖。发布的 wheel 传入 `-DPPOCR_ENABLE_VULKAN=OFF`。
 - C ABI（`include/ppocr/ppocr.h`）、C++ API（`include/ppocr/ppocr.hpp`）和 Python 包 `rapidocr`。Python 用 ctypes 调用 C ABI。
 - Python 调用形式跟随 3.x：`RapidOCR(params={"Section.key": value})`，然后使用 `result.txts`、`result.scores`、`result.boxes`、`result.elapse`、`to_json()`、`to_markdown()` 和 `vis()`。
-- 缺少的模型会按 `default_models.yaml` 里的 ModelScope 地址下载（与 3.x 的 `v3.9.2` 文件名相同），保存到 `Global.model_root_dir`，并校验 SHA256。
+- 缺少的模型会按 `default_models.yaml` 里的 ModelScope 地址下载（文件名与 3.x 相同；PP-OCRv6 文件取自标签 `v3.10.0`），保存到 `Global.model_root_dir`，并校验 SHA256。
 
 ### 🎥 效果展示
 
@@ -58,7 +58,7 @@ RapidOCR 是面向小模型、离线部署的开源 OCR。5.x 保留 3.x 应用�
 
 ### ⚡ 性能
 
-模型是 PP-OCRv6 **tiny** ONNX。`use_cls=False`，方向分类器不参与计时。
+这些计时用的是 PP-OCRv6 **tiny** ONNX。Python 默认（`RapidOCR()` 不传模型路径）是 PP-OCRv6 **small**，与 3.x 相同。`use_cls=False`，方向分类器不参与计时。
 
 | 样例 | 尺寸 | 内容 |
 | --- | --- | --- |
@@ -97,6 +97,24 @@ Apple 芯片上的 GPU：Mac mini，Apple M4（10 个 CPU 核，4P+6E；10 个 G
 Metal 在 hello 上比 NEON 快约 2 倍，整页快约 1.85 倍；文本与 CPU 一致，框 IoU 为 1.0，4 线程结果一致，Metal API validation 无报错。它把最重的翻译 kernel 换成了原生 MSL kernel（逐点 Conv、3×3 Conv 和识别头的 simdgroup-matrix GEMM），DB 后处理改在 CPU 上读共享的概率图，并复用回收的 arena 槽位。识别把宽度相近的最多 8 个裁剪（最宽/最窄 ≤ 1.5）合进一张图：每个裁剪保持自己的自然宽度，在每个沿宽度混合的算子之前把填充列清零，SE 均值按各自的有效面积相除，CTC 只解码各自的有效步数，所以文本与按精确宽度跑的图一致。Metal 上默认开启（`PPOCR_DISABLE_GPU_REC_WIDTH_BATCH=1` 关闭；`PPOCR_ENABLE_GPU_REC_WIDTH_BATCH=1` 在 Vulkan 上开启，但在 MoltenVK 上更慢）。优化前在同一台机器上 Metal 为 76 ms / 539 ms，按宽度批量之前整页为 147.6 ms。剩下的时间主要是识别模型逐点 Conv GEMM 的 GPU 计算（M4 上约 1 TFLOPS）。`PPOCR_METAL_KERNEL_PROFILE=1` 配合 `PPOCR_GPU_PROFILE=1` 可打印每个 kernel 的 GPU 时间。
 
 MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROFILE` 只有主机侧时间。它的文本也与 CPU 一致，校验层报错为 0，4 线程下结果一致。
+
+### 📊 精度（text_det / text_rec 测试集）
+
+方法沿用[开源 OCR 模型对比](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/)：测试集 [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset)（212 张）和 [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset)（310 张裁剪图），用 `datasets` 加载，指标来自 [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 和 [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1。检测只跑检测（`use_det=True, use_cls=False, use_rec=False`），识别只在裁剪图上跑识别（`use_det=False, use_cls=False, use_rec=True`）。速度是预热一次后的 Python 单图耗时，两边依次运行。
+
+机器：共享的 8 vCPU Intel Xeon（family 6，model 207，KVM），支持 AVX-512，Python 3.12；测试时主机上有其他任务（load average 约 6–7），速度列仅供参考。`rapidocr==3.10.0` 搭配 onnxruntime 1.31.0（默认线程数）。RapidOCRLite 由本提交源码构建，原生 CPU 引擎（AVX-512，8 线程）。两边都用默认模型，即同一组 PP-OCRv6 **small** 检测/识别 ONNX 文件（SHA256 相同）；RapidOCRLite 通过 `default_models.yaml` 自动下载。其余设置均为共用的 `config.yaml` 默认值。
+
+| 数据集 | 指标 | rapidocr 3.10.0 | RapidOCRLite |
+| --- | --- | ---: | ---: |
+| text_det | Precision | 0.8540 | 0.8524 |
+| text_det | Recall | 0.8445 | 0.8468 |
+| text_det | H-mean | 0.8492 | 0.8496 |
+| text_det | 速度（秒/张） | 0.2820 | 0.2591 |
+| text_rec | Exact Match | 0.8419 | 0.8355 |
+| text_rec | Char Match | 0.9515 | 0.9510 |
+| text_rec | 速度（秒/张） | 0.0077 | 0.0162 |
+
+同一主机上 3.10.0 第二次运行：检测 0.3040 秒/张，识别 0.0079 秒/张，指标不变。text_rec 上 310 行中有 9 行与 3.x 解码不同，多为长行，原因是双线性缩放与 OpenCV 有细微差别。
 
 ### 🛠️ 安装
 
@@ -353,20 +371,19 @@ C++ 默认值在 `include/ppocr/ppocr.hpp` 的 `ppocr::Options` 上（`det_limit
 | ONNX Runtime、OpenVINO、Paddle、PyTorch、TensorRT、MNN | 内置 PP-OCRv6 解释器。`EngineType.ONNXRUNTIME` 和 `EngineType.PPOCR_CPP` 都选它。其他引擎名抛 `NotImplementedError`。 |
 | PP-OCRv4 与 PP-OCRv5 模型库 | PP-OCRv6 ONNX 检测器和识别器。 |
 | 方向分类器（默认 `use_cls=True`） | `use_cls` 为真时仍会下载 cls 文件。原生引擎忽略它，并打一条警告。 |
-| `use_det=False` 或 `use_rec=False` | 抛 `RapidOCRError`。检测和识别始终一起跑。 |
+| `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。两者都为 False 抛 `RapidOCRError`。这两种模式走 CPU 图，严格 GPU 后端会拒绝。 |
 | 单词框和单字框 | `return_word_box` / `return_single_char_box` 会警告。`word_results` 为空。 |
 | `elapse_list` 为 `[det, cls, rec]` | `[None, None, total]`。空白页是 `RapidOCROutput()`（`boxes` / `txts` / `img` 为 `None`）。 |
 | `vis()` 用 OpenCV 按 BGR 绘制 | `vis()` 用 Pillow 绘制并返回 RGB。 |
 | `EngineConfig` 的 CUDA、OpenVINO、TensorRT、MNN 等 | 这些键可以载入和读取，不会生效。上面的 Vulkan 键会生效。 |
 
-只读取 PP-OCRv6 模型的 `txts`、`scores` 和 `boxes` 的调用方，装上这个包即可切换。把 `use_cls=False` 设上可以去掉警告。不要传 `use_det=False` 或更老的 OCR 版本。
+只读取 PP-OCRv6 模型的 `txts`、`scores` 和 `boxes` 的调用方，装上这个包即可切换。把 `use_cls=False` 设上可以去掉警告。不要传更老的 OCR 版本。
 
 本仓库没有 4.x 标签。细节和 C ABI 见 [`docs/API.md`](docs/API.md) 与 [`python/README.md`](python/README.md)。
 
 ### ⚠️ 已知限制
 
 - 没有方向分类器。`use_cls` 不会旋转文本框。
-- 没有只检测或只识别的调用。`use_det=False` 和 `use_rec=False` 会抛 `RapidOCRError`。
 - 没有单词框或单字框。`word_results` 保持为空。
 - 原生引擎跑 PP-OCRv6 ONNX 图。PP-OCRv4 / v5 文件不会被执行。
 - 纯 GPU 模式没有 CPU 神经网络回退。除非设置 `PPOCR_ENABLE_HYBRID_GPU_GRAPH`，hybrid 留在 CPU。
