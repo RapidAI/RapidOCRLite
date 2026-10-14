@@ -5770,7 +5770,7 @@ struct OnnxLite::Impl {
         "FusedPointwiseConvAddSwish", "FusedSEGateMul", "MaxPool", "AveragePool", "GlobalAveragePool",
         "GlobalAveragePool", "ReduceMean", "BatchNormalization", "FusedBatchNormGelu",
         "FusedBatchNormSwish", "FusedBatchNormSwishAdd", "FusedBatchNormHardSwish",
-        "Relu", "Sigmoid", "HardSigmoid",
+        "Relu", "Sigmoid", "HardSigmoid", "FusedScaleShift",
         "FusedHardSwish", "FusedLayerNorm", "Transpose", "Reshape", "Squeeze", "Unsqueeze",
         "FusedQkvSplit", "MatMul", "FusedMatMulBias", "FusedMatMulBiasSwish", "Softmax",
         "Add", "Sub", "Mul", "Div", "Shape", "Slice", "Concat", "Resize"};
@@ -6764,6 +6764,38 @@ bool OnnxLite::RunGpuOnlyInternal(
           node.attr.contains("alpha") ? Attr(node, "alpha").f : (op == VulkanUnaryOp::hard_swish ? 1.F/6.F : .2F),
           node.attr.contains("beta") ? Attr(node, "beta").f : .5F);
       if (ok) { values.emplace(node.out[0], result); aliases_first_input = final_use(node.in[0]); }
+    } else if (node.op == "FusedScaleShift" && node.in.size() == 1) {
+      // Mul(x, scalar) + Add(scalar), e.g. the attention query scaling of the
+      // PP-OCRv6 small recognizer (q * 0.258 + 0). One channel affine over the
+      // whole tensor; the scalar pair is a cached, model-owned constant.
+      if (input->slot.live_elements == 0) return fail();
+      const std::string key = node.out[0] + "/__scale_shift";
+      const VulkanTensorSlot* factors[2] = {nullptr, nullptr};
+      const float values_ss[2] = {Attr(node, "scale").f, Attr(node, "shift").f};
+      for (int k = 0; k < 2; ++k) {
+        const std::string name = key + (k == 0 ? "/scale" : "/shift");
+        auto cached = impl.gpu_constants.find(name);
+        if (cached == impl.gpu_constants.end()) {
+          auto slot = arena.Acquire(1, name, true);
+          if (!slot.resident || !arena.Upload(slot, &values_ss[k], 1)) {
+            arena.Release(slot);
+            return fail();
+          }
+          cached = impl.gpu_constants.emplace(name, slot).first;
+        }
+        factors[k] = &cached->second;
+      }
+      result = *input;
+      if (!final_use(node.in[0])) {
+        result.slot = arena.Acquire(input->slot.live_elements, node.out[0]);
+        if (!result.slot.resident || !arena.Copy(input->slot, result.slot, input->slot.live_elements)) {
+          arena.Release(result.slot); return fail();
+        }
+      }
+      ok = arena.ChannelAffineInplace(result.slot, *factors[0], *factors[1], 1, 1,
+                                      input->slot.live_elements);
+      if (ok) { values.emplace(node.out[0], result); aliases_first_input = final_use(node.in[0]); }
+      else if (!final_use(node.in[0])) arena.Release(result.slot);
     } else if (node.op == "BatchNormalization" && node.in.size() == 5 && input->shape.size() >= 2) {
       // BatchNorm inference is a channel affine.  Deriving the compact
       // scale/bias pair from immutable parameters on the host does not touch
