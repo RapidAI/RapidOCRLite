@@ -3,7 +3,7 @@
 `RapidOCRLite` (RapidOCRLite) is published on PyPI as
 [RapidOCRLite](https://pypi.org/project/RapidOCRLite/), separate from the official
 [rapidocr](https://pypi.org/project/rapidocr/). The import name is still
-`rapidocr`: `pip install RapidOCRLite`, then `from rapidocr import RapidOCR`.
+`rapidocr`: `pip install rapidocrlite`, then `from rapidocr import RapidOCR`.
 Both projects install the same `rapidocr` package directory, so do not install
 them in one environment (run `pip uninstall rapidocr` first). RapidOCRLite is the lightweight native PP-OCRv6 engine with a RapidOCR-compatible API.
 The ONNX Runtime 3.x line (latest tag `v3.9.2`) stays in RapidAI/RapidOCR.
@@ -107,7 +107,7 @@ and from the Actions “Run workflow” button. A normal push does not upload
 anything to PyPI. Publishing happens only when a `v5*` tag is pushed.
 
 `5.0.0a6` is a pre-release: `pip install --pre RapidOCRLite` or
-`pip install RapidOCRLite==5.0.0a6`. `pip install rapidocr` installs the
+`pip install rapidocrlite==5.0.0a6`. `pip install rapidocr` installs the
 official 3.x package instead.
 
 How to turn on PyPI Trusted Publishing (or the API-token fallback) and which

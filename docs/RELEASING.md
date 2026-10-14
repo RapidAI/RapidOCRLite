@@ -37,7 +37,7 @@ push of a `v5*` tag. It does not run for a branch push, a pull request, or a
 manual run from a branch.
 
 `5.0.0a6` is a pre-release, so install it with `pip install --pre RapidOCRLite`
-or `pip install RapidOCRLite==5.0.0a6`. `pip install rapidocr` still installs
+or `pip install rapidocrlite==5.0.0a6`. `pip install rapidocr` still installs
 the official 3.x package, which is a different project.
 
 ## Trusted publisher

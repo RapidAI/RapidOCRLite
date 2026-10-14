@@ -118,7 +118,7 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 
 ### 🛠️ 安装
 
-这一版在 PyPI 上的名字是 **`RapidOCRLite`**，import 名仍是 `rapidocr`，用法与 `main` 一致：`pip install RapidOCRLite`，然后 `from rapidocr import RapidOCR`。两个发行包安装的是同一个 `rapidocr` 包目录，所以不要在同一个环境里同时安装 `RapidOCRLite` 和官方 `rapidocr`；先执行 `pip uninstall rapidocr`。
+这一版在 PyPI 上的名字是 **`rapidocrlite`**，import 名仍是 `rapidocr`，用法与 `main` 一致：`pip install rapidocrlite`，然后 `from rapidocr import RapidOCR`。两个发行包安装的是同一个 `rapidocr` 包目录，所以不要在同一个环境里同时安装 `rapidocrlite` 和官方 `rapidocr`；先执行 `pip uninstall rapidocr`。
 
 `5.0.0a6` 是预发布版，推送 `v5*` 标签（见[发布](#-发布)）之后才会出现在 PyPI 上。之后这样安装：
 

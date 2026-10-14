@@ -118,7 +118,7 @@ A second 3.10.0 run on the same host gave 0.3040 s/img for detection and 0.0079 
 
 ### 🛠️ Installation
 
-The PyPI name of this line is **`RapidOCRLite`**; the import name stays `rapidocr`, so code is the same as on `main`: `pip install RapidOCRLite`, then `from rapidocr import RapidOCR`. Both distributions install the same `rapidocr` package directory, so do not install `RapidOCRLite` and the official `rapidocr` in one environment; run `pip uninstall rapidocr` first.
+The PyPI name of this line is **`rapidocrlite`**; the import name stays `rapidocr`, so code is the same as on `main`: `pip install rapidocrlite`, then `from rapidocr import RapidOCR`. Both distributions install the same `rapidocr` package directory, so do not install `rapidocrlite` and the official `rapidocr` in one environment; run `pip uninstall rapidocr` first.
 
 `5.0.0a6` is a pre-release. It is on PyPI only after a `v5*` tag is published (see [Releasing](#-releasing)). Then install it with:
 
