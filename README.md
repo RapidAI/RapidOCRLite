@@ -102,19 +102,19 @@ MoltenVK does not report per-dispatch timestamps, so `PPOCR_GPU_PROFILE` shows o
 
 Method follows the [open-source OCR model comparison](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/): datasets [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset) (212 images) and [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset) (310 crops) loaded with `datasets`, metrics from [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 and [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1. Detection is det-only (`use_det=True, use_cls=False, use_rec=False`); recognition is rec-only on the crops (`use_det=False, use_cls=False, use_rec=True`). Speed is Python wall clock per image after one warmup, one process at a time.
 
-Machine: shared 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Python 3.12; other jobs were running on the host (load average about 6–7), so the speed columns are indicative only. `rapidocr==3.10.0` with onnxruntime 1.31.0 (default intra/inter threads). RapidOCRLite built from source at this commit, native CPU engine (AVX-512, 8 threads). Both use their default models, which are the same PP-OCRv6 **small** det/rec ONNX files (identical SHA256); RapidOCRLite downloaded them through `default_models.yaml`. All other settings are the shared `config.yaml` defaults.
+Machine: shared 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Python 3.12; other jobs were running on the host (load average 5–11 during the runs), so speed is the median of 3 interleaved runs per package and is indicative only. `rapidocr==3.10.0` with onnxruntime 1.31.0 (default intra/inter threads). RapidOCRLite built from source at this commit, native CPU engine (AVX-512, 8 threads). Both use their default models, which are the same PP-OCRv6 **small** det/rec ONNX files (identical SHA256); RapidOCRLite downloaded them through `default_models.yaml`. All other settings are the shared `config.yaml` defaults.
 
 | Dataset | Metric | rapidocr 3.10.0 | RapidOCRLite |
 | --- | --- | ---: | ---: |
 | text_det | Precision | 0.8540 | 0.8524 |
 | text_det | Recall | 0.8445 | 0.8468 |
 | text_det | H-mean | 0.8492 | 0.8496 |
-| text_det | Speed (s/img) | 0.2820 | 0.2591 |
+| text_det | Speed (s/img, median of 3) | 0.4812 | 0.3602 |
 | text_rec | Exact Match | 0.8419 | 0.8355 |
 | text_rec | Char Match | 0.9515 | 0.9510 |
-| text_rec | Speed (s/img) | 0.0077 | 0.0162 |
+| text_rec | Speed (s/img, median of 3) | 0.0182 | 0.0180 |
 
-A second 3.10.0 run on the same host gave 0.3040 s/img for detection and 0.0079 s/img for recognition, with the same metrics. On text_rec, 9 of 310 lines decode differently from 3.x, mostly long lines where the bilinear resize differs slightly from OpenCV's.
+Runs (s/img): 3.10.0 det 0.4812 / 0.4998 / 0.3544, rec 0.0193 / 0.0156 / 0.0182; RapidOCRLite det 0.3602 / 0.3048 / 0.4078, rec 0.0180 / 0.0129 / 0.0208. Metrics were identical in every run. On text_rec, 9 of 310 lines decode differently from 3.x, mostly long lines where the bilinear resize differs slightly from OpenCV's.
 
 ### 🛠️ Installation
 

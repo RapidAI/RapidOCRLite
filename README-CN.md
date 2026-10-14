@@ -102,19 +102,19 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 
 方法沿用[开源 OCR 模型对比](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/)：测试集 [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset)（212 张）和 [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset)（310 张裁剪图），用 `datasets` 加载，指标来自 [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 和 [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1。检测只跑检测（`use_det=True, use_cls=False, use_rec=False`），识别只在裁剪图上跑识别（`use_det=False, use_cls=False, use_rec=True`）。速度是预热一次后的 Python 单图耗时，两边依次运行。
 
-机器：共享的 8 vCPU Intel Xeon（family 6，model 207，KVM），支持 AVX-512，Python 3.12；测试时主机上有其他任务（load average 约 6–7），速度列仅供参考。`rapidocr==3.10.0` 搭配 onnxruntime 1.31.0（默认线程数）。RapidOCRLite 由本提交源码构建，原生 CPU 引擎（AVX-512，8 线程）。两边都用默认模型，即同一组 PP-OCRv6 **small** 检测/识别 ONNX 文件（SHA256 相同）；RapidOCRLite 通过 `default_models.yaml` 自动下载。其余设置均为共用的 `config.yaml` 默认值。
+机器：共享的 8 vCPU Intel Xeon（family 6，model 207，KVM），支持 AVX-512，Python 3.12；测试时主机上有其他任务（运行期间 load average 5–11），速度取每个包 3 次交替运行的中位数，仅供参考。`rapidocr==3.10.0` 搭配 onnxruntime 1.31.0（默认线程数）。RapidOCRLite 由本提交源码构建，原生 CPU 引擎（AVX-512，8 线程）。两边都用默认模型，即同一组 PP-OCRv6 **small** 检测/识别 ONNX 文件（SHA256 相同）；RapidOCRLite 通过 `default_models.yaml` 自动下载。其余设置均为共用的 `config.yaml` 默认值。
 
 | 数据集 | 指标 | rapidocr 3.10.0 | RapidOCRLite |
 | --- | --- | ---: | ---: |
 | text_det | Precision | 0.8540 | 0.8524 |
 | text_det | Recall | 0.8445 | 0.8468 |
 | text_det | H-mean | 0.8492 | 0.8496 |
-| text_det | 速度（秒/张） | 0.2820 | 0.2591 |
+| text_det | 速度（秒/张，3 次中位数） | 0.4812 | 0.3602 |
 | text_rec | Exact Match | 0.8419 | 0.8355 |
 | text_rec | Char Match | 0.9515 | 0.9510 |
-| text_rec | 速度（秒/张） | 0.0077 | 0.0162 |
+| text_rec | 速度（秒/张，3 次中位数） | 0.0182 | 0.0180 |
 
-同一主机上 3.10.0 第二次运行：检测 0.3040 秒/张，识别 0.0079 秒/张，指标不变。text_rec 上 310 行中有 9 行与 3.x 解码不同，多为长行，原因是双线性缩放与 OpenCV 有细微差别。
+各次运行（秒/张）：3.10.0 检测 0.4812 / 0.4998 / 0.3544，识别 0.0193 / 0.0156 / 0.0182；RapidOCRLite 检测 0.3602 / 0.3048 / 0.4078，识别 0.0180 / 0.0129 / 0.0208。每次指标都相同。text_rec 上 310 行中有 9 行与 3.x 解码不同，多为长行，原因是双线性缩放与 OpenCV 有细微差别。
 
 ### 🛠️ 安装
 
