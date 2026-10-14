@@ -180,7 +180,10 @@ class PersistentIndexExecutor {
   explicit PersistentIndexExecutor(int workers) : workers_(std::max(1, workers)) {
     threads_.reserve(static_cast<std::size_t>(workers_ - 1));
     for (int worker = 1; worker < workers_; ++worker) {
-      threads_.emplace_back([this, worker] { WorkerLoop(worker); });
+      threads_.emplace_back([this, worker] {
+        (void)detail::kernels::EnableFlushDenormals();
+        WorkerLoop(worker);
+      });
     }
   }
 
@@ -2019,6 +2022,7 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) con
     });
   }
   std::lock_guard lock(impl_->recognize_mutex);
+  detail::kernels::FloatModeGuard float_mode;
   std::unique_lock<std::recursive_mutex> gpu_lock(SharedGpuMutex(), std::defer_lock);
   if (impl_->opt.backend != Backend::cpu_only) gpu_lock.lock();
   if(image.empty()) Fail("invalid RGB image");
@@ -2386,6 +2390,7 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
   std::vector<std::vector<Result>> output(images.size());
   if (images.empty()) return output;
   std::lock_guard lock(impl_->recognize_mutex);
+  detail::kernels::FloatModeGuard float_mode;
   std::unique_lock<std::recursive_mutex> gpu_lock(SharedGpuMutex(), std::defer_lock);
   if (impl_->opt.backend != Backend::cpu_only) gpu_lock.lock();
   // The GPU-only path retains image/crop tensors on its one Vulkan queue. A

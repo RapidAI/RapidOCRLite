@@ -1,6 +1,9 @@
 #include "kernels.hpp"
 
 #include <algorithm>
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <xmmintrin.h>
+#endif
 #include <array>
 #include <limits>
 #include <atomic>
@@ -673,6 +676,35 @@ int RequestedParallelism() noexcept {
 // serialising rare concurrent callers prevents nested graph parallelism from
 // multiplying the configured CPU budget.
 thread_local bool g_parallel_worker = false;
+}  // namespace
+
+unsigned EnableFlushDenormals() noexcept {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+  const unsigned previous = _mm_getcsr();
+  _mm_setcsr(previous | 0x8040u);  // FTZ (bit 15) | DAZ (bit 6)
+  return previous;
+#elif defined(__aarch64__) && !defined(_MSC_VER)
+  std::uint64_t fpcr;
+  __asm__ __volatile__("mrs %0, fpcr" : "=r"(fpcr));
+  __asm__ __volatile__("msr fpcr, %0" : : "r"(fpcr | (std::uint64_t(1) << 24)));
+  return static_cast<unsigned>(fpcr);
+#else
+  return 0;
+#endif
+}
+
+void RestoreFloatMode(unsigned previous) noexcept {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+  _mm_setcsr(previous);
+#elif defined(__aarch64__) && !defined(_MSC_VER)
+  const std::uint64_t value = previous;
+  __asm__ __volatile__("msr fpcr, %0" : : "r"(value));
+#else
+  (void)previous;
+#endif
+}
+
+namespace {
 
 template <class Fn>
 void OverflowParallelFor(int count, Fn&& fn);
@@ -682,7 +714,10 @@ class PersistentParallelExecutor {
   explicit PersistentParallelExecutor(int workers) : workers_(std::max(1, workers)) {
     threads_.reserve(static_cast<std::size_t>(workers_ - 1));
     for (int worker = 1; worker < workers_; ++worker) {
-      threads_.emplace_back([this, worker] { WorkerLoop(worker); });
+      threads_.emplace_back([this, worker] {
+        (void)EnableFlushDenormals();
+        WorkerLoop(worker);
+      });
     }
   }
 

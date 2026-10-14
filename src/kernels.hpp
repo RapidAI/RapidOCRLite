@@ -97,6 +97,22 @@ void ExactGelu(float* dst, const float* src, std::size_t n) noexcept;
 // PPOCR_BENCH_THREADS budget instead of stacking two full pools. Zero restores
 // the process-wide worker count. Nested ParallelFor workers ignore the cap.
 void SetInnerParallelismCap(int cap) noexcept;
+// Flush-to-zero / denormals-are-zero for the current thread. PP-OCRv6 small
+// produces subnormal activations in its deepest blocks; on x86 and ARM every
+// operation on them takes a microcode assist, which made two 1x1 convolutions
+// about 40% of the detector time. Their contribution to any output is below
+// float resolution. Returns the previous control word for FloatModeGuard.
+unsigned EnableFlushDenormals() noexcept;
+void RestoreFloatMode(unsigned previous) noexcept;
+struct FloatModeGuard {
+  FloatModeGuard() noexcept : previous_(EnableFlushDenormals()) {}
+  ~FloatModeGuard() noexcept { RestoreFloatMode(previous_); }
+  FloatModeGuard(const FloatModeGuard&) = delete;
+  FloatModeGuard& operator=(const FloatModeGuard&) = delete;
+ private:
+  unsigned previous_;
+};
+
 struct InnerParallelismGuard {
   explicit InnerParallelismGuard(int cap) noexcept { SetInnerParallelismCap(cap); }
   ~InnerParallelismGuard() noexcept { SetInnerParallelismCap(0); }
