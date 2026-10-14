@@ -56,3 +56,10 @@ Unmet: rec-only everywhere, M4 det (+3% only). Needs: SME kernels on M4 (or fewe
 | full | 0.3145 | 0.1089 | 2.9x |
 CI c9af2fa: sdk/metal/vulkan green; wheels 3291253 failed on Windows with HTTP 503 during a download (infra), c9af2fa wheels pending.
 x86 GEMM (MLAS-class) and executor-overhead items not started this round.
+- 9bf4a41 AVX-512 expand weight-stationary 8x32 blocking: single-thread Conv.49 2.95->2.3 ms, bit-identical. AVX-512 12-row variant slower; AVX2 6x16 port neutral/slower (reverted). Executor overhead investigation: the '2 ms' gap was profiler printing; real RunCtcTop1 wall == sum of ops (no executor overhead to cut).
+
+## 19:10 status (main b4cebec)
+- 9bf4a41 AVX-512 expand weight-stationary blocking (bit-identical); b4cebec dynamic pool chunks (identical outputs x86+M4).
+- Executor overhead: measured RunCtcTop1 wall == sum of ops; earlier "2 ms gap" was profiler printing. Nothing to cut.
+- Tried+reverted: AVX-512 12-row tile (spills), AVX2 6x16 blocked port (neutral), row-split expand parallelism (helps Conv.49 only, noise-level net).
+- M4 @ b4cebec (2 runs, load 6-7): 3.x det .114 rec .00584 full .314 | Lite det .082 (1.40x) rec .00544 (1.07x) full .107 (2.9x)
