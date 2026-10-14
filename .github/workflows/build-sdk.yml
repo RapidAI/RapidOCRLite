@@ -156,14 +156,78 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+
+  sdk-linux-x86_64:
+    name: SDK Linux x86_64 (manylinux2014)
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux2014_x86_64:2025.03.23-1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package SDK
+        run: |
+          set -euo pipefail
+          # manylinux2014 image: cmake/ninja via yum or preinstalled; use /opt/python for a recent python
+          PYBIN=/opt/python/cp312-cp312/bin
+          if [ ! -x "$PYBIN/python" ]; then PYBIN=/opt/python/cp39-cp39/bin; fi
+          VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          # Prefer ninja if present; else Unix Makefiles
+          if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
+          cmake -S . -B build "${GEN[@]}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build -j"$(nproc)"
+          cmake --install build
+          NAME="RapidOCRLite-SDK-linux_x86_64-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          tar -czf "dist/${NAME}.tar.gz" "$NAME"
+          # Also emit a zip for the "SDK zips" set
+          (cd "$NAME" && zip -qr "../dist/${NAME}.zip" .)
+          # Prefer a top-level folder in the zip like the Windows archives
+          rm -f "dist/${NAME}.zip"
+          zip -qr "dist/${NAME}.zip" "$NAME"
+          ls -la dist
+          test -f "dist/${NAME}.tar.gz"
+          test -f "dist/${NAME}.zip"
+          # Sanity: shared lib is ELF x86_64, linked against old glibc
+          so=$(find "$NAME" -name 'libppocr.so*' | head -1)
+          test -n "$so"
+          file "$so"
+          # Fail if any GLIBC_2.18+ symbol is required (manylinux2014 = 2.17)
+          if command -v auditwheel >/dev/null 2>&1; then
+            auditwheel show "$so" || true
+          fi
+          if readelf -V "$so" 2>/dev/null | grep -E 'GLIBC_2\.(1[89]|[2-9][0-9])' ; then
+            echo "SDK linked against glibc newer than 2.17" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdk-linux_x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
   attach-release:
     name: Attach SDKs to GitHub Release
-    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64]
+    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64, sdk-linux-x86_64]
     if: >-
       always() &&
       needs.sdk-windows-x64.result == 'success' &&
       needs.sdk-windows-x86.result == 'success' &&
       needs.sdk-macos-arm64.result == 'success' &&
+      needs.sdk-linux-x86_64.result == 'success' &&
       (
         (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v5')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
@@ -181,7 +245,7 @@ jobs:
       - name: List SDK archives
         run: |
           ls -la dist
-          test "$(ls dist/RapidOCRLite-SDK-*.zip dist/RapidOCRLite-SDK-*.tar.gz 2>/dev/null | wc -l)" -ge 3
+          test "$(ls dist/RapidOCRLite-SDK-* 2>/dev/null | wc -l)" -ge 4
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
