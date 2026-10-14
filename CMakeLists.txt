@@ -146,7 +146,14 @@ endif()
 if(MSVC)
   target_compile_options(ppocr_objects PRIVATE /W4 /permissive- /O2 /fp:fast)
 else()
-  target_compile_options(ppocr_objects PRIVATE -Wall -Wextra -Wpedantic -O3 -ffast-math -funroll-loops)
+  target_compile_options(ppocr_objects PRIVATE -Wall -Wextra -Wpedantic -O3 -ffast-math -funroll-loops
+      -U__FINITE_MATH_ONLY__ -D__FINITE_MATH_ONLY__=0)
+  # -ffast-math defines __FINITE_MATH_ONLY__=1, and old glibc headers
+  # (manylinux2014, glibc 2.17) then redirect expf/powf/hypot to __*_finite.
+  # glibc >= 2.31 no longer lets new programs link those, so libppocr.a was
+  # unusable on current distros. Resetting only the macro keeps the fast-math
+  # code generation (bit-identical results) and calls the plain functions;
+  # -fno-finite-math-only would also change codegen and score bits.
 endif()
 
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR};${CMAKE_GENERATOR_PLATFORM}" PPOCR_CPU)
@@ -201,6 +208,9 @@ if(PPOCR_BUILD_STATIC)
   if(UNIX AND NOT APPLE)
     target_link_libraries(ppocr PUBLIC ${CMAKE_DL_LIBS})
   endif()
+  # Consumers of the static archive need the thread library (glibc < 2.34).
+  find_package(Threads REQUIRED)
+  target_link_libraries(ppocr PUBLIC Threads::Threads)
   if(PPOCR_METAL_LINK)
     target_link_libraries(ppocr PUBLIC ${PPOCR_METAL_LINK})
   endif()
@@ -359,8 +369,14 @@ if(NOT SKBUILD)
       ${CMAKE_CURRENT_BINARY_DIR}/ppocrConfig.cmake
       ${CMAKE_CURRENT_BINARY_DIR}/ppocrConfigVersion.cmake
       DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ppocr)
+  install(FILES LICENSE DESTINATION .)
+  install(FILES cmake/SDK-README.md DESTINATION . RENAME README.md)
 else()
   # scikit-build-core stages the shared library next to the Python package.
+  # One unversioned file: wheels cannot carry symlinks, so a versioned
+  # library would otherwise ship three full copies.
+  set_property(TARGET ppocr_shared PROPERTY VERSION)
+  set_property(TARGET ppocr_shared PROPERTY SOVERSION)
   if(NOT PPOCR_BUILD_SHARED)
     message(FATAL_ERROR "The Python wheel needs PPOCR_BUILD_SHARED=ON")
   endif()
