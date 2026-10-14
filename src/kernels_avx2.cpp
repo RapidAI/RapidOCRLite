@@ -828,6 +828,36 @@ void Avx2GemmAccumulateRows(float* dst, const float* a, const float* b,
   static const bool pair_rows =
       std::getenv("PPOCR_DISABLE_AVX2_GEMM_ACC2") == nullptr;
   int row = first_row;
+  // Six rows x 16 columns (12 accumulators, 15 ymm live) cut B reloads 3x
+  // vs the row pair; per-row ascending-K FMA order unchanged (bit-identical).
+  static const bool six_rows = std::getenv("PPOCR_DISABLE_AVX2_GEMM_ACC6") == nullptr;
+  if (pair_rows && six_rows && cols % 16 == 0) {
+    for (; row + 5 < last_row; row += 6) {
+      for (int col = 0; col + 16 <= cols; col += 16) {
+        __m256 lo[6], hi[6];
+        const float* left[6];
+        for (int r = 0; r < 6; ++r) {
+          left[r] = a + std::size_t(row + r) * depth;
+          lo[r] = _mm256_loadu_ps(dst + std::size_t(row + r) * cols + col);
+          hi[r] = _mm256_loadu_ps(dst + std::size_t(row + r) * cols + col + 8);
+        }
+        for (int k = 0; k < depth; ++k) {
+          const float* right = b + std::size_t(k) * cols + col;
+          const __m256 r0 = _mm256_loadu_ps(right);
+          const __m256 r1 = _mm256_loadu_ps(right + 8);
+          for (int r = 0; r < 6; ++r) {
+            const __m256 l = _mm256_set1_ps(left[r][k]);
+            lo[r] = _mm256_fmadd_ps(l, r0, lo[r]);
+            hi[r] = _mm256_fmadd_ps(l, r1, hi[r]);
+          }
+        }
+        for (int r = 0; r < 6; ++r) {
+          _mm256_storeu_ps(dst + std::size_t(row + r) * cols + col, lo[r]);
+          _mm256_storeu_ps(dst + std::size_t(row + r) * cols + col + 8, hi[r]);
+        }
+      }
+    }
+  }
   if (pair_rows) {
     for (; row + 1 < last_row; row += 2) {
       float* out0 = dst + std::size_t(row) * cols;

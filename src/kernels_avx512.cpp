@@ -2072,6 +2072,40 @@ void Avx512GemmAccumulateRows(float* dst, const float* a, const float* b,
   static const bool pair_rows =
       std::getenv("PPOCR_DISABLE_AVX512_GEMM_ACC2") == nullptr;
   int row = first_row;
+  // Four rows x 64 columns (16 accumulators): each B vector feeds four rows,
+  // halving B reloads vs the row pair; per-row ascending-K FMA order is
+  // unchanged (bit-identical). Only full 64-column tiles; tails go below.
+  static const bool quad_rows = std::getenv("PPOCR_DISABLE_AVX512_GEMM_ACC4") == nullptr;
+  if (pair_rows && quad_rows && cols % 64 == 0) {
+    for (; row + 3 < last_row; row += 4) {
+      for (int col = 0; col + 64 <= cols; col += 64) {
+        __m512 acc[4][4];
+        const float* left[4];
+        for (int r = 0; r < 4; ++r) {
+          left[r] = a + std::size_t(row + r) * depth;
+          for (int v = 0; v < 4; ++v)
+            acc[r][v] = _mm512_loadu_ps(dst + std::size_t(row + r) * cols + col + v * 16);
+        }
+        for (int k = 0; k < depth; ++k) {
+          const float* right = b + std::size_t(k) * cols + col;
+          const __m512 r0 = _mm512_loadu_ps(right);
+          const __m512 r1 = _mm512_loadu_ps(right + 16);
+          const __m512 r2 = _mm512_loadu_ps(right + 32);
+          const __m512 r3 = _mm512_loadu_ps(right + 48);
+          for (int r = 0; r < 4; ++r) {
+            const __m512 l = _mm512_set1_ps(left[r][k]);
+            acc[r][0] = _mm512_fmadd_ps(l, r0, acc[r][0]);
+            acc[r][1] = _mm512_fmadd_ps(l, r1, acc[r][1]);
+            acc[r][2] = _mm512_fmadd_ps(l, r2, acc[r][2]);
+            acc[r][3] = _mm512_fmadd_ps(l, r3, acc[r][3]);
+          }
+        }
+        for (int r = 0; r < 4; ++r)
+          for (int v = 0; v < 4; ++v)
+            _mm512_storeu_ps(dst + std::size_t(row + r) * cols + col + v * 16, acc[r][v]);
+      }
+    }
+  }
   if (pair_rows) {
     for (; row + 1 < last_row; row += 2) {
       float* out0 = dst + std::size_t(row) * cols;
