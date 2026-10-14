@@ -3367,8 +3367,15 @@ void SmallConvIm2colGemm(float* dst, const std::vector<const float*>& planes,
   constexpr int kStrip = kConvGemmStrip;
   const int strips = (pixels + kStrip - 1) / kStrip;
   kernels::ParallelForRange(strips, [&](int first, int last) {
-    std::vector<float> cols(std::size_t(kStrip) * depth);
-    std::vector<float> out(std::size_t(kStrip) * output_channels);
+    // Thread-local scratch: a fresh zeroed vector per call (up to ~0.9 MB on
+    // Apple) cost page faults + memset on every conv. Every element is
+    // written below before it is read.
+    thread_local std::vector<float> cols_buf, out_buf;
+    if (cols_buf.size() < std::size_t(kStrip) * depth) cols_buf.resize(std::size_t(kStrip) * depth);
+    if (out_buf.size() < std::size_t(kStrip) * output_channels)
+      out_buf.resize(std::size_t(kStrip) * output_channels);
+    float* const cols_data = cols_buf.data();
+    float* const out_data = out_buf.data();
     for (int strip = first; strip < last; ++strip) {
       const int p0 = strip * kStrip;
       const int count = std::min(kStrip, pixels - p0);
@@ -3380,7 +3387,7 @@ void SmallConvIm2colGemm(float* dst, const std::vector<const float*>& planes,
         iy0[i] = i < count ? oy * stride_h - pad_top : -1000000;
         ix0[i] = (p - oy * output_w) * stride_w - pad_left;
       }
-      float* row = cols.data();
+      float* row = cols_data;
       for (int ky = 0; ky < kernel_h; ++ky) {
         for (int kx = 0; kx < kernel_w; ++kx) {
           // Tap-major build: index list is reused across every channel plane.
@@ -3399,11 +3406,11 @@ void SmallConvIm2colGemm(float* dst, const std::vector<const float*>& planes,
         }
       }
       for (int oc = 0; oc < output_channels; ++oc)
-        std::fill_n(out.data() + std::size_t(oc) * kStrip, kStrip, bias ? bias[oc] : 0.F);
-      kernels::GemmAccumulate(out.data(), weights, cols.data(), output_channels, kStrip,
+        std::fill_n(out_data + std::size_t(oc) * kStrip, kStrip, bias ? bias[oc] : 0.F);
+      kernels::GemmAccumulate(out_data, weights, cols_data, output_channels, kStrip,
                               depth);
       for (int oc = 0; oc < output_channels; ++oc) {
-        const float* o = out.data() + std::size_t(oc) * kStrip;
+        const float* o = out_data + std::size_t(oc) * kStrip;
         float* d = dst + std::size_t(oc) * pixels + p0;
         for (int i = 0; i < count; ++i) d[i] = relu ? std::max(o[i], 0.F) : o[i];
       }

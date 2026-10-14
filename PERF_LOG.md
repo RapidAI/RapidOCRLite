@@ -64,3 +64,7 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - Tried+reverted: AVX-512 12-row tile (spills), AVX2 6x16 blocked port (neutral), row-split expand parallelism (helps Conv.49 only, noise-level net).
 - M4 @ b4cebec (2 runs, load 6-7): 3.x det .114 rec .00584 full .314 | Lite det .082 (1.40x) rec .00544 (1.07x) full .107 (2.9x)
 - 19:45 x86 final_x86.sh @ b4cebec, NOT quiet (load 7-14 on 8 vCPU), medians of 3-4: 3.x det .388 rec .0096 full .521 | AVX-512 det .158 rec .0093 full .222 | AVX2 det .209 rec .0122 full .265. Paired-run rec AVX-512 vs 3.x: 10.2/11.2, 8.7/7.9, 9.9/12.7, 8.1/8.0 ms. README not updated (no quiet host).
+- 19:40 MLAS-style packed weights [rows/8][K][8] for AVX-512 blocked expand: Conv.49 ST 2.30 -> 2.24 ms (noise, load 12) -> not kept. Broadcast loads were already L1-resident.
+- 20:05 M4 QUIET 5-run medians @ b4cebec (idle load 1.6): 3.x det .1145 rec .00587 full .3142 | Lite det .0817 (1.40x) rec .00543 (1.08x) full .1075 (2.92x)
+- im2col conv scratch made thread_local (was fresh zeroed vector per call, up to 0.9 MB): M4 MaxPool.0_concat_conv 0.39 -> 0.20 ms; rec 5.43 -> 5.37 ms, det .0817 -> .0810. Identical outputs x86 (512/AVX2) + M4.
+- M4 thread/chunk/spin sweeps: all ~5.4 ms (4 threads best). CTC head 0.57 ms is bandwidth on 28 MB fp32 weights.
