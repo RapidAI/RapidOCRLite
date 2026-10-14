@@ -23,6 +23,9 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
 #include <chrono>
 #include <vector>
 
@@ -706,6 +709,17 @@ int RequestedParallelism() noexcept {
   // the public default must remain throughput-neutral for all three model
   // tiers rather than embedding one host-specific benchmark setting.
   int result = std::min(16, static_cast<int>(hw == 0 ? 4 : hw));
+#if defined(__APPLE__)
+  // Apple big.LITTLE: equal-sized tiles on efficiency cores become the
+  // straggler of every ParallelFor (M4 rec 11.1 ms on 10 threads vs 8.3 ms on
+  // the 4 performance cores, det unchanged). Default to performance cores.
+  {
+    int perf = 0;
+    std::size_t size = sizeof(perf);
+    if (sysctlbyname("hw.perflevel0.logicalcpu", &perf, &size, nullptr, 0) == 0 && perf > 0)
+      result = std::min(result, perf);
+  }
+#endif
   if (const char* configured = std::getenv("PPOCR_BENCH_THREADS")) {
     char* end = nullptr;
     const long parsed = std::strtol(configured, &end, 10);
@@ -1759,6 +1773,9 @@ void Gelu(float* dst, const float* src, std::size_t n,
   ExactGelu(dst, src, n);
 }
 
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+float32x4_t NeonGeluPs(float32x4_t x) noexcept;
+#endif
 void ExactGelu(float* dst, const float* src, std::size_t n) noexcept {
   if (!dst || !src || n == 0) return;
   static const bool simd_enabled =
@@ -1794,6 +1811,28 @@ void ExactGelu(float* dst, const float* src, std::size_t n) noexcept {
     } else {
       Avx2ExactGelu(dst, src, n);
     }
+    return;
+  }
+#endif
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+  // NEON erf polynomial (same NeonGeluPs the fused NEON expand kernel uses);
+  // scalar std::erf cost ~1 ms per recognizer block on M4.
+  if (simd_enabled && HasNeon()) {
+    const auto neon = [&](int first, int last) {
+      for (int block = first; block < last; ++block) {
+        const std::size_t begin = std::size_t(block) * 8192;
+        const std::size_t end = std::min<std::size_t>(n, begin + 8192);
+        std::size_t i = begin;
+        for (; i + 4 <= end; i += 4) vst1q_f32(dst + i, NeonGeluPs(vld1q_f32(src + i)));
+        for (; i < end; ++i) {
+          const float x = src[i];
+          dst[i] = x * .5F * (1.F + std::erf(x * 0.7071067811865475244F));
+        }
+      }
+    };
+    const int blocks = static_cast<int>((n + 8191) / 8192);
+    if (n >= 32768 && blocks > 1) ParallelFor(blocks, neon);
+    else neon(0, blocks);
     return;
   }
 #endif
@@ -2779,7 +2818,7 @@ void ExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weig
     // Column tiles keep the [hidden x tile] activation in cache and let the
     // pool run GELU/bias work in parallel; each tile is an independent GEMM
     // pair (same per-element arithmetic for any tiling or thread count).
-    const std::size_t kTile = plane >= 4096 ? 512 : 64;
+    const std::size_t kTile = plane >= 4096 ? 512 : plane;
     const int tiles = int((plane + kTile - 1) / kTile);
     const auto body = [&](int first, int last) {
       thread_local std::vector<float> hidden_act;
@@ -6235,8 +6274,16 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
         int best = 0;
         float maximum = row[0];
         for (int c = 1; c < vocab; ++c) if (row[c] > maximum) { maximum = row[c]; best = c; }
+        // vvexpf over the shifted row; scalar libm exp was ~2 ms of the
+        // 40x18710 small-model head.
+        thread_local std::vector<float> shifted;
+        shifted.resize(std::size_t(vocab));
+        const float negmax = -maximum;
+        vDSP_vsadd(row, 1, &negmax, shifted.data(), 1, vDSP_Length(vocab));
+        const int count = vocab;
+        vvexpf(shifted.data(), shifted.data(), &count);
         float denom = 0.F;
-        for (int c = 0; c < vocab; ++c) denom += std::exp(row[c] - maximum);
+        vDSP_sve(shifted.data(), 1, &denom, vDSP_Length(vocab));
         indices[r] = best;
         denoms[std::size_t(r)] = denom;
       }
