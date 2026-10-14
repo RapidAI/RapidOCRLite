@@ -1381,7 +1381,7 @@ void Avx512GemmPacked32(float* dst, const float* a, const float* packed_b,
   if (fuse_ctc) {
     for (int row = 0; row < rows; ++row) {
       ctc_arg[row] = 0;
-      ctc_max[row] = -std::numeric_limits<float>::infinity();
+      ctc_max[row] = std::numeric_limits<float>::lowest();
       ctc_sum[row] = 0.F;
     }
   }
@@ -1429,12 +1429,12 @@ void Avx512GemmPacked32(float* dst, const float* a, const float* packed_b,
         if (n_len > 16) _mm512_mask_storeu_ps(out[r] + n0 + 16, mask1, v1[r]);
       }
     };
-    const __m512 ninf = _mm512_set1_ps(-std::numeric_limits<float>::infinity());
+    const __m512 ninf = _mm512_set1_ps(std::numeric_limits<float>::lowest());
     const auto update_ctc_row = [&](__m512 v0, __m512 v1, int row) noexcept {
       v0 = _mm512_mask_mov_ps(ninf, mask0, v0);
       v1 = n_len > 16 ? _mm512_mask_mov_ps(ninf, mask1, v1) : ninf;
       const float pmax0 = _mm512_reduce_max_ps(v0);
-      const float pmax1 = n_len > 16 ? _mm512_reduce_max_ps(v1) : -std::numeric_limits<float>::infinity();
+      const float pmax1 = n_len > 16 ? _mm512_reduce_max_ps(v1) : std::numeric_limits<float>::lowest();
       float pmax = pmax0;
       int parg = n0;
       if (pmax1 > pmax0) {

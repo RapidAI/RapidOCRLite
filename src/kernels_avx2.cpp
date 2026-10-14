@@ -2958,7 +2958,7 @@ void Avx2GemmPacked32(float* dst, const float* a, const float* packed_b,
   const bool fuse_ctc = ctc_arg && ctc_max && ctc_sum;
   if ((!dst && !fuse_ctc) || !a || !packed_b || rows <= 0 || cols <= 0 || depth <= 0) return;
   if (fuse_ctc) {
-    const float ninf_s = -std::numeric_limits<float>::infinity();
+    const float ninf_s = std::numeric_limits<float>::lowest();
     for (int row = 0; row < rows; ++row) {
       ctc_arg[row] = 0;
       ctc_max[row] = ninf_s;

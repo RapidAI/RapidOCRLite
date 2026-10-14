@@ -4353,7 +4353,7 @@ Tensor Pool(const Node& n, const Tensor& a, bool average) {
     kernels::AveragePool3x2Valid(o.data.data(), a.data.data(), std::size_t(N) * C, H, W);
     return o;
   }
-  for(int n0=0;n0<N;++n0)for(int c=0;c<C;++c)for(int y=0;y<OH;++y)for(int z=0;z<OW;++z){float v=average?0:-std::numeric_limits<float>::infinity();int cnt{};for(int ky=0;ky<KH;++ky)for(int kx=0;kx<KW;++kx){int iy=y*int(st[0])-int(pd[0])+ky,ix=z*int(st[1])-int(pd[1])+kx;if(iy>=0&&iy<H&&ix>=0&&ix<W){auto q=a.data[((n0*C+c)*H+iy)*W+ix];v=average?v+q:std::max(v,q);++cnt;}}o.data[((n0*C+c)*OH+y)*OW+z]=average?v/float(cnt):v;}
+  for(int n0=0;n0<N;++n0)for(int c=0;c<C;++c)for(int y=0;y<OH;++y)for(int z=0;z<OW;++z){float v=average?0:std::numeric_limits<float>::lowest();int cnt{};for(int ky=0;ky<KH;++ky)for(int kx=0;kx<KW;++kx){int iy=y*int(st[0])-int(pd[0])+ky,ix=z*int(st[1])-int(pd[1])+kx;if(iy>=0&&iy<H&&ix>=0&&ix<W){auto q=a.data[((n0*C+c)*H+iy)*W+ix];v=average?v+q:std::max(v,q);++cnt;}}o.data[((n0*C+c)*OH+y)*OW+z]=average?v/float(cnt):v;}
   return o;
 }
 
@@ -5242,7 +5242,7 @@ bool ConcatIntoFirst(const Node& n, const std::vector<const Tensor*>& in,
   return true;
 }
 
-Tensor Softmax(const Node& n,const Tensor& a,int opset){const int ax=Axis(AttrInt(n,"axis",opset>=13?-1:1),int(a.shape.size()));const auto inner=Elements(std::vector<std::int64_t>(a.shape.begin()+ax+1,a.shape.end()));const auto dim=std::size_t(a.shape[ax]),outer=a.data.size()/(dim*inner);Tensor o=a;if(inner==1){kernels::SoftmaxRowsInplace(o.data.data(),outer,dim);return o;}for(std::size_t z=0;z<outer;++z)for(std::size_t q=0;q<inner;++q){float m=-std::numeric_limits<float>::infinity();for(std::size_t i=0;i<dim;++i)m=std::max(m,a.data[(z*dim+i)*inner+q]);float s{};for(std::size_t i=0;i<dim;++i)s+=(o.data[(z*dim+i)*inner+q]=std::exp(a.data[(z*dim+i)*inner+q]-m));for(std::size_t i=0;i<dim;++i)o.data[(z*dim+i)*inner+q]/=s;}return o;}
+Tensor Softmax(const Node& n,const Tensor& a,int opset){const int ax=Axis(AttrInt(n,"axis",opset>=13?-1:1),int(a.shape.size()));const auto inner=Elements(std::vector<std::int64_t>(a.shape.begin()+ax+1,a.shape.end()));const auto dim=std::size_t(a.shape[ax]),outer=a.data.size()/(dim*inner);Tensor o=a;if(inner==1){kernels::SoftmaxRowsInplace(o.data.data(),outer,dim);return o;}for(std::size_t z=0;z<outer;++z)for(std::size_t q=0;q<inner;++q){float m=std::numeric_limits<float>::lowest();for(std::size_t i=0;i<dim;++i)m=std::max(m,a.data[(z*dim+i)*inner+q]);float s{};for(std::size_t i=0;i<dim;++i)s+=(o.data[(z*dim+i)*inner+q]=std::exp(a.data[(z*dim+i)*inner+q]-m));for(std::size_t i=0;i<dim;++i)o.data[(z*dim+i)*inner+q]/=s;}return o;}
 
 Tensor PointwiseConvHardSwish(const Node& n, const std::vector<const Tensor*>& in,
                               Backend backend, bool immutable_parameters) {
@@ -8064,8 +8064,8 @@ bool OnnxLite::RunGpuOnlyInternal(
       std::cerr << "GPU-only checkpoint " << checkpoint << " shape=";
       for (const auto dimension : host.shape) std::cerr << dimension << ',';
       std::size_t non_finite{};
-      float minimum = std::numeric_limits<float>::infinity();
-      float maximum = -std::numeric_limits<float>::infinity();
+      float minimum = std::numeric_limits<float>::max();
+      float maximum = std::numeric_limits<float>::lowest();
       for (const float item : host.data) {
         if (!std::isfinite(item)) { ++non_finite; continue; }
         minimum = std::min(minimum, item); maximum = std::max(maximum, item);

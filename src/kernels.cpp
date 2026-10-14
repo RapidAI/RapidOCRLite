@@ -5705,7 +5705,12 @@ void SoftmaxRowsInplace(float* values, std::size_t rows, std::size_t width) noex
   const auto body = [&](int first, int last) {
     for (int row = first; row < last; ++row) {
       float* current = values + std::size_t(row) * width;
-      float maximum = -std::numeric_limits<float>::infinity();
+      // Not -infinity: the library is built with -ffast-math, whose
+      // finite-math-only contract lets clang treat an infinite constant as
+      // poison. On Apple clang/NEON the vectorized max reduction then picked
+      // up garbage and whole attention rows became NaN (small recognizer,
+      // T >= ~290: empty text on wide lines, run-to-run differences).
+      float maximum = std::numeric_limits<float>::lowest();
       for (std::size_t column = 0; column < width; ++column) {
         maximum = std::max(maximum, current[column]);
       }
