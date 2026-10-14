@@ -77,3 +77,6 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - 22:30 pointwise 1x1: AVX2 4x24 (12 acc) and AVX-512 8x32 (16 acc) register tiles, bit-identical. Single-thread rec: AVX2 Conv.45 1.90->1.17, Conv.18 0.90->0.55 ms; AVX-512 Conv.45 1.07->0.60, Conv.18 0.58->0.29 ms. 212/310 identical both ISAs.
 
 - x86 GEMM-accumulate tiles (im2col stem / Conv.1 / Conv.2): AVX-512 4x64 block (`PPOCR_DISABLE_AVX512_GEMM_ACC4`), AVX2 6x16 block (`PPOCR_DISABLE_AVX2_GEMM_ACC6`). Single-thread rec profile, loaded host: AVX-512 MaxPool.0_concat_conv 2.1 -> ~1.65-1.85 ms; AVX2 ~2.2 -> ~1.95-2.09 ms. Bit-identical: 0/212 full text diffs, 0 box diff, 0/310 rec diffs on both ISAs.
+
+- Rejected: AVX2 expand 6x16 tile in Avx2ExpandProjectSpatial16 (expand + project). Single-thread rec went 45.4/44.2 -> 47.9/46.7 ms, slower (register pressure). Matches the earlier 6x16 rejection; the 4x16 tile stays.
+- x86 rec-only per line at bc0f518, multi-thread, loaded host (load 6-8, not README quality), 3 interleaved rounds: 3.10.0 ORT 14.7/14.5/15.1 ms; Lite AVX-512 13.7/13.7/17.1 ms; Lite forced AVX2 17.0/18.8/21.4 ms. Rec-only is still short of the 20% target on x86, and forced AVX2 is slower than ORT (which uses MLAS AVX-512 on this host).
