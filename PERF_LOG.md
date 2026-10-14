@@ -68,3 +68,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - 20:05 M4 QUIET 5-run medians @ b4cebec (idle load 1.6): 3.x det .1145 rec .00587 full .3142 | Lite det .0817 (1.40x) rec .00543 (1.08x) full .1075 (2.92x)
 - im2col conv scratch made thread_local (was fresh zeroed vector per call, up to 0.9 MB): M4 MaxPool.0_concat_conv 0.39 -> 0.20 ms; rec 5.43 -> 5.37 ms, det .0817 -> .0810. Identical outputs x86 (512/AVX2) + M4.
 - M4 thread/chunk/spin sweeps: all ~5.4 ms (4 threads best). CTC head 0.57 ms is bandwidth on 28 MB fp32 weights.
+- 20:17 README/README-CN M4 rows updated (ff59346). x86 still loaded (load 6-10) -> x86 rows not re-measured. Open: x86 rec-only (AVX2 esp.), M4 rec needs ~10% more.
