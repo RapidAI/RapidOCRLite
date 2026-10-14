@@ -6349,6 +6349,38 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
     thread_local std::vector<float> logits;
     logits.resize(std::size_t(rows) * std::size_t(vocab));
     std::vector<unsigned char> need(std::size_t(rows), lazy ? 0 : 1);
+    // Contiguous [chunk][depth][n] copy of the vocabulary weights (cached per
+    // weight tensor, like PackedCtcB32): each chunk GEMM reads a dense panel
+    // instead of 1024-wide slices of a 75 KB-stride matrix.
+    // PPOCR_DISABLE_APPLE_CTC_PACK restores the strided B.
+    static const bool pack_b = std::getenv("PPOCR_DISABLE_APPLE_CTC_PACK") == nullptr;
+    std::shared_ptr<std::vector<float>> packed_holder;
+    const float* packed_right = nullptr;
+    if (pack_b) {
+      static std::mutex pack_mu;
+      static const float* pack_src = nullptr;
+      static int pack_depth = 0, pack_vocab = 0;
+      static float pack_probe[3] = {};
+      static std::shared_ptr<std::vector<float>> pack_data;
+      const std::size_t total = std::size_t(depth) * vocab;
+      std::lock_guard lock(pack_mu);
+      if (!pack_data || pack_src != right || pack_depth != depth || pack_vocab != vocab ||
+          pack_probe[0] != right[0] || pack_probe[1] != right[total / 2] ||
+          pack_probe[2] != right[total - 1]) {
+        auto data = std::make_shared<std::vector<float>>(total);
+        for (int c = 0; c < chunks; ++c) {
+          const int c0 = c * kCols, n = std::min(kCols, vocab - c0);
+          float* d = data->data() + std::size_t(c0) * depth;
+          for (int k = 0; k < depth; ++k)
+            std::memcpy(d + std::size_t(k) * n, right + std::size_t(k) * vocab + c0,
+                        sizeof(float) * n);
+        }
+        pack_data = data; pack_src = right; pack_depth = depth; pack_vocab = vocab;
+        pack_probe[0] = right[0]; pack_probe[1] = right[total / 2]; pack_probe[2] = right[total - 1];
+      }
+      packed_holder = pack_data;
+      packed_right = packed_holder->data();
+    }
     // Thread-locals are per-thread: workers must use this pointer.
     float* const logit_base = logits.data();
     const auto chunk_row = [&](int c, int r) {
@@ -6377,8 +6409,12 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
           if (bias) std::memcpy(row, bias + c0, sizeof(float) * n);
           else std::fill_n(row, n, 0.F);
         }
-        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, n, depth, 1.F, left, depth,
-                    right + c0, vocab, 1.F, buf, n);
+        if (packed_right)
+          cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, n, depth, 1.F, left, depth,
+                      packed_right + std::size_t(c0) * depth, n, 1.F, buf, n);
+        else
+          cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, n, depth, 1.F, left, depth,
+                      right + c0, vocab, 1.F, buf, n);
         for (int r = 0; r < rows; ++r) {
           const float* row = buf + std::size_t(r) * n;
           int best = 0;
