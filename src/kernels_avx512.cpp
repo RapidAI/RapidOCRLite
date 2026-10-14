@@ -5723,6 +5723,107 @@ void Avx512ExpandGeluProjectAdd(float* dst, const float* src,
   }
 }
 
+// Whole-plane weight-stationary expand/GELU/project split into phases so the
+// caller can parallelize over weight rows (hidden / output channels) rather
+// than spatial tiles: each worker then streams only its own weight rows once.
+// Phase 0 packs 32-wide tiles [first,last), phase 1 computes GELU(expand) for
+// 8-row hidden blocks [first,last), phase 2 projects + residual for 8-row
+// channel blocks [first,last). Same per-output FMA chain as
+// Avx512ExpandGeluProjectAdd (bit-identical).
+void Avx512ExpandProjectPhase(int phase, float* dst, const float* src,
+                              const float* expand_weights, const float* expand_bias,
+                              const float* project_weights, const float* project_bias,
+                              int channels, int hidden, std::size_t plane, float* act_all,
+                              float* hid_all, int first, int last) noexcept {
+  const std::size_t tiles = (plane + 31) / 32;
+  const __m512 half = _mm512_set1_ps(.5F);
+  const __m512 one = _mm512_set1_ps(1.F);
+  const __m512 inv_sqrt2 = _mm512_set1_ps(0.7071067811865475244F);
+  const auto exact_gelu = [&](__m512 x) noexcept {
+    return _mm512_mul_ps(half, _mm512_mul_ps(x,
+        _mm512_add_ps(one, ErfPs512(_mm512_mul_ps(x, inv_sqrt2)))));
+  };
+  const auto masks = [&](std::size_t t, __mmask16& m0, __mmask16& m1) {
+    const std::size_t left = plane - t * 32;
+    m0 = left >= 16 ? __mmask16(0xFFFF) : __mmask16((1u << left) - 1u);
+    m1 = left >= 32 ? __mmask16(0xFFFF)
+                    : (left > 16 ? __mmask16((1u << (left - 16)) - 1u) : __mmask16(0));
+  };
+  if (phase == 0) {
+    for (int t = first; t < last; ++t) {
+      __mmask16 m0, m1;
+      masks(std::size_t(t), m0, m1);
+      const std::size_t sp = std::size_t(t) * 32;
+      float* a = act_all + std::size_t(t) * channels * 32;
+      for (int c = 0; c < channels; ++c) {
+        const float* row = src + std::size_t(c) * plane + sp;
+        _mm512_storeu_ps(a + std::size_t(c) * 32, _mm512_maskz_loadu_ps(m0, row));
+        _mm512_storeu_ps(a + std::size_t(c) * 32 + 16, _mm512_maskz_loadu_ps(m1, row + 16));
+      }
+    }
+    return;
+  }
+  constexpr int R = 8;
+  if (phase == 1) {
+    for (int block = first; block < last; ++block) {
+      const int h0 = block * R;
+      const float* e = expand_weights + std::size_t(h0) * channels;
+      for (std::size_t t = 0; t < tiles; ++t) {
+        const float* a = act_all + t * std::size_t(channels) * 32;
+        __m512 lo[R], hi[R];
+        for (int k = 0; k < R; ++k)
+          lo[k] = hi[k] = _mm512_set1_ps(expand_bias ? expand_bias[h0 + k] : 0.F);
+        for (int c = 0; c < channels; ++c) {
+          const __m512 x0 = _mm512_loadu_ps(a + std::size_t(c) * 32);
+          const __m512 x1 = _mm512_loadu_ps(a + std::size_t(c) * 32 + 16);
+          for (int k = 0; k < R; ++k) {
+            const __m512 w = _mm512_set1_ps(e[std::size_t(k) * channels + c]);
+            lo[k] = _mm512_fmadd_ps(w, x0, lo[k]);
+            hi[k] = _mm512_fmadd_ps(w, x1, hi[k]);
+          }
+        }
+        float* hd = hid_all + (t * std::size_t(hidden) + h0) * 32;
+        for (int k = 0; k < R; ++k) {
+          _mm512_storeu_ps(hd + std::size_t(k) * 32, exact_gelu(lo[k]));
+          _mm512_storeu_ps(hd + std::size_t(k) * 32 + 16, exact_gelu(hi[k]));
+        }
+      }
+    }
+    return;
+  }
+  for (int block = first; block < last; ++block) {
+    const int c0 = block * R;
+    const float* pw = project_weights + std::size_t(c0) * hidden;
+    for (std::size_t t = 0; t < tiles; ++t) {
+      __mmask16 m0, m1;
+      masks(t, m0, m1);
+      const float* a = act_all + t * std::size_t(channels) * 32;
+      const float* hd = hid_all + t * std::size_t(hidden) * 32;
+      __m512 lo[R], hi[R];
+      for (int k = 0; k < R; ++k) {
+        const __m512 b = _mm512_set1_ps(project_bias ? project_bias[c0 + k] : 0.F);
+        lo[k] = _mm512_add_ps(b, _mm512_loadu_ps(a + std::size_t(c0 + k) * 32));
+        hi[k] = _mm512_add_ps(b, _mm512_loadu_ps(a + std::size_t(c0 + k) * 32 + 16));
+      }
+      for (int h = 0; h < hidden; ++h) {
+        const __m512 g0 = _mm512_loadu_ps(hd + std::size_t(h) * 32);
+        const __m512 g1 = _mm512_loadu_ps(hd + std::size_t(h) * 32 + 16);
+        for (int k = 0; k < R; ++k) {
+          const __m512 w = _mm512_set1_ps(pw[std::size_t(k) * hidden + h]);
+          lo[k] = _mm512_fmadd_ps(w, g0, lo[k]);
+          hi[k] = _mm512_fmadd_ps(w, g1, hi[k]);
+        }
+      }
+      const std::size_t sp = t * 32;
+      for (int k = 0; k < R; ++k) {
+        float* out = dst + std::size_t(c0 + k) * plane + sp;
+        _mm512_mask_storeu_ps(out, m0, lo[k]);
+        _mm512_mask_storeu_ps(out + 16, m1, hi[k]);
+      }
+    }
+  }
+}
+
 void Avx512LayerNormAffine(float* dst, const float* src, const float* gamma,
                            const float* beta, std::size_t width, float mean,
                            float denom) noexcept {

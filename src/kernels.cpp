@@ -846,7 +846,20 @@ class PersistentParallelExecutor {
       fn(0, count);
       return;
     }
-    const int block = (count + active_workers - 1) / active_workers;
+    // Dynamic chunks: a preempted or slow (E-core / contended vCPU) worker
+    // delays only its current chunk instead of a 1/N static share. Results do
+    // not depend on the partition (kernels already run under varying thread
+    // counts). PPOCR_PARALLEL_CHUNKS_PER_THREAD=1 restores static blocks.
+    static const int chunks_per_thread = [] {
+      if (const char* v = std::getenv("PPOCR_PARALLEL_CHUNKS_PER_THREAD")) {
+        const int parsed = std::atoi(v);
+        if (parsed >= 1 && parsed <= 64) return parsed;
+      }
+      return 2;
+    }();
+    const int block = std::max(1, (count + active_workers * chunks_per_thread - 1) /
+                                      (active_workers * chunks_per_thread));
+    next_.store(0, std::memory_order_relaxed);
     {
       std::lock_guard lock(mutex_);
       count_ = count;
@@ -857,7 +870,11 @@ class PersistentParallelExecutor {
       generation_.fetch_add(1, std::memory_order_release);
     }
     work_ready_.notify_all();
-    fn(0, std::min(count, block));
+    for (;;) {
+      const int first = next_.fetch_add(block, std::memory_order_relaxed);
+      if (first >= count) break;
+      fn(first, std::min(count, first + block));
+    }
     SpinUntil([this] { return active_.load(std::memory_order_acquire) == 0; });
     std::unique_lock lock(mutex_);
     complete_.wait(lock, [this] { return active_.load(std::memory_order_relaxed) == 0; });
@@ -882,11 +899,17 @@ class PersistentParallelExecutor {
         });
         observed_generation = generation_.load(std::memory_order_relaxed);
         if (worker > participants_) continue;
-        first = worker * block_;
-        last = std::min(count_, first + block_);
+        first = 0;
+        last = count_;
         task = task_;
       }
-      if (first < last) task(first, last);
+      const int block = block_;
+      for (;;) {
+        const int begin = next_.fetch_add(block, std::memory_order_relaxed);
+        if (begin >= last) break;
+        task(begin, std::min(last, begin + block));
+      }
+      (void)first;
       {
         std::lock_guard lock(mutex_);
         if (active_.fetch_sub(1, std::memory_order_acq_rel) == 1)
@@ -907,6 +930,7 @@ class PersistentParallelExecutor {
   int block_ = 0;
   int participants_ = 0;
   std::atomic<int> active_{0};
+  std::atomic<int> next_{0};
 };
 
 PersistentParallelExecutor& ParallelExecutor() {
