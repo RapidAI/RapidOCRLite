@@ -157,59 +157,52 @@ jobs:
           if-no-files-found: error
 
 
+
   sdk-linux-x86_64:
     name: SDK Linux x86_64 (manylinux2014)
     runs-on: ubuntu-latest
-    container: quay.io/pypa/manylinux2014_x86_64:2025.03.23-1
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Build and package SDK
+      - name: Build and package SDK in manylinux2014
         run: |
           set -euo pipefail
-          # manylinux2014 image: cmake/ninja via yum or preinstalled; use /opt/python for a recent python
-          PYBIN=/opt/python/cp312-cp312/bin
-          if [ ! -x "$PYBIN/python" ]; then PYBIN=/opt/python/cp39-cp39/bin; fi
-          VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          # Prefer ninja if present; else Unix Makefiles
-          if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
-          cmake -S . -B build "${GEN[@]}" \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
-            -DPPOCR_BUILD_SHARED=ON \
-            -DPPOCR_BUILD_STATIC=ON \
-            -DPPOCR_BUILD_EXAMPLES=OFF \
-            -DPPOCR_BUILD_TESTS=OFF \
-            -DPPOCR_ENABLE_VULKAN=OFF \
-            -DPPOCR_ENABLE_METAL=OFF
-          cmake --build build -j"$(nproc)"
-          cmake --install build
-          NAME="RapidOCRLite-SDK-linux_x86_64-${VER}"
-          mkdir -p dist
-          mv prefix "$NAME"
-          tar -czf "dist/${NAME}.tar.gz" "$NAME"
-          # Also emit a zip for the "SDK zips" set
-          (cd "$NAME" && zip -qr "../dist/${NAME}.zip" .)
-          # Prefer a top-level folder in the zip like the Windows archives
-          rm -f "dist/${NAME}.zip"
-          zip -qr "dist/${NAME}.zip" "$NAME"
-          ls -la dist
-          test -f "dist/${NAME}.tar.gz"
-          test -f "dist/${NAME}.zip"
-          # Sanity: shared lib is ELF x86_64, linked against old glibc
-          so=$(find "$NAME" -name 'libppocr.so*' | head -1)
-          test -n "$so"
-          file "$so"
-          # Fail if any GLIBC_2.18+ symbol is required (manylinux2014 = 2.17)
-          if command -v auditwheel >/dev/null 2>&1; then
-            auditwheel show "$so" || true
-          fi
-          if readelf -V "$so" 2>/dev/null | grep -E 'GLIBC_2\.(1[89]|[2-9][0-9])' ; then
-            echo "SDK linked against glibc newer than 2.17" >&2
-            exit 1
-          fi
+          IMAGE=quay.io/pypa/manylinux2014_x86_64:2025.03.23-1
+          docker run --rm -v "$PWD":/io -w /io "$IMAGE" bash -c '
+            set -euo pipefail
+            PYBIN=/opt/python/cp312-cp312/bin
+            test -x "$PYBIN/python"
+            VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
+            yum install -y zip ninja-build >/dev/null 2>&1 || yum install -y zip
+            if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
+            cmake -S . -B build "${GEN[@]}" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DPPOCR_BUILD_SHARED=ON \
+              -DPPOCR_BUILD_STATIC=ON \
+              -DPPOCR_BUILD_EXAMPLES=OFF \
+              -DPPOCR_BUILD_TESTS=OFF \
+              -DPPOCR_ENABLE_VULKAN=OFF \
+              -DPPOCR_ENABLE_METAL=OFF
+            cmake --build build -j"$(nproc)"
+            cmake --install build
+            NAME="RapidOCRLite-SDK-linux_x86_64-${VER}"
+            mkdir -p dist
+            rm -rf "$NAME"
+            mv prefix "$NAME"
+            tar -czf "dist/${NAME}.tar.gz" "$NAME"
+            zip -qr "dist/${NAME}.zip" "$NAME"
+            so=$(find "$NAME" -name "libppocr.so*" | head -1)
+            test -n "$so"
+            file "$so"
+            if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
+              echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            ls -la dist
+          '
 
       - uses: actions/upload-artifact@v4
         with:
@@ -219,15 +212,140 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  sdk-linux-aarch64:
+    name: SDK Linux aarch64 (manylinux2014)
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      started: ${{ steps.mark.outputs.started }}
+    steps:
+      - name: Mark the native ARM runner as available
+        id: mark
+        run: echo "started=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package SDK in manylinux2014 aarch64
+        run: |
+          set -euo pipefail
+          IMAGE=quay.io/pypa/manylinux2014_aarch64:2025.03.23-1
+          docker run --rm -v "$PWD":/io -w /io "$IMAGE" bash -c '
+            set -euo pipefail
+            PYBIN=/opt/python/cp312-cp312/bin
+            test -x "$PYBIN/python"
+            VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
+            yum install -y zip ninja-build >/dev/null 2>&1 || yum install -y zip
+            if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
+            cmake -S . -B build "${GEN[@]}" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DPPOCR_BUILD_SHARED=ON \
+              -DPPOCR_BUILD_STATIC=ON \
+              -DPPOCR_BUILD_EXAMPLES=OFF \
+              -DPPOCR_BUILD_TESTS=OFF \
+              -DPPOCR_ENABLE_VULKAN=OFF \
+              -DPPOCR_ENABLE_METAL=OFF
+            cmake --build build -j"$(nproc)"
+            cmake --install build
+            NAME="RapidOCRLite-SDK-linux_aarch64-${VER}"
+            mkdir -p dist
+            rm -rf "$NAME"
+            mv prefix "$NAME"
+            tar -czf "dist/${NAME}.tar.gz" "$NAME"
+            zip -qr "dist/${NAME}.zip" "$NAME"
+            so=$(find "$NAME" -name "libppocr.so*" | head -1)
+            test -n "$so"
+            file "$so"
+            if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
+              echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            ls -la dist
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdk-linux_aarch64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  sdk-linux-aarch64-qemu:
+    name: SDK Linux aarch64 qemu
+    needs: sdk-linux-aarch64
+    if: >-
+      always() &&
+      needs.sdk-linux-aarch64.result == 'failure' &&
+      needs.sdk-linux-aarch64.outputs.started != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: QEMU for aarch64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build and package SDK in manylinux2014 aarch64 (QEMU)
+        run: |
+          set -euo pipefail
+          IMAGE=quay.io/pypa/manylinux2014_aarch64:2025.03.23-1
+          docker run --rm --platform linux/arm64 -v "$PWD":/io -w /io "$IMAGE" bash -c '
+            set -euo pipefail
+            PYBIN=/opt/python/cp312-cp312/bin
+            test -x "$PYBIN/python"
+            VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
+            yum install -y zip ninja-build >/dev/null 2>&1 || yum install -y zip
+            if command -v ninja >/dev/null 2>&1; then GEN=(-G Ninja); else GEN=(); fi
+            cmake -S . -B build "${GEN[@]}" \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DPPOCR_BUILD_SHARED=ON \
+              -DPPOCR_BUILD_STATIC=ON \
+              -DPPOCR_BUILD_EXAMPLES=OFF \
+              -DPPOCR_BUILD_TESTS=OFF \
+              -DPPOCR_ENABLE_VULKAN=OFF \
+              -DPPOCR_ENABLE_METAL=OFF
+            cmake --build build -j"$(nproc)"
+            cmake --install build
+            NAME="RapidOCRLite-SDK-linux_aarch64-${VER}"
+            mkdir -p dist
+            rm -rf "$NAME"
+            mv prefix "$NAME"
+            tar -czf "dist/${NAME}.tar.gz" "$NAME"
+            zip -qr "dist/${NAME}.zip" "$NAME"
+            so=$(find "$NAME" -name "libppocr.so*" | head -1)
+            test -n "$so"
+            file "$so"
+            if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
+              echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            ls -la dist
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdk-linux_aarch64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
   attach-release:
     name: Attach SDKs to GitHub Release
-    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64, sdk-linux-x86_64]
+    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64, sdk-linux-x86_64, sdk-linux-aarch64, sdk-linux-aarch64-qemu]
     if: >-
       always() &&
       needs.sdk-windows-x64.result == 'success' &&
       needs.sdk-windows-x86.result == 'success' &&
       needs.sdk-macos-arm64.result == 'success' &&
       needs.sdk-linux-x86_64.result == 'success' &&
+      (needs.sdk-linux-aarch64.result == 'success' || needs.sdk-linux-aarch64-qemu.result == 'success') &&
       (
         (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v5')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
@@ -245,14 +363,12 @@ jobs:
       - name: List SDK archives
         run: |
           ls -la dist
-          test "$(ls dist/RapidOCRLite-SDK-* 2>/dev/null | wc -l)" -ge 4
+          test "$(ls dist/RapidOCRLite-SDK-win32-* dist/RapidOCRLite-SDK-win_amd64-* dist/RapidOCRLite-SDK-macosx_arm64-* dist/RapidOCRLite-SDK-linux_x86_64-* dist/RapidOCRLite-SDK-linux_aarch64-* 2>/dev/null | wc -l)" -ge 5
 
       - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
-          files: |
-            dist/RapidOCRLite-SDK-*.zip
-            dist/RapidOCRLite-SDK-*.tar.gz
-          fail_on_unmatched_files: true
-          append_body: false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.release_tag || github.ref_name }}
+        run: |
+          # --clobber so re-dispatch can refresh assets on an existing release.
+          gh release upload "$TAG" dist/RapidOCRLite-SDK-* --repo "$GITHUB_REPOSITORY" --clobber
