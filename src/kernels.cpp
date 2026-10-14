@@ -1,4 +1,11 @@
 #include "kernels.hpp"
+#if defined(__APPLE__) && defined(PPOCR_USE_ACCELERATE)
+#ifndef ACCELERATE_NEW_LAPACK
+#define ACCELERATE_NEW_LAPACK
+#endif
+#include <Accelerate/Accelerate.h>
+#define PPOCR_HAS_ACCELERATE 1
+#endif
 
 #include <algorithm>
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
@@ -16,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <chrono>
 #include <vector>
 
 #if defined(_MSC_VER)
@@ -26,6 +34,45 @@
 #endif
 
 namespace ppocr::detail::kernels {
+
+#if defined(PPOCR_HAS_ACCELERATE)
+namespace {
+// Apple CPUs expose their matrix units (AMX/SME) only through Accelerate.
+// ONNX Runtime reaches them as well, so NEON-only 1x1 convolutions lose ~3x
+// on M-series cores. Route NCHW pointwise convolutions, the recognizer
+// expand/project block and the CTC head through cblas_sgemm.
+// `PPOCR_DISABLE_ACCELERATE` restores the NEON kernels.
+bool AccelerateEnabled(std::int64_t work) noexcept {
+  static const bool on = std::getenv("PPOCR_DISABLE_ACCELERATE") == nullptr;
+  return on && work >= 4096;
+}
+// dst[M x P] = W[M x C] * src[C x P] + bias[m] (+ residual), optional ReLU.
+bool AcceleratePointwise(float* dst, const float* src, const float* weights,
+                         const float* bias, const float* residual, int output_channels,
+                         int input_channels, std::size_t plane, bool relu) noexcept {
+  if (dst == src || !AccelerateEnabled(std::int64_t(output_channels) * input_channels *
+                                       std::int64_t(plane))) return false;
+  for (int m = 0; m < output_channels; ++m) {
+    float* row = dst + std::size_t(m) * plane;
+    const float b = bias ? bias[m] : 0.F;
+    if (residual) {
+      const float* r = residual + std::size_t(m) * plane;
+      for (std::size_t i = 0; i < plane; ++i) row[i] = r[i] + b;
+    } else {
+      std::fill_n(row, plane, b);
+    }
+  }
+  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, output_channels, int(plane),
+              input_channels, 1.F, weights, input_channels, src, int(plane), 1.F, dst,
+              int(plane));
+  if (relu) {
+    const std::size_t n = std::size_t(output_channels) * plane;
+    for (std::size_t i = 0; i < n; ++i) dst[i] = std::max(dst[i], 0.F);
+  }
+  return true;
+}
+}  // namespace
+#endif
 
 thread_local int g_inner_parallelism_cap = 0;
 
@@ -706,6 +753,46 @@ void RestoreFloatMode(unsigned previous) noexcept {
 
 namespace {
 
+// Bounded busy-wait used by the persistent pool. Inference issues dozens of
+// small ParallelFor regions back to back (rec: ~60 ops in ~8 ms), so a
+// condition-variable sleep/wake per region costs more than the work. Spin
+// for a short wall-clock window, then fall back to the blocking wait so idle
+// pools do not burn CPU. PPOCR_PARALLEL_SPIN_US sets the window (default 200;
+// 0 disables, as does PPOCR_DISABLE_PARALLEL_SPIN).
+inline void CpuRelax() noexcept {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__)
+  _mm_pause();
+#elif defined(__aarch64__)
+  __asm__ __volatile__("yield");
+#endif
+}
+
+int ParallelSpinMicros() {
+  static const int micros = [] {
+    if (std::getenv("PPOCR_DISABLE_PARALLEL_SPIN") != nullptr) return 0;
+    if (const char* v = std::getenv("PPOCR_PARALLEL_SPIN_US")) return std::max(0, std::atoi(v));
+    return 200;
+  }();
+  return micros;
+}
+
+template <class Done>
+void SpinUntil(Done&& done) {
+  const int micros = ParallelSpinMicros();
+  if (micros <= 0) return;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(micros);
+  for (;;) {
+    for (int i = 0; i < 16; ++i) {
+      if (done()) return;
+      CpuRelax();
+    }
+    // Yield rather than pure pause: on oversubscribed hosts a busy pause loop
+    // steals the core from the very worker this thread is waiting on.
+    std::this_thread::yield();
+    if (std::chrono::steady_clock::now() >= deadline) return;
+  }
+}
+
 template <class Fn>
 void OverflowParallelFor(int count, Fn&& fn);
 
@@ -757,19 +844,7 @@ class PersistentParallelExecutor {
     }
     work_ready_.notify_all();
     fn(0, std::min(count, block));
-    static const bool spin =
-        std::getenv("PPOCR_ENABLE_PARALLEL_SPIN") != nullptr &&
-        std::getenv("PPOCR_DISABLE_PARALLEL_SPIN") == nullptr;
-    if (spin) {
-      for (int i = 0; i < 4096; ++i) {
-        if (active_.load(std::memory_order_acquire) == 0) break;
-#if defined(_MSC_VER)
-        _mm_pause();
-#else
-        std::this_thread::yield();
-#endif
-      }
-    }
+    SpinUntil([this] { return active_.load(std::memory_order_acquire) == 0; });
     std::unique_lock lock(mutex_);
     complete_.wait(lock, [this] { return active_.load(std::memory_order_relaxed) == 0; });
     task_ = {};
@@ -779,21 +854,10 @@ class PersistentParallelExecutor {
   void WorkerLoop(int worker) {
     g_parallel_worker = true;
     std::uint64_t observed_generation = 0;
-    static const bool spin =
-        std::getenv("PPOCR_ENABLE_PARALLEL_SPIN") != nullptr &&
-        std::getenv("PPOCR_DISABLE_PARALLEL_SPIN") == nullptr;
     for (;;) {
-      if (spin) {
-        for (int i = 0; i < 4096; ++i) {
-          if (generation_.load(std::memory_order_acquire) != observed_generation)
-            break;
-#if defined(_MSC_VER)
-          _mm_pause();
-#else
-          std::this_thread::yield();
-#endif
-        }
-      }
+      SpinUntil([&] {
+        return generation_.load(std::memory_order_acquire) != observed_generation;
+      });
       std::function<void(int, int)> task;
       int first = 0;
       int last = 0;
@@ -2708,6 +2772,32 @@ void ExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weig
                           const float* expand_bias, const float* project_weights,
                           const float* project_bias, int channels, int hidden,
                           std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && expand_weights && project_weights && channels > 0 && hidden > 0 &&
+      plane > 0 &&
+      AccelerateEnabled(std::int64_t(channels) * hidden * std::int64_t(plane))) {
+    thread_local std::vector<float> hidden_act;
+    hidden_act.resize(std::size_t(hidden) * plane);
+    for (int h = 0; h < hidden; ++h)
+      std::fill_n(hidden_act.data() + std::size_t(h) * plane, plane,
+                  expand_bias ? expand_bias[h] : 0.F);
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, hidden, int(plane), channels,
+                1.F, expand_weights, channels, src, int(plane), 1.F, hidden_act.data(),
+                int(plane));
+    Gelu(hidden_act.data(), hidden_act.data(), hidden_act.size(), hidden_act.size());
+    for (int c = 0; c < channels; ++c) {
+      float* row = dst + std::size_t(c) * plane;
+      const float* r = src + std::size_t(c) * plane;
+      const float b = project_bias ? project_bias[c] : 0.F;
+      // dst may alias src: the expand GEMM above has already consumed src.
+      for (std::size_t i = 0; i < plane; ++i) row[i] = r[i] + b;
+    }
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, channels, int(plane), hidden,
+                1.F, project_weights, hidden, hidden_act.data(), int(plane), 1.F, dst,
+                int(plane));
+    return;
+  }
+#endif
   if (!dst || !src || !expand_weights || !project_weights || channels <= 0 ||
       hidden <= 0 || plane == 0) return;
 #if defined(PPOCR_HAS_AVX512_KERNELS)
@@ -2785,6 +2875,9 @@ void ExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weig
 void PointwiseConv(float* dst, const float* src, const float* weights,
                    const float* bias, int output_channels, int input_channels,
                    std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && AcceleratePointwise(dst, src, weights, bias, nullptr, output_channels, input_channels, plane, false)) return;
+#endif
   const auto body = [&](int first, int last) {
 #if defined(PPOCR_HAS_AVX512_KERNELS)
     if (HasAvx512()) {
@@ -3039,6 +3132,15 @@ void PointwiseConv(float* dst, const float* src, const float* weights,
 void PointwiseConvBatch(float* dst, const float* src, const float* weights,
                         const float* bias, int batches, int output_channels,
                         int input_channels, std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && batches > 0 && AccelerateEnabled(std::int64_t(output_channels) * input_channels * std::int64_t(plane)) && dst != src) {
+    for (int n = 0; n < batches; ++n)
+      AcceleratePointwise(dst + std::size_t(n) * std::size_t(output_channels) * plane,
+                          src + std::size_t(n) * std::size_t(input_channels) * plane, weights,
+                          bias, nullptr, output_channels, input_channels, plane, false);
+    return;
+  }
+#endif
   if (!dst || !src || !weights || batches <= 0 || output_channels <= 0 ||
       input_channels <= 0 || plane == 0) return;
   if (batches == 1) {
@@ -3107,6 +3209,9 @@ void PointwiseConvAdd(float* dst, const float* src, const float* weights,
                       const float* bias, const float* residual,
                       int output_channels, int input_channels,
                       std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && residual && AcceleratePointwise(dst, src, weights, bias, residual, output_channels, input_channels, plane, false)) return;
+#endif
   const auto body = [&](int first, int last) {
 #if defined(PPOCR_HAS_AVX512_KERNELS)
     if (HasAvx512()) {
@@ -3236,6 +3341,15 @@ void PointwiseConvAddBatch(float* dst, const float* src, const float* weights,
                            const float* bias, const float* residual, int batches,
                            int output_channels, int input_channels,
                            std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && residual && batches > 0 && AccelerateEnabled(std::int64_t(output_channels) * input_channels * std::int64_t(plane)) && dst != src) {
+    for (int n = 0; n < batches; ++n)
+      AcceleratePointwise(dst + std::size_t(n) * std::size_t(output_channels) * plane,
+                          src + std::size_t(n) * std::size_t(input_channels) * plane, weights,
+                          bias, residual + std::size_t(n) * std::size_t(output_channels) * plane, output_channels, input_channels, plane, false);
+    return;
+  }
+#endif
   if (!dst || !src || !weights || !residual || batches <= 0 || output_channels <= 0 ||
       input_channels <= 0 || plane == 0) return;
   if (batches == 1) {
@@ -3303,6 +3417,9 @@ void PointwiseConvAddRelu(float* dst, const float* src, const float* weights,
                           const float* bias, const float* residual,
                           int output_channels, int input_channels,
                           std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && residual && AcceleratePointwise(dst, src, weights, bias, residual, output_channels, input_channels, plane, true)) return;
+#endif
   const auto body = [&](int first, int last) {
 #if defined(PPOCR_HAS_AVX512_KERNELS)
     if (HasAvx512()) {
@@ -3371,6 +3488,15 @@ void PointwiseConvAddReluBatch(float* dst, const float* src, const float* weight
                                const float* bias, const float* residual, int batches,
                                int output_channels, int input_channels,
                                std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && residual && batches > 0 && AccelerateEnabled(std::int64_t(output_channels) * input_channels * std::int64_t(plane)) && dst != src) {
+    for (int n = 0; n < batches; ++n)
+      AcceleratePointwise(dst + std::size_t(n) * std::size_t(output_channels) * plane,
+                          src + std::size_t(n) * std::size_t(input_channels) * plane, weights,
+                          bias, residual + std::size_t(n) * std::size_t(output_channels) * plane, output_channels, input_channels, plane, true);
+    return;
+  }
+#endif
   if (!dst || !src || !weights || !residual || batches <= 0 || output_channels <= 0 ||
       input_channels <= 0 || plane == 0) return;
   if (batches == 1) {
@@ -3484,6 +3610,9 @@ void PointwiseConvHardSwishBatch(float* dst, const float* src, const float* weig
 void PointwiseConvRelu(float* dst, const float* src, const float* weights,
                        const float* bias, int output_channels, int input_channels,
                        std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && AcceleratePointwise(dst, src, weights, bias, nullptr, output_channels, input_channels, plane, true)) return;
+#endif
 #if defined(PPOCR_HAS_AVX512_KERNELS)
   if (HasAvx512()) {
     const auto body = [&](int first, int last) {
@@ -3513,6 +3642,15 @@ void PointwiseConvRelu(float* dst, const float* src, const float* weights,
 void PointwiseConvReluBatch(float* dst, const float* src, const float* weights,
                             const float* bias, int batches, int output_channels,
                             int input_channels, std::size_t plane) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && src && weights && batches > 0 && AccelerateEnabled(std::int64_t(output_channels) * input_channels * std::int64_t(plane)) && dst != src) {
+    for (int n = 0; n < batches; ++n)
+      AcceleratePointwise(dst + std::size_t(n) * std::size_t(output_channels) * plane,
+                          src + std::size_t(n) * std::size_t(input_channels) * plane, weights,
+                          bias, nullptr, output_channels, input_channels, plane, true);
+    return;
+  }
+#endif
   if (!dst || !src || !weights || batches <= 0 || output_channels <= 0 ||
       input_channels <= 0 || plane == 0) return;
   if (batches == 1) {
@@ -5676,6 +5814,14 @@ void DepthwiseExpandGeluProjectAdd(float* dst, const float* src,
 
 void GemmAccumulate(float* dst, const float* a, const float* b,
                     int rows, int cols, int depth) {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (dst && a && b && rows > 0 && cols > 0 && depth > 0 &&
+      AccelerateEnabled(std::int64_t(rows) * cols * depth)) {
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, cols, depth, 1.F, a, depth,
+                b, cols, 1.F, dst, cols);
+    return;
+  }
+#endif
   const auto work = std::int64_t(rows) * cols * depth;
   const bool parallel = work >= 10000000;
 #if defined(PPOCR_HAS_AVX512_KERNELS)
@@ -5970,6 +6116,59 @@ void SqueezeExcitationGateInplace(float* values, const float* first_weights,
   scale_planes(0, planes);
 }
 
+// Portable (NEON/scalar) packed-panel CTC chunk: logits for `cols` columns of
+// 32-wide K-contiguous panels, reduced online to per-row argmax (lowest index
+// on ties), max and sum(exp(x - max)). Two rows share each B load; the inner
+// 32-lane loops auto-vectorize on NEON. Each logit is bias + ascending-K FMA.
+static void PortableCtcChunkTop1(const float* a, const float* packed, const float* bias,
+                                 int rows, int cols, int depth, int* args, float* maxima,
+                                 float* sums) noexcept {
+  const int panels = (cols + 31) / 32;
+  std::vector<float> logits(std::size_t(rows) * std::size_t(panels) * 32);
+  const std::size_t stride = std::size_t(panels) * 32;
+  for (int p = 0; p < panels; ++p) {
+    const float* b = packed + std::size_t(p) * depth * 32;
+    const int c0 = p * 32;
+    const int width = std::min(32, cols - c0);
+    float init[32];
+    for (int j = 0; j < 32; ++j) init[j] = (bias && j < width) ? bias[c0 + j] : 0.F;
+    int r = 0;
+    for (; r + 2 <= rows; r += 2) {
+      float acc0[32], acc1[32];
+      for (int j = 0; j < 32; ++j) { acc0[j] = init[j]; acc1[j] = init[j]; }
+      const float* a0 = a + std::size_t(r) * depth;
+      const float* a1 = a0 + depth;
+      for (int k = 0; k < depth; ++k) {
+        const float* bk = b + std::size_t(k) * 32;
+        const float x0 = a0[k], x1 = a1[k];
+        for (int j = 0; j < 32; ++j) { acc0[j] += x0 * bk[j]; acc1[j] += x1 * bk[j]; }
+      }
+      std::memcpy(logits.data() + std::size_t(r) * stride + c0, acc0, sizeof(acc0));
+      std::memcpy(logits.data() + std::size_t(r + 1) * stride + c0, acc1, sizeof(acc1));
+    }
+    for (; r < rows; ++r) {
+      float acc0[32];
+      for (int j = 0; j < 32; ++j) acc0[j] = init[j];
+      const float* a0 = a + std::size_t(r) * depth;
+      for (int k = 0; k < depth; ++k) {
+        const float* bk = b + std::size_t(k) * 32;
+        const float x0 = a0[k];
+        for (int j = 0; j < 32; ++j) acc0[j] += x0 * bk[j];
+      }
+      std::memcpy(logits.data() + std::size_t(r) * stride + c0, acc0, sizeof(acc0));
+    }
+  }
+  for (int r = 0; r < rows; ++r) {
+    const float* row = logits.data() + std::size_t(r) * stride;
+    int best = 0;
+    float maximum = row[0];
+    for (int c = 1; c < cols; ++c) if (row[c] > maximum) { maximum = row[c]; best = c; }
+    float sum = 0.F;
+    for (int c = 0; c < cols; ++c) sum += std::exp(row[c] - maximum);
+    args[r] = best; maxima[r] = maximum; sums[r] = sum;
+  }
+}
+
 static std::shared_ptr<std::vector<float>> PackedCtcB32(const float* b, int depth, int vocab) {
   struct Cache {
     const float* b = nullptr;
@@ -6001,6 +6200,37 @@ static std::shared_ptr<std::vector<float>> PackedCtcB32(const float* b, int dept
 void GemmCtcTop1(int* indices, float* probabilities, const float* left,
                  const float* right, const float* bias, int rows, int depth,
                  int vocab, int steps) noexcept {
+#if defined(PPOCR_HAS_ACCELERATE)
+  if (indices && probabilities && left && right && rows > 0 && depth > 0 && vocab > 0 &&
+      steps > 0 && rows % steps == 0 &&
+      AccelerateEnabled(std::int64_t(rows) * depth * vocab)) {
+    thread_local std::vector<float> logits;
+    logits.resize(std::size_t(rows) * vocab);
+    for (int r = 0; r < rows; ++r) {
+      float* row = logits.data() + std::size_t(r) * vocab;
+      if (bias) std::memcpy(row, bias, sizeof(float) * vocab);
+      else std::fill_n(row, vocab, 0.F);
+    }
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, vocab, depth, 1.F, left,
+                depth, right, vocab, 1.F, logits.data(), vocab);
+    for (int sequence = 0; sequence < rows / steps; ++sequence) {
+      int previous = -1;
+      for (int step = 0; step < steps; ++step) {
+        const int r = sequence * steps + step;
+        const float* row = logits.data() + std::size_t(r) * vocab;
+        int best = 0;
+        float maximum = row[0];
+        for (int c = 1; c < vocab; ++c) if (row[c] > maximum) { maximum = row[c]; best = c; }
+        float denom = 0.F;
+        for (int c = 0; c < vocab; ++c) denom += std::exp(row[c] - maximum);
+        indices[r] = best;
+        probabilities[r] = (best != 0 && best != previous && denom > 0.F) ? 1.F / denom : 0.F;
+        previous = best;
+      }
+    }
+    return;
+  }
+#endif
   if (!indices || !probabilities || !left || !right || rows <= 0 || depth <= 0 ||
       vocab <= 0 || steps <= 0 || rows % steps != 0) return;
   const int sequences = rows / steps;
@@ -6258,7 +6488,6 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
     }
   };
   const auto work = std::size_t(rows) * depth * vocab;
-#if defined(PPOCR_HAS_AVX512_KERNELS)
   // One sequence (a single recognized line, e.g. use_det=False) used to run
   // the whole [steps x vocab] head on one thread: about 3 ms of a 15 ms small
   // recognizer call. Split the vocabulary into a fixed number of 32-column
@@ -6270,7 +6499,7 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
   static const bool vocab_split = std::getenv("PPOCR_DISABLE_CTC_VOCAB_SPLIT") == nullptr &&
       std::getenv("PPOCR_DISABLE_CTC_PACKED_FULL_M") == nullptr &&
       std::getenv("PPOCR_DISABLE_CTC_ONLINE") == nullptr;
-  if (vocab_split && sequences == 1 && use_packed_b && HasAvx512() && vocab >= 4096 &&
+  if (vocab_split && sequences == 1 && use_packed_b && vocab >= 4096 &&
       work >= 65536) {
     constexpr int kChunks = 8;
     const auto packed = PackedCtcB32(right, depth, vocab);
@@ -6294,9 +6523,27 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
         }
         const int col0 = p0 * 32;
         const int cols = std::min(vocab, p1 * 32) - col0;
-        Avx512GemmPacked32(nullptr, left, packed->data() + std::size_t(p0) * depth * 32,
-                           bias ? bias + col0 : nullptr, steps, cols, depth,
+        const float* panel = packed->data() + std::size_t(p0) * depth * 32;
+        const float* chunk_bias = bias ? bias + col0 : nullptr;
+        bool done = false;
+#if defined(PPOCR_HAS_AVX512_KERNELS)
+        if (!done && HasAvx512()) {
+          Avx512GemmPacked32(nullptr, left, panel, chunk_bias, steps, cols, depth,
+                             args.data() + at, maxima.data() + at, sums.data() + at);
+          done = true;
+        }
+#endif
+#if defined(PPOCR_HAS_AVX2_KERNELS)
+        if (!done && HasAvx2()) {
+          Avx2GemmPacked32(nullptr, left, panel, chunk_bias, steps, cols, depth,
                            args.data() + at, maxima.data() + at, sums.data() + at);
+          done = true;
+        }
+#endif
+        if (!done) {
+          PortableCtcChunkTop1(left, panel, chunk_bias, steps, cols, depth,
+                               args.data() + at, maxima.data() + at, sums.data() + at);
+        }
         for (std::size_t i = 0; i < n; ++i) args[at + i] += col0;
       }
     });
@@ -6319,7 +6566,6 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
     }
     return;
   }
-#endif
   if (sequences >= 2 && work >= 65536) ParallelFor(sequences, body);
   else body(0, sequences);
 }

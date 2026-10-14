@@ -197,6 +197,14 @@ if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
   endif()
 endif()
 
+# Apple Silicon matrix units (AMX/SME) are reachable from user code only via
+# Accelerate. Pointwise convolutions and the CTC head use cblas_sgemm there.
+option(PPOCR_USE_ACCELERATE "Use Apple Accelerate for CPU GEMM on Apple platforms" ON)
+if(APPLE AND PPOCR_USE_ACCELERATE)
+  target_compile_definitions(ppocr_objects PRIVATE PPOCR_USE_ACCELERATE=1)
+  list(APPEND PPOCR_METAL_LINK "-framework Accelerate")
+endif()
+
 set(PPOCR_INSTALL_TARGETS "")
 
 if(PPOCR_BUILD_STATIC)

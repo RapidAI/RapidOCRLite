@@ -3331,6 +3331,86 @@ bool TryHybridVulkanConvTranspose2x2Add(
       output_channels, input_height, input_width, immutable_parameters);
 }
 
+// Recognizer-height (H<=32) 3x3/2x2 convolutions have few output pixels and
+// many input channels; the direct det-tuned kernels are latency-bound there.
+// Pack 32-pixel im2col strips and run them through the shared GEMM kernel
+// (pixels x K) * (K x OC), then scatter to NCHW. Disable with
+// PPOCR_DISABLE_SMALL_CONV_GEMM.
+bool SmallConvGemmEnabled() {
+  static const bool on = std::getenv("PPOCR_DISABLE_SMALL_CONV_GEMM") == nullptr;
+  return on;
+}
+// On Apple the GEMM is Accelerate (matrix units), which beats the NEON direct
+// kernels at every detector size too, so the im2col route is not height-gated.
+bool ConvGemmHeight(int height) {
+#if defined(__APPLE__)
+  (void)height;
+  return true;
+#else
+  return height <= 32;
+#endif
+}
+#if defined(__APPLE__)
+constexpr int kConvGemmStrip = 256;
+#else
+constexpr int kConvGemmStrip = 64;
+#endif
+void SmallConvIm2colGemm(float* dst, const std::vector<const float*>& planes,
+                         const float* weights, const float* bias, int output_channels,
+                         int input_h, int input_w, int output_h, int output_w,
+                         int kernel_h, int kernel_w, int stride_h, int stride_w,
+                         int pad_top, int pad_left, bool relu) {
+  const int channels = int(planes.size());
+  const int taps = kernel_h * kernel_w;
+  const int depth = channels * taps;
+  const int pixels = output_h * output_w;
+  constexpr int kStrip = kConvGemmStrip;
+  const int strips = (pixels + kStrip - 1) / kStrip;
+  kernels::ParallelForRange(strips, [&](int first, int last) {
+    std::vector<float> cols(std::size_t(kStrip) * depth);
+    std::vector<float> out(std::size_t(kStrip) * output_channels);
+    for (int strip = first; strip < last; ++strip) {
+      const int p0 = strip * kStrip;
+      const int count = std::min(kStrip, pixels - p0);
+      // B = im2col^T [depth x kStrip]; a short tail strip is zero padded so
+      // the GEMM always sees full 64-wide column tiles.
+      int iy0[kStrip], ix0[kStrip];
+      for (int i = 0; i < kStrip; ++i) {
+        const int p = p0 + std::min(i, count - 1), oy = p / output_w;
+        iy0[i] = i < count ? oy * stride_h - pad_top : -1000000;
+        ix0[i] = (p - oy * output_w) * stride_w - pad_left;
+      }
+      float* row = cols.data();
+      for (int ky = 0; ky < kernel_h; ++ky) {
+        for (int kx = 0; kx < kernel_w; ++kx) {
+          // Tap-major build: index list is reused across every channel plane.
+          int offset[kStrip];
+          bool valid[kStrip];
+          for (int i = 0; i < kStrip; ++i) {
+            const int iy = iy0[i] + ky, ix = ix0[i] + kx;
+            valid[i] = iy >= 0 && iy < input_h && ix >= 0 && ix < input_w;
+            offset[i] = valid[i] ? iy * input_w + ix : 0;
+          }
+          for (int c = 0; c < channels; ++c) {
+            const float* plane = planes[std::size_t(c)];
+            float* r = row + (std::size_t(c) * taps + ky * kernel_w + kx) * kStrip;
+            for (int i = 0; i < kStrip; ++i) r[i] = valid[i] ? plane[offset[i]] : 0.F;
+          }
+        }
+      }
+      for (int oc = 0; oc < output_channels; ++oc)
+        std::fill_n(out.data() + std::size_t(oc) * kStrip, kStrip, bias ? bias[oc] : 0.F);
+      kernels::GemmAccumulate(out.data(), weights, cols.data(), output_channels, kStrip,
+                              depth);
+      for (int oc = 0; oc < output_channels; ++oc) {
+        const float* o = out.data() + std::size_t(oc) * kStrip;
+        float* d = dst + std::size_t(oc) * pixels + p0;
+        for (int i = 0; i < count; ++i) d[i] = relu ? std::max(o[i], 0.F) : o[i];
+      }
+    }
+  });
+}
+
 Tensor Conv(const Node& n, const std::vector<const Tensor*>& x, bool relu = false,
             bool sigmoid = false, bool hard_sigmoid = false,
             float hard_sigmoid_alpha = .2F, float hard_sigmoid_beta = .5F,
@@ -3370,6 +3450,25 @@ Tensor Conv(const Node& n, const std::vector<const Tensor*>& x, bool relu = fals
     }
   };
   Tensor o; o.shape={N,M,OH,OW}; o.data=PooledActivation(std::size_t(N)*M*OH*OW); const float* bias=x.size()>2&&x[2]?x[2]->data.data():nullptr; const int mg=M/group;
+  if (SmallConvGemmEnabled() && backend == Backend::cpu_only && group == 1 &&
+      (KH == 3 && KW == 3
+#if !(defined(__x86_64__) || defined(_M_X64))
+       || (KH == 2 && KW == 2)
+#endif
+       ) && dl[0] == 1 && dl[1] == 1 && (H <= 48 || ConvGemmHeight(H)) && C * KH * KW >= 16) {
+    const std::size_t plane = std::size_t(H) * W, out_plane = std::size_t(M) * OH * OW;
+    for (int ni = 0; ni < N; ++ni) {
+      std::vector<const float*> planes(static_cast<std::size_t>(C));
+      for (int c = 0; c < C; ++c)
+        planes[std::size_t(c)] = a.data.data() + (std::size_t(ni) * C + c) * plane;
+      SmallConvIm2colGemm(o.data.data() + std::size_t(ni) * out_plane, planes, w.data.data(),
+                          bias, M, H, W, OH, OW, KH, KW, int(st[0]), int(st[1]), int(pd[0]),
+                          int(pd[1]), relu);
+    }
+    if (relu_applied && relu) *relu_applied = true;
+    apply_activation(o);
+    return o;
+  }
   // The PP-OCRv6 backbone/FPN contains many NCHW pointwise convolutions.
   // For the no-padding unit-stride form, each input channel is a contiguous
   // plane, so use vector AXPY instead of scalar per-pixel address arithmetic.
@@ -4024,6 +4123,21 @@ Tensor ConcatConv(const Node& n, const std::vector<const Tensor*>& in, bool relu
   // channel-plane batch stride; a shared byte stride would corrupt unequal
   // branch-channel concatenations.
   const std::size_t output_batch = std::size_t(output_channels) * output_h * output_w;
+  if (SmallConvGemmEnabled() && ConvGemmHeight(height)) {
+    for (int batch = 0; batch < batches; ++batch) {
+      std::vector<const float*> planes;
+      const std::size_t plane = std::size_t(height) * width;
+      for (std::size_t source = 0; source < source_count; ++source)
+        for (int c = 0; c < source_channels[source]; ++c)
+          planes.push_back(sources[source] +
+                           (std::size_t(batch) * source_channels[source] + c) * plane);
+      SmallConvIm2colGemm(output.data.data() + std::size_t(batch) * output_batch, planes,
+                          weights->data.data(), bias ? bias->data.data() : nullptr,
+                          output_channels, height, width, output_h, output_w, kernel_h,
+                          kernel_w, stride_h, stride_w, pad_top, pad_left, relu);
+    }
+    return output;
+  }
   std::vector<const float*> batch_sources(source_count);
   for (int batch = 0; batch < batches; ++batch) {
     const std::size_t plane_offset = std::size_t(batch) * height * width;
@@ -4202,6 +4316,21 @@ Tensor MaxPoolConcatConv(const Node& n, const std::vector<const Tensor*>& in, bo
   // AVX-512/AVX2/NEON implementation intact and makes detector batching
   // numerically identical to serial N=1 execution.
   const std::size_t output_batch = std::size_t(output_channels) * output_h * output_w;
+  if (SmallConvGemmEnabled() && ConvGemmHeight(height)) {
+    for (int batch = 0; batch < batches; ++batch) {
+      std::vector<const float*> planes;
+      const std::size_t plane = std::size_t(height) * width;
+      for (std::size_t source = 0; source < source_count; ++source)
+        for (int c = 0; c < source_channels[source]; ++c)
+          planes.push_back(sources[source] +
+                           (std::size_t(batch) * source_channels[source] + c) * plane);
+      SmallConvIm2colGemm(output.data.data() + std::size_t(batch) * output_batch, planes,
+                          weights->data.data(), bias ? bias->data.data() : nullptr,
+                          output_channels, height, width, output_h, output_w, kernel_h,
+                          kernel_w, stride_h, stride_w, pad_top, pad_left, relu);
+    }
+    return output;
+  }
   std::vector<const float*> batch_sources(source_count);
   for (int batch = 0; batch < batches; ++batch) {
     const std::size_t offset = std::size_t(batch) * height * width;
