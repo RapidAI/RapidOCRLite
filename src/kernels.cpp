@@ -2778,6 +2778,25 @@ void NeonDepthwiseConv(float* dst, const float* src, const float* weights, const
         }
         out[std::size_t(y) * output_w + x] = sum;
       }
+      // Four independent 4-lane accumulators hide FMA latency; each output
+      // keeps the same ascending (ky, kx) FMA order as the 4-wide loop below,
+      // so results are bit-identical.
+      for (; x + 16 <= interior_end; x += 16) {
+        float32x4_t s0 = vdupq_n_f32(base), s1 = s0, s2 = s0, s3 = s0;
+        for (int ky = 0; ky < kernel_h; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * input_w + x - pad_left;
+          const float* kernel = filter + ky * kernel_w;
+          for (int kx = 0; kx < kernel_w; ++kx) {
+            const float32x4_t w = vdupq_n_f32(kernel[kx]);
+            s0 = vfmaq_f32(s0, vld1q_f32(row + kx), w);
+            s1 = vfmaq_f32(s1, vld1q_f32(row + kx + 4), w);
+            s2 = vfmaq_f32(s2, vld1q_f32(row + kx + 8), w);
+            s3 = vfmaq_f32(s3, vld1q_f32(row + kx + 12), w);
+          }
+        }
+        float* o = out + std::size_t(y) * output_w + x;
+        vst1q_f32(o, s0); vst1q_f32(o + 4, s1); vst1q_f32(o + 8, s2); vst1q_f32(o + 12, s3);
+      }
       for (; x + 4 <= interior_end; x += 4) {
         float32x4_t sum = vdupq_n_f32(base);
         for (int ky = 0; ky < kernel_h; ++ky) {
@@ -5127,6 +5146,39 @@ void ConvTranspose2x2(float* dst, const float* src, const float* weights, const 
   const int output_h = input_h * 2, output_w = input_w * 2;
   const std::size_t input_plane = std::size_t(input_h) * input_w;
   const std::size_t output_plane = std::size_t(output_h) * output_w;
+#if defined(PPOCR_HAS_ACCELERATE)
+  // 2x2 stride-2 transpose == one GEMM [OC*4 x IC] * [IC x HW] followed by a
+  // pixel-shuffle scatter. The NEON path was scalar and, for the 1-channel DB
+  // head, single-threaded.
+  if (dst && src && weights && AccelerateEnabled(std::int64_t(output_channels) * 4 *
+                                                 input_channels * std::int64_t(input_plane))) {
+    const int rows = output_channels * 4;
+    thread_local std::vector<float> tmp;
+    tmp.resize(std::size_t(rows) * input_plane);
+    cblas_sgemm(CblasRowMajor, CblasTrans, CblasNoTrans, rows, int(input_plane),
+                input_channels, 1.F, weights, rows, src, int(input_plane), 0.F, tmp.data(),
+                int(input_plane));
+    const float* t = tmp.data();
+    ParallelFor(output_channels * input_h, [&](int first, int last) {
+      for (int item = first; item < last; ++item) {
+        const int output = item / input_h, y = item % input_h;
+        const float b = bias ? bias[output] : 0.F;
+        float* dst0 = dst + std::size_t(output) * output_plane + std::size_t(2 * y) * output_w;
+        float* dst1 = dst0 + output_w;
+        const float* t0 = t + (std::size_t(output) * 4 + 0) * input_plane + std::size_t(y) * input_w;
+        const float* t1 = t0 + input_plane;
+        const float* t2 = t1 + input_plane;
+        const float* t3 = t2 + input_plane;
+        for (int x = 0; x < input_w; ++x) {
+          dst0[2 * x] = t0[x] + b; dst0[2 * x + 1] = t1[x] + b;
+          dst1[2 * x] = t2[x] + b; dst1[2 * x + 1] = t3[x] + b;
+        }
+      }
+    });
+    if (act) ApplyConvTransposeAct(dst, std::size_t(output_channels) * output_plane, act);
+    return;
+  }
+#endif
   // The DB head's last transpose is one channel of a full-page map. Channel
   // parallelism has nothing to split, and the RMW/acc kernel would otherwise
   // walk every input channel on one thread. Rows of a 2x2 stride-2 transpose
