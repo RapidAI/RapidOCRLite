@@ -6255,39 +6255,58 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
   if (indices && probabilities && left && right && rows > 0 && depth > 0 && vocab > 0 &&
       steps > 0 && rows % steps == 0 &&
       AccelerateEnabled(std::int64_t(rows) * depth * vocab)) {
-    thread_local std::vector<float> logits;
-    logits.resize(std::size_t(rows) * vocab);
-    for (int r = 0; r < rows; ++r) {
-      float* row = logits.data() + std::size_t(r) * vocab;
-      if (bias) std::memcpy(row, bias, sizeof(float) * vocab);
-      else std::fill_n(row, vocab, 0.F);
-    }
-    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, vocab, depth, 1.F, left,
-                depth, right, vocab, 1.F, logits.data(), vocab);
-    // Per-row argmax + softmax denominator in parallel (rows are
-    // independent); the CTC collapse below stays sequential.
-    std::vector<float> denoms(static_cast<std::size_t>(rows));
-    const float* all = logits.data();
-    ParallelFor(rows, [&](int first, int last) {
-      for (int r = first; r < last; ++r) {
-        const float* row = all + std::size_t(r) * vocab;
-        int best = 0;
-        float maximum = row[0];
-        for (int c = 1; c < vocab; ++c) if (row[c] > maximum) { maximum = row[c]; best = c; }
-        // vvexpf over the shifted row; scalar libm exp was ~2 ms of the
-        // 40x18710 small-model head.
-        thread_local std::vector<float> shifted;
-        shifted.resize(std::size_t(vocab));
-        const float negmax = -maximum;
-        vDSP_vsadd(row, 1, &negmax, shifted.data(), 1, vDSP_Length(vocab));
-        const int count = vocab;
-        vvexpf(shifted.data(), shifted.data(), &count);
-        float denom = 0.F;
-        vDSP_sve(shifted.data(), 1, &denom, vDSP_Length(vocab));
-        indices[r] = best;
-        denoms[std::size_t(r)] = denom;
+    // Fixed 1024-column chunks (independent of thread count), each GEMM'd and
+    // reduced while cache-hot, merged in chunk order with the same strict-">"
+    // lowest-index tie rule as the x86 vocab split.
+    constexpr int kCols = 1024;
+    const int chunks = (vocab + kCols - 1) / kCols;
+    std::vector<int> c_arg(std::size_t(chunks) * rows);
+    std::vector<float> c_max(std::size_t(chunks) * rows), c_sum(std::size_t(chunks) * rows);
+    ParallelFor(chunks, [&](int first, int last) {
+      thread_local std::vector<float> buf, tmp;
+      for (int c = first; c < last; ++c) {
+        const int c0 = c * kCols, n = std::min(kCols, vocab - c0);
+        buf.resize(std::size_t(rows) * n);
+        tmp.resize(std::size_t(n));
+        for (int r = 0; r < rows; ++r) {
+          float* row = buf.data() + std::size_t(r) * n;
+          if (bias) std::memcpy(row, bias + c0, sizeof(float) * n);
+          else std::fill_n(row, n, 0.F);
+        }
+        cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, n, depth, 1.F, left, depth,
+                    right + c0, vocab, 1.F, buf.data(), n);
+        for (int r = 0; r < rows; ++r) {
+          const float* row = buf.data() + std::size_t(r) * n;
+          int best = 0;
+          float maximum = row[0];
+          for (int j = 1; j < n; ++j) if (row[j] > maximum) { maximum = row[j]; best = j; }
+          const float negmax = -maximum;
+          vDSP_vsadd(row, 1, &negmax, tmp.data(), 1, vDSP_Length(n));
+          vvexpf(tmp.data(), tmp.data(), &n);
+          float sum = 0.F;
+          vDSP_sve(tmp.data(), 1, &sum, vDSP_Length(n));
+          const std::size_t at = std::size_t(c) * rows + r;
+          c_arg[at] = c0 + best; c_max[at] = maximum; c_sum[at] = sum;
+        }
       }
     });
+    std::vector<float> denoms(static_cast<std::size_t>(rows));
+    for (int r = 0; r < rows; ++r) {
+      // Not -infinity: -ffast-math treats it as poison (see SoftmaxRowsInplace).
+      float best_max = std::numeric_limits<float>::lowest();
+      int best = 0;
+      for (int c = 0; c < chunks; ++c) {
+        const std::size_t at = std::size_t(c) * rows + r;
+        if (c_max[at] > best_max) { best_max = c_max[at]; best = c_arg[at]; }
+      }
+      float denom = 0.F;
+      for (int c = 0; c < chunks; ++c) {
+        const std::size_t at = std::size_t(c) * rows + r;
+        denom += c_sum[at] * std::exp(c_max[at] - best_max);
+      }
+      indices[r] = best;
+      denoms[std::size_t(r)] = denom;
+    }
     for (int sequence = 0; sequence < rows / steps; ++sequence) {
       int previous = -1;
       for (int step = 0; step < steps; ++step) {
