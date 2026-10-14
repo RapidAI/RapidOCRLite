@@ -63,3 +63,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - Executor overhead: measured RunCtcTop1 wall == sum of ops; earlier "2 ms gap" was profiler printing. Nothing to cut.
 - Tried+reverted: AVX-512 12-row tile (spills), AVX2 6x16 blocked port (neutral), row-split expand parallelism (helps Conv.49 only, noise-level net).
 - M4 @ b4cebec (2 runs, load 6-7): 3.x det .114 rec .00584 full .314 | Lite det .082 (1.40x) rec .00544 (1.07x) full .107 (2.9x)
+- 19:45 x86 final_x86.sh @ b4cebec, NOT quiet (load 7-14 on 8 vCPU), medians of 3-4: 3.x det .388 rec .0096 full .521 | AVX-512 det .158 rec .0093 full .222 | AVX2 det .209 rec .0122 full .265. Paired-run rec AVX-512 vs 3.x: 10.2/11.2, 8.7/7.9, 9.9/12.7, 8.1/8.0 ms. README not updated (no quiet host).
