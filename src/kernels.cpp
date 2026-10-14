@@ -6386,7 +6386,14 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
           // first-occurrence index (and stored value) as the strict-">" scan.
           float vmax = row[0];
           vDSP_maxv(row, 1, &vmax, vDSP_Length(n));
-          while (best < n - 1 && !(row[best] == vmax)) ++best;
+          {
+            const float32x4_t mv = vdupq_n_f32(vmax);
+            int j = 0;
+            for (; j + 4 <= n; j += 4)
+              if (vmaxvq_u32(vceqq_f32(vld1q_f32(row + j), mv))) break;
+            best = j;
+            while (best < n - 1 && !(row[best] == vmax)) ++best;
+          }
           const float maximum = row[best];
           const std::size_t at = std::size_t(c) * rows + r;
           c_arg[at] = c0 + best; c_max[at] = maximum;
