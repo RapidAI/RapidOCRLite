@@ -6341,35 +6341,60 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
     const int chunks = (vocab + kCols - 1) / kCols;
     std::vector<int> c_arg(std::size_t(chunks) * rows);
     std::vector<float> c_max(std::size_t(chunks) * rows), c_sum(std::size_t(chunks) * rows);
+    // Logits stay resident ([chunk][rows][n]) so the softmax denominator is
+    // only computed for rows that emit a character (best != blank/previous);
+    // other rows' probability is 0 regardless. Per-row sums are unchanged.
+    // PPOCR_DISABLE_CTC_LAZY_DENOM computes every row's sum as before.
+    static const bool lazy = std::getenv("PPOCR_DISABLE_CTC_LAZY_DENOM") == nullptr;
+    thread_local std::vector<float> logits;
+    logits.resize(std::size_t(rows) * std::size_t(vocab));
+    std::vector<unsigned char> need(std::size_t(rows), lazy ? 0 : 1);
+    // Thread-locals are per-thread: workers must use this pointer.
+    float* const logit_base = logits.data();
+    const auto chunk_row = [&](int c, int r) {
+      const int c0 = c * kCols, n = std::min(kCols, vocab - c0);
+      return logit_base + std::size_t(c0) * rows + std::size_t(r) * n;
+    };
+    const auto row_sum = [&](int c, int r, std::vector<float>& tmp) {
+      const int n = std::min(kCols, vocab - c * kCols);
+      const float* row = chunk_row(c, r);
+      const std::size_t at = std::size_t(c) * rows + r;
+      tmp.resize(std::size_t(n));
+      const float negmax = -c_max[at];
+      vDSP_vsadd(row, 1, &negmax, tmp.data(), 1, vDSP_Length(n));
+      vvexpf(tmp.data(), tmp.data(), &n);
+      float sum = 0.F;
+      vDSP_sve(tmp.data(), 1, &sum, vDSP_Length(n));
+      c_sum[at] = sum;
+    };
     ParallelFor(chunks, [&](int first, int last) {
-      thread_local std::vector<float> buf, tmp;
+      thread_local std::vector<float> tmp;
       for (int c = first; c < last; ++c) {
         const int c0 = c * kCols, n = std::min(kCols, vocab - c0);
-        buf.resize(std::size_t(rows) * n);
-        tmp.resize(std::size_t(n));
+        float* buf = chunk_row(c, 0);
         for (int r = 0; r < rows; ++r) {
-          float* row = buf.data() + std::size_t(r) * n;
+          float* row = buf + std::size_t(r) * n;
           if (bias) std::memcpy(row, bias + c0, sizeof(float) * n);
           else std::fill_n(row, n, 0.F);
         }
         cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, rows, n, depth, 1.F, left, depth,
-                    right + c0, vocab, 1.F, buf.data(), n);
+                    right + c0, vocab, 1.F, buf, n);
         for (int r = 0; r < rows; ++r) {
-          const float* row = buf.data() + std::size_t(r) * n;
+          const float* row = buf + std::size_t(r) * n;
           int best = 0;
-          float maximum = row[0];
-          for (int j = 1; j < n; ++j) if (row[j] > maximum) { maximum = row[j]; best = j; }
-          const float negmax = -maximum;
-          vDSP_vsadd(row, 1, &negmax, tmp.data(), 1, vDSP_Length(n));
-          vvexpf(tmp.data(), tmp.data(), &n);
-          float sum = 0.F;
-          vDSP_sve(tmp.data(), 1, &sum, vDSP_Length(n));
+          // vDSP max value, then the first index equal to it: the same
+          // first-occurrence index (and stored value) as the strict-">" scan.
+          float vmax = row[0];
+          vDSP_maxv(row, 1, &vmax, vDSP_Length(n));
+          while (best < n - 1 && !(row[best] == vmax)) ++best;
+          const float maximum = row[best];
           const std::size_t at = std::size_t(c) * rows + r;
-          c_arg[at] = c0 + best; c_max[at] = maximum; c_sum[at] = sum;
+          c_arg[at] = c0 + best; c_max[at] = maximum;
+          if (!lazy) row_sum(c, r, tmp);
         }
       }
     });
-    std::vector<float> denoms(static_cast<std::size_t>(rows));
+    std::vector<float> best_maxes(static_cast<std::size_t>(rows));
     for (int r = 0; r < rows; ++r) {
       // Not -infinity: -ffast-math treats it as poison (see SoftmaxRowsInplace).
       float best_max = std::numeric_limits<float>::lowest();
@@ -6378,12 +6403,33 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
         const std::size_t at = std::size_t(c) * rows + r;
         if (c_max[at] > best_max) { best_max = c_max[at]; best = c_arg[at]; }
       }
+      indices[r] = best;
+      best_maxes[std::size_t(r)] = best_max;
+    }
+    if (lazy) {
+      for (int sequence = 0; sequence < rows / steps; ++sequence) {
+        int previous = -1;
+        for (int step = 0; step < steps; ++step) {
+          const int r = sequence * steps + step;
+          need[std::size_t(r)] = indices[r] != 0 && indices[r] != previous;
+          previous = indices[r];
+        }
+      }
+      ParallelFor(chunks, [&](int first, int last) {
+        thread_local std::vector<float> tmp;
+        for (int c = first; c < last; ++c)
+          for (int r = 0; r < rows; ++r)
+            if (need[std::size_t(r)]) row_sum(c, r, tmp);
+      });
+    }
+    std::vector<float> denoms(static_cast<std::size_t>(rows), 0.F);
+    for (int r = 0; r < rows; ++r) {
+      if (!need[std::size_t(r)]) continue;
       float denom = 0.F;
       for (int c = 0; c < chunks; ++c) {
         const std::size_t at = std::size_t(c) * rows + r;
-        denom += c_sum[at] * std::exp(c_max[at] - best_max);
+        denom += c_sum[at] * std::exp(c_max[at] - best_maxes[std::size_t(r)]);
       }
-      indices[r] = best;
       denoms[std::size_t(r)] = denom;
     }
     for (int sequence = 0; sequence < rows / steps; ++sequence) {
