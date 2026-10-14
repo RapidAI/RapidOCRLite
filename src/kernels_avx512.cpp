@@ -7,6 +7,7 @@
 #include <cstring>
 #include <immintrin.h>
 #include <limits>
+#include <type_traits>
 #include <vector>
 
 namespace ppocr::detail::kernels {
@@ -5614,6 +5615,99 @@ void Avx512ExpandGeluProjectAdd(float* dst, const float* src,
       _mm512_mask_storeu_ps(dst + std::size_t(channel) * plane + spatial, mask, acc);
     }
   };
+  // Weight-stationary blocking: each 8-row weight block (<=24 KB) stays in L1
+  // while it sweeps every 32-wide spatial tile of this range, instead of
+  // re-streaming the whole 1-2 MB expand/project weights per tile. Every
+  // output keeps the same bias-first, ascending-K FMA chain, so results are
+  // bit-identical to the per-tile path below.
+  static const bool blocked = std::getenv("PPOCR_DISABLE_EXPAND_WEIGHT_BLOCKING") == nullptr;
+  if (blocked && channels % 8 == 0 && hidden % 8 == 0 && spatial_end - spatial_begin >= 64) {
+    const std::size_t width = spatial_end - spatial_begin;
+    const std::size_t tiles = (width + 31) / 32;
+    thread_local std::vector<float> act_all, hid_all;
+    act_all.resize(tiles * std::size_t(channels) * 32);
+    hid_all.resize(tiles * std::size_t(hidden) * 32);
+    const auto masks = [&](std::size_t t, __mmask16& m0, __mmask16& m1) {
+      const std::size_t left = width - t * 32;
+      m0 = left >= 16 ? __mmask16(0xFFFF) : __mmask16((1u << left) - 1u);
+      m1 = left >= 32 ? __mmask16(0xFFFF)
+                      : (left > 16 ? __mmask16((1u << (left - 16)) - 1u) : __mmask16(0));
+    };
+    for (std::size_t t = 0; t < tiles; ++t) {
+      __mmask16 m0, m1;
+      masks(t, m0, m1);
+      const std::size_t sp = spatial_begin + t * 32;
+      float* a = act_all.data() + t * std::size_t(channels) * 32;
+      for (int c = 0; c < channels; ++c) {
+        const float* row = src + std::size_t(c) * plane + sp;
+        _mm512_storeu_ps(a + std::size_t(c) * 32, _mm512_maskz_loadu_ps(m0, row));
+        _mm512_storeu_ps(a + std::size_t(c) * 32 + 16, _mm512_maskz_loadu_ps(m1, row + 16));
+      }
+    }
+    const auto expand_block = [&](auto rows_tag, int h0) {
+      constexpr int R = decltype(rows_tag)::value;
+      const float* e = expand_weights + std::size_t(h0) * channels;
+      for (std::size_t t = 0; t < tiles; ++t) {
+        const float* a = act_all.data() + t * std::size_t(channels) * 32;
+        __m512 lo[R], hi[R];
+        for (int k = 0; k < R; ++k) {
+          lo[k] = hi[k] = _mm512_set1_ps(expand_bias ? expand_bias[h0 + k] : 0.F);
+        }
+        for (int c = 0; c < channels; ++c) {
+          const __m512 x0 = _mm512_loadu_ps(a + std::size_t(c) * 32);
+          const __m512 x1 = _mm512_loadu_ps(a + std::size_t(c) * 32 + 16);
+          for (int k = 0; k < R; ++k) {
+            const __m512 w = _mm512_set1_ps(e[std::size_t(k) * channels + c]);
+            lo[k] = _mm512_fmadd_ps(w, x0, lo[k]);
+            hi[k] = _mm512_fmadd_ps(w, x1, hi[k]);
+          }
+        }
+        float* hd = hid_all.data() + (t * std::size_t(hidden) + h0) * 32;
+        for (int k = 0; k < R; ++k) {
+          _mm512_storeu_ps(hd + std::size_t(k) * 32, exact_gelu(lo[k]));
+          _mm512_storeu_ps(hd + std::size_t(k) * 32 + 16, exact_gelu(hi[k]));
+        }
+      }
+    };
+    const auto project_block = [&](auto rows_tag, int c0) {
+      constexpr int R = decltype(rows_tag)::value;
+      const float* pw = project_weights + std::size_t(c0) * hidden;
+      for (std::size_t t = 0; t < tiles; ++t) {
+        __mmask16 m0, m1;
+        masks(t, m0, m1);
+        const float* a = act_all.data() + t * std::size_t(channels) * 32;
+        const float* hd = hid_all.data() + t * std::size_t(hidden) * 32;
+        __m512 lo[R], hi[R];
+        for (int k = 0; k < R; ++k) {
+          const __m512 b = _mm512_set1_ps(project_bias ? project_bias[c0 + k] : 0.F);
+          lo[k] = _mm512_add_ps(b, _mm512_loadu_ps(a + std::size_t(c0 + k) * 32));
+          hi[k] = _mm512_add_ps(b, _mm512_loadu_ps(a + std::size_t(c0 + k) * 32 + 16));
+        }
+        for (int h = 0; h < hidden; ++h) {
+          const __m512 g0 = _mm512_loadu_ps(hd + std::size_t(h) * 32);
+          const __m512 g1 = _mm512_loadu_ps(hd + std::size_t(h) * 32 + 16);
+          for (int k = 0; k < R; ++k) {
+            const __m512 w = _mm512_set1_ps(pw[std::size_t(k) * hidden + h]);
+            lo[k] = _mm512_fmadd_ps(w, g0, lo[k]);
+            hi[k] = _mm512_fmadd_ps(w, g1, hi[k]);
+          }
+        }
+        const std::size_t sp = spatial_begin + t * 32;
+        for (int k = 0; k < R; ++k) {
+          float* out = dst + std::size_t(c0 + k) * plane + sp;
+          _mm512_mask_storeu_ps(out, m0, lo[k]);
+          _mm512_mask_storeu_ps(out + 16, m1, hi[k]);
+        }
+      }
+    };
+    using R8 = std::integral_constant<int, 8>;
+    {
+      // 12-row blocks measured slower (register pressure); keep 8x32.
+      for (int h0 = 0; h0 < hidden; h0 += 8) expand_block(R8{}, h0);
+      for (int c0 = 0; c0 < channels; c0 += 8) project_block(R8{}, c0);
+    }
+    return;
+  }
   std::size_t spatial = spatial_begin;
   if (spatial2) {
     for (; spatial + 32 <= spatial_end; spatial += 32) {
