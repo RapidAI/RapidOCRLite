@@ -70,3 +70,7 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - M4 thread/chunk/spin sweeps: all ~5.4 ms (4 threads best). CTC head 0.57 ms is bandwidth on 28 MB fp32 weights.
 - 20:17 README/README-CN M4 rows updated (ff59346). x86 still loaded (load 6-10) -> x86 rows not re-measured. Open: x86 rec-only (AVX2 esp.), M4 rec needs ~10% more.
 - 22:15 RELEASED 5.0.0a7 (473d185, tag v5.0.0a7 annotated): PyPI 25 wheels + sdist; GH prerelease with wheels, 7 SDK archives, SHA256SUMS. Tag-push SDK attach raced release creation ('release not found'); fixed via documented workflow_dispatch release_tag=v5.0.0a7 (success).
+- 21:55 b74b8a9: build-sdk creates the release from the existing tag if missing (--verify-tag, retry) before SDK upload.
+- AVX2 single-thread rec profile (total 45.9 ms vs AVX-512 ~25): Conv.51 5.1, Conv.49 5.0 (340 MFLOP -> ~68 GFLOPS), CTC 4.8 (~120 GFLOPS, packed kernel near peak), mid expand blocks ~2.4-2.6 each, Conv.45 1.9.
+  Expand kernels at ~60% of AVX2 FMA peak; previous 6x16 weight-blocked port was neutral, so weight streaming is not the limiter. Note 3.x on this host runs MLAS AVX-512 regardless of PPOCR_FORCE_ISA, so forced-AVX2 Lite competes with half-width SIMD.
+- x86 host load swings 3-14; 3.x rec itself ranged 8-20 ms/line in the same hour -> multi-thread comparisons not reproducible today.
