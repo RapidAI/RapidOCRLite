@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,11 @@ struct Image {
 };
 
 struct Point { float x{}, y{}; };
+
+// Thrown when a requested mode is not available on the selected backend.
+struct UnsupportedError : std::runtime_error {
+  using std::runtime_error::runtime_error;
+};
 
 struct Result {
   std::string text;
@@ -179,6 +185,12 @@ class PPOCR_API OCR {
                               float det_unclip_ratio);
 
   [[nodiscard]] std::vector<Result> Recognize(const Image& image) const;
+  // rapidocr 3.x use_det / use_rec. use_det=false recognizes the whole image
+  // as one text line (one result whose box is the image). use_rec=false
+  // returns detector boxes with empty text and the DB box score as
+  // confidence. Both true is Recognize(). Both false is invalid. The partial
+  // modes run on the CPU graph; Backend::gpu_only throws for them.
+  [[nodiscard]] std::vector<Result> Run(const Image& image, bool use_det, bool use_rec) const;
   // Runs a batch of independent page images. Results preserve input order;
   // each nested vector is identical to calling Recognize() for that image.
   // This is intentionally a page-level scheduler rather than padding unlike

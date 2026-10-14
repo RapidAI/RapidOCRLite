@@ -3,6 +3,7 @@
 # @Contact: liekkaskono@163.com
 import logging
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
@@ -25,6 +26,9 @@ class DownloadFileInput:
 class DownloadFile:
     BLOCK_SIZE = 1024  # 1 KiB
     REQUEST_TIMEOUT = 60
+    # ModelScope occasionally drops a request; retry before failing.
+    MAX_ATTEMPTS = 3
+    RETRY_DELAY = 2.0
 
     @classmethod
     def run(cls, input_params: DownloadFileInput):
@@ -37,8 +41,27 @@ class DownloadFile:
         if cls._should_skip_download(save_path, input_params.sha256, logger):
             return
 
-        response = cls._make_http_request(input_params.file_url, logger)
-        cls._save_response_with_progress(response, save_path, logger)
+        for attempt in range(1, cls.MAX_ATTEMPTS + 1):
+            try:
+                response = cls._make_http_request(input_params.file_url, logger)
+                cls._save_response_with_progress(response, save_path, logger)
+                return
+            except (DownloadFileException, requests.RequestException, OSError) as exc:
+                if save_path.exists():
+                    save_path.unlink()
+                if attempt == cls.MAX_ATTEMPTS:
+                    if isinstance(exc, DownloadFileException):
+                        raise
+                    raise DownloadFileException(
+                        f"Failed to download {input_params.file_url}"
+                    ) from exc
+                logger.warning(
+                    "Download attempt %d/%d failed, retrying: %s",
+                    attempt,
+                    cls.MAX_ATTEMPTS,
+                    input_params.file_url,
+                )
+                time.sleep(cls.RETRY_DELAY * attempt)
 
     @staticmethod
     def _ensure_parent_dir_exists(path: Path):

@@ -135,6 +135,15 @@ PPOCR_API int ppocr_set_det_thresholds(ppocr_ocr* ocr, float det_threshold,
 
 PPOCR_API int ppocr_recognize(ppocr_ocr* ocr, const ppocr_image* image,
                               ppocr_result* result);
+/* Task flags for ppocr_run, matching rapidocr 3.x use_det / use_rec. */
+#define PPOCR_TASK_DET 1
+#define PPOCR_TASK_REC 2
+/* tasks = DET|REC is ppocr_recognize. DET only: boxes with empty text and the
+   DB box score as confidence. REC only: the whole image is one text line and
+   the single result's box is the image rectangle. The partial modes run on
+   the CPU graph; with PPOCR_BACKEND_GPU they return PPOCR_ERR_UNSUPPORTED. */
+PPOCR_API int ppocr_run(ppocr_ocr* ocr, const ppocr_image* image, int tasks,
+                        ppocr_result* result);
 /* outs must point at count result objects. Input order is preserved. */
 PPOCR_API int ppocr_recognize_batch(ppocr_ocr* ocr, const ppocr_image* images,
                                     size_t count, ppocr_result* outs);

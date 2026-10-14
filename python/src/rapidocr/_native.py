@@ -16,6 +16,10 @@ PPOCR_BACKEND_HYBRID = 2
 PPOCR_BACKEND_METAL = 3
 
 
+PPOCR_TASK_DET = 1
+PPOCR_TASK_REC = 2
+
+
 class Options(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_int),
@@ -154,6 +158,10 @@ def _bind(lib: ctypes.CDLL) -> None:
         ctypes.POINTER(Result),
     ]
     lib.ppocr_recognize.restype = ctypes.c_int
+    run = getattr(lib, "ppocr_run", None)
+    if run is not None:
+        run.argtypes = [ctypes.c_void_p, ctypes.POINTER(Image), ctypes.c_int, ctypes.POINTER(Result)]
+        run.restype = ctypes.c_int
     lib.ppocr_result_free.argtypes = [ctypes.POINTER(Result)]
     lib.ppocr_result_free.restype = None
     lib.ppocr_last_error.argtypes = []
@@ -199,16 +207,24 @@ class NativeOCR:
             raise RuntimeError(self._error() or "ppocr_set_det_thresholds failed")
 
     def recognize(self, rgb: np.ndarray):
+        return self.run(rgb, PPOCR_TASK_DET | PPOCR_TASK_REC)
+
+    def run(self, rgb: np.ndarray, tasks: int):
         array = np.ascontiguousarray(rgb, dtype=np.uint8)
         if array.ndim != 3 or array.shape[2] != 3:
             raise ValueError("native OCR expects an HWC RGB uint8 image")
         height, width = array.shape[:2]
         image = Image(width, height, array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)))
         result = Result()
-        status = self.lib.ppocr_recognize(self.handle, ctypes.byref(image), ctypes.byref(result))
+        if tasks == PPOCR_TASK_DET | PPOCR_TASK_REC:
+            status = self.lib.ppocr_recognize(self.handle, ctypes.byref(image), ctypes.byref(result))
+        else:
+            if getattr(self.lib, "ppocr_run", None) is None:
+                raise RuntimeError("this libppocr has no ppocr_run; use_det/use_rec need a newer build")
+            status = self.lib.ppocr_run(self.handle, ctypes.byref(image), int(tasks), ctypes.byref(result))
         try:
             if status != PPOCR_OK:
-                raise RuntimeError(self._error() or "ppocr_recognize failed")
+                raise RuntimeError(self._error() or "ppocr_run failed")
             boxes = []
             txts = []
             scores = []

@@ -205,6 +205,27 @@ int ppocr_recognize(ppocr_ocr* ocr, const ppocr_image* image, ppocr_result* resu
   }
 }
 
+int ppocr_run(ppocr_ocr* ocr, const ppocr_image* image, int tasks, ppocr_result* result) {
+  ClearError();
+  if (!result) return Fail(PPOCR_ERR_INVALID_ARGUMENT, "null result");
+  result->items = nullptr;
+  result->count = 0;
+  if (!ocr || !image) return Fail(PPOCR_ERR_INVALID_ARGUMENT, "null OCR handle or image");
+  const bool det = (tasks & PPOCR_TASK_DET) != 0, rec = (tasks & PPOCR_TASK_REC) != 0;
+  if ((!det && !rec) || (tasks & ~(PPOCR_TASK_DET | PPOCR_TASK_REC)) != 0) {
+    return Fail(PPOCR_ERR_INVALID_ARGUMENT, "tasks must be PPOCR_TASK_DET, PPOCR_TASK_REC or both");
+  }
+  try {
+    return FillResult(ocr->engine.Run(Borrow(*image), det, rec), result);
+  } catch (const ppocr::UnsupportedError& ex) {
+    return Fail(PPOCR_ERR_UNSUPPORTED, ex.what());
+  } catch (const std::bad_alloc&) {
+    return Fail(PPOCR_ERR_NOMEM, "out of memory");
+  } catch (const std::exception& ex) {
+    return Fail(PPOCR_ERR_RUNTIME, ex.what());
+  }
+}
+
 int ppocr_recognize_batch(ppocr_ocr* ocr, const ppocr_image* images, size_t count,
                           ppocr_result* outs) {
   ClearError();

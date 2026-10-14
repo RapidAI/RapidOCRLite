@@ -35,7 +35,7 @@ from rapidocr.utils.parse_parameters import ParseParams
 
 REMAINING_INCOMPATIBILITIES = (
     "use_cls is accepted and ignored; there is no angle classifier",
-    "use_det=False or use_rec=False raises RapidOCRError (no det-only or rec-only)",
+    "use_det=False and use_rec=False together raise RapidOCRError",
     "return_word_box and return_single_char_box do not produce word boxes",
     "PP-OCRv4 and PP-OCRv5 model versions raise NotImplementedError",
     "EngineType other than ONNXRUNTIME and PPOCR_CPP raises NotImplementedError",
@@ -204,13 +204,27 @@ def test_empty_and_bad_input_match_main_shape():
     assert len(result) == 0
 
 
-def test_gap_det_only_and_rec_only():
+def test_det_only_and_rec_only():
     engine = RapidOCR(params=_local_or_placeholder_params())
     blank = np.zeros((32, 32, 3), dtype=np.uint8)
     with pytest.raises(RapidOCRError):
-        engine(blank, use_det=True, use_cls=False, use_rec=False)
-    with pytest.raises(RapidOCRError):
-        engine(blank, use_det=False, use_cls=False, use_rec=True)
+        engine(blank, use_det=False, use_cls=False, use_rec=False)
+    if not _models_ready():
+        return
+    image = str(Path(__file__).resolve().parent / "data" / "hello.png")
+    full = engine(image, use_det=True, use_cls=False, use_rec=True)
+    det = engine(image, use_det=True, use_cls=False, use_rec=False)
+    assert type(det).__name__ == "TextDetOutput"
+    assert det.boxes is not None and det.boxes.shape == (1, 4, 2)
+    np.testing.assert_allclose(det.boxes, full.boxes)
+    assert len(det.scores) == 1 and 0.0 < det.scores[0] <= 1.0
+    x0, y0 = det.boxes[0].min(axis=0).astype(int)
+    x1, y1 = det.boxes[0].max(axis=0).astype(int)
+    line = np.ascontiguousarray(full.img[y0:y1, x0:x1])
+    rec = engine(line, use_det=False, use_cls=False, use_rec=True)
+    assert type(rec).__name__ == "TextRecOutput"
+    assert rec.txts == full.txts
+    engine.update_params(use_det=True, use_rec=True)
 
 
 def test_gap_ppocr_v4_and_openvino():

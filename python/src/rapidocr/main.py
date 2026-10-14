@@ -18,7 +18,7 @@ import numpy as np
 
 from . import _native
 from .inference_engine.base import FileInfo, InferSession
-from .output import RapidOCROutput, filter_by_score
+from .output import RapidOCROutput, TextDetOutput, TextRecOutput, filter_by_score
 from .typings import EngineType, ModelType, OCRVersion, TaskType
 from .utils.load_image import LoadImage, LoadImageError
 from .utils.model_resolver import list_supported_langs as _list_supported_langs
@@ -137,23 +137,40 @@ class RapidOCR:
             logger.warning("return_word_box is not implemented by the native PP-OCRv6 engine")
         if return_single_char_box:
             logger.warning("return_single_char_box is not implemented by the native PP-OCRv6 engine")
-        if not self.use_det or not self.use_rec:
-            raise RapidOCRError(
-                "The native engine runs detection and recognition together. "
-                "use_det=False or use_rec=False is not supported."
-            )
+        if not self.use_det and not self.use_rec:
+            raise RapidOCRError("use_det and use_rec cannot both be False with the native engine")
         if self.use_cls and not self._warned_cls:
             logger.warning("use_cls is ignored: the native engine has no angle classifier")
             self._warned_cls = True
 
         started = time.perf_counter()
         original = self.load_img(img_content)
-        prepared, ratio_w, ratio_h, pad_top = _prepare_image(self, original)
+        # main pads short pages only in detect_and_crop, so use_det=False
+        # gets the bounded resize alone.
+        prepared, ratio_w, ratio_h, pad_top = _prepare_image(self, original, pad=self.use_det)
         engine = self._ensure_engine()
         det_threshold = float(self.cfg.Det.get("thresh", 0.3))
         box_threshold = float(self.cfg.Det.get("box_thresh", 0.5))
         unclip = float(self.cfg.Det.get("unclip_ratio", 1.6))
         engine.set_det_thresholds(det_threshold, box_threshold, unclip)
+        if not self.use_rec:
+            boxes, _, scores = engine.run(prepared, _native.PPOCR_TASK_DET)
+            elapsed = time.perf_counter() - started
+            if not boxes:
+                return TextDetOutput()
+            ori_h, ori_w = original.shape[:2]
+            mapped = map_boxes_to_original(np.asarray(boxes, dtype=np.float32), ratio_w, ratio_h, pad_top, ori_w, ori_h)
+            return TextDetOutput(img=original, boxes=mapped, scores=list(scores), elapse=elapsed)
+        if not self.use_det:
+            _, txts, scores = engine.run(prepared, _native.PPOCR_TASK_REC)
+            elapsed = time.perf_counter() - started
+            return TextRecOutput(
+                imgs=[original],
+                txts=tuple(txts),
+                scores=tuple(scores),
+                word_results=tuple((t, s, None) for t, s in zip(txts, scores)),
+                elapse=elapsed,
+            )
         boxes, txts, scores = engine.recognize(prepared)
         kept_boxes, kept_txts, kept_scores = filter_by_score(boxes, txts, scores, self.text_score)
         elapsed = time.perf_counter() - started
@@ -320,7 +337,7 @@ def _section_info(section: ConfigNode) -> FileInfo:
     )
 
 
-def _prepare_image(engine: RapidOCR, original: np.ndarray):
+def _prepare_image(engine: RapidOCR, original: np.ndarray, pad: bool = True):
     image = original
     ratio_w = ratio_h = 1.0
     pad_top = 0
@@ -328,7 +345,7 @@ def _prepare_image(engine: RapidOCR, original: np.ndarray):
         image, ratio_h, ratio_w = resize_image_within_bounds(
             image, float(engine.min_side_len), float(engine.max_side_len)
         )
-    if bool(engine.cfg.Global.get("use_vertical_padding", True)):
+    if pad and bool(engine.cfg.Global.get("use_vertical_padding", True)):
         image, pad_top = apply_vertical_padding(
             image, float(engine.width_height_ratio), float(engine.min_height)
         )

@@ -1022,37 +1022,130 @@ Tensor RecInputBatch(const Image& image, const CropBounds* crops,
   return output;
 }
 
-// rapidocr 3.x DBPostProcess: threshold, optional 2x2 dilation, component
-// box, mean score inside that box, unclip by area*ratio/perimeter, then
-// half-to-even scaling back to the source image.
-float ScaleDbCoord(float value, int src, int dst) {
-  if (src <= 0 || dst <= 0) return 0.F;
-  double rounded = std::nearbyint(static_cast<double>(value) / src * dst);
-  if (rounded < 0.0) rounded = 0.0;
-  if (rounded > dst) rounded = dst;
-  if (rounded > dst - 1) rounded = static_cast<double>(dst - 1);
-  return static_cast<float>(rounded);
+// rapidocr 3.x DBPostProcess (ch_ppocr_det/utils.py), reproduced without
+// OpenCV: threshold + optional 2x2 dilation, 8-connected components (the
+// outer contours of cv2.findContours), cv2.minAreaRect on the component's
+// pixel centres, "fast" score = mean probability inside the filled rotated
+// box, unclip by area*ratio/perimeter (the round-join offset of a rectangle
+// has a minimum-area rectangle grown by the distance on every side), then
+// round-half-even scaling, order_points_clockwise, clip and the <=3 px filter.
+struct DbRect { double cx, cy, w, h, ux, uy; };  // (ux,uy): unit vector along w
+
+DbRect MinAreaRectOfHull(const std::vector<std::array<long long, 2>>& hull) {
+  DbRect best{0, 0, 0, 0, 1, 0};
+  const std::size_t n = hull.size();
+  if (n == 0) return best;
+  if (n == 1) { best.cx = double(hull[0][0]); best.cy = double(hull[0][1]); return best; }
+  double best_area = -1.0;
+  for (std::size_t i = 0; i < n; ++i) {
+    const auto& a = hull[i];
+    const auto& b = hull[(i + 1) % n];
+    double ex = double(b[0] - a[0]), ey = double(b[1] - a[1]);
+    const double len = std::hypot(ex, ey);
+    if (len <= 0.0) continue;
+    ex /= len; ey /= len;
+    double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
+    for (const auto& p : hull) {
+      const double px = double(p[0]), py = double(p[1]);
+      const double u = px * ex + py * ey, v = -px * ey + py * ex;
+      umin = std::min(umin, u); umax = std::max(umax, u);
+      vmin = std::min(vmin, v); vmax = std::max(vmax, v);
+    }
+    const double area = (umax - umin) * (vmax - vmin);
+    if (best_area < 0.0 || area < best_area - 1e-9) {
+      best_area = area;
+      const double uc = 0.5 * (umin + umax), vc = 0.5 * (vmin + vmax);
+      best = {uc * ex - vc * ey, uc * ey + vc * ex, umax - umin, vmax - vmin, ex, ey};
+    }
+  }
+  return best;
+}
+
+std::array<Point, 4> RectCorners(const DbRect& r) {
+  const double hx = 0.5 * r.w, hy = 0.5 * r.h;
+  const double vx = -r.uy, vy = r.ux;
+  std::array<Point, 4> c{};
+  const double s[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
+  for (int i = 0; i < 4; ++i) {
+    c[i] = Point{float(r.cx + s[i][0] * hx * r.ux + s[i][1] * hy * vx),
+                 float(r.cy + s[i][0] * hx * r.uy + s[i][1] * hy * vy)};
+  }
+  return c;
+}
+
+// get_mini_boxes ordering: sort by x, then pick top/bottom of each pair.
+std::array<Point, 4> MiniBoxOrder(std::array<Point, 4> p) {
+  std::stable_sort(p.begin(), p.end(), [](const Point& a, const Point& b) { return a.x < b.x; });
+  const Point i1 = p[1].y > p[0].y ? p[0] : p[1];
+  const Point i4 = p[1].y > p[0].y ? p[1] : p[0];
+  const Point i2 = p[3].y > p[2].y ? p[2] : p[3];
+  const Point i3 = p[3].y > p[2].y ? p[3] : p[2];
+  return {i1, i2, i3, i4};
+}
+
+float BoxScoreFast(const float* prob, int h, int w, const std::array<Point, 4>& box) {
+  float fxmin = box[0].x, fxmax = box[0].x, fymin = box[0].y, fymax = box[0].y;
+  for (const auto& p : box) {
+    fxmin = std::min(fxmin, p.x); fxmax = std::max(fxmax, p.x);
+    fymin = std::min(fymin, p.y); fymax = std::max(fymax, p.y);
+  }
+  const int xmin = std::clamp(int(std::floor(fxmin)), 0, w - 1);
+  const int xmax = std::clamp(int(std::ceil(fxmax)), 0, w - 1);
+  const int ymin = std::clamp(int(std::floor(fymin)), 0, h - 1);
+  const int ymax = std::clamp(int(std::ceil(fymax)), 0, h - 1);
+  // cv2.fillPoly on int32-truncated vertices: a pixel is filled when its
+  // centre lies inside or on the convex quad.
+  std::array<std::array<double, 2>, 4> q{};
+  for (int i = 0; i < 4; ++i) q[i] = {double(int(box[i].x)), double(int(box[i].y))};
+  double orient = 0.0;
+  for (int i = 0; i < 4; ++i) {
+    const auto& a = q[i]; const auto& b = q[(i + 1) % 4];
+    orient += a[0] * b[1] - b[0] * a[1];
+  }
+  const double sign = orient >= 0.0 ? 1.0 : -1.0;
+  double sum = 0.0;
+  std::size_t count = 0;
+  for (int y = ymin; y <= ymax; ++y) {
+    for (int x = xmin; x <= xmax; ++x) {
+      bool inside = true;
+      for (int i = 0; i < 4 && inside; ++i) {
+        const auto& a = q[i]; const auto& b = q[(i + 1) % 4];
+        const double cross = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+        if (sign * cross < -1e-9) inside = false;
+      }
+      if (inside) { sum += prob[std::size_t(y) * w + x]; ++count; }
+    }
+  }
+  return count == 0 ? 0.F : float(sum / double(count));
+}
+
+// imutils order_points_clockwise, as used by filter_det_res.
+std::array<Point, 4> OrderClockwise(std::array<Point, 4> p) {
+  std::stable_sort(p.begin(), p.end(), [](const Point& a, const Point& b) { return a.x < b.x; });
+  Point l0 = p[0], l1 = p[1], r0 = p[2], r1 = p[3];
+  if (l1.y < l0.y) std::swap(l0, l1);
+  if (r1.y < r0.y) std::swap(r0, r1);
+  return {l0, r0, r1, l1};
 }
 
 void SortBoxesLikeRapidocr(std::vector<Box>& boxes) {
+  // TextDetector.sorted_boxes: sort by (y, x) of the first point, then the
+  // bubble pass that swaps neighbours on the same line (|dy| < 10) by x.
   std::stable_sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) {
-    return a.p[0].y < b.p[0].y;
+    if (a.p[0].y != b.p[0].y) return a.p[0].y < b.p[0].y;
+    return a.p[0].x < b.p[0].x;
   });
-  std::vector<int> line(boxes.size());
-  for (std::size_t i = 1; i < boxes.size(); ++i) {
-    const float dy = boxes[i].p[0].y - boxes[i - 1].p[0].y;
-    line[i] = line[i - 1] + (dy >= 10.F ? 1 : 0);
+  const std::size_t n = boxes.size();
+  for (std::size_t i = 0; i + 1 < n; ++i) {
+    for (std::size_t j = i + 1; j-- > 0;) {
+      if (std::fabs(boxes[j + 1].p[0].y - boxes[j].p[0].y) < 10.F &&
+          boxes[j + 1].p[0].x < boxes[j].p[0].x) {
+        std::swap(boxes[j], boxes[j + 1]);
+      } else {
+        break;
+      }
+    }
   }
-  std::vector<std::size_t> order(boxes.size());
-  std::iota(order.begin(), order.end(), 0);
-  std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-    if (line[a] != line[b]) return line[a] < line[b];
-    return boxes[a].p[0].x < boxes[b].p[0].x;
-  });
-  std::vector<Box> sorted;
-  sorted.reserve(boxes.size());
-  for (const std::size_t index : order) sorted.push_back(std::move(boxes[index]));
-  boxes.swap(sorted);
 }
 
 std::vector<Box> DBPost(const Tensor& prob, int dst_w, int dst_h, const Options& opt,
@@ -1068,8 +1161,11 @@ std::vector<Box> DBPost(const Tensor& prob, int dst_w, int dst_h, const Options&
   const std::array<int,8> dx{-1,0,1,-1,1,-1,0,1},dy{-1,-1,-1,0,0,1,1,1};
   std::vector<Box> out; out.reserve(64);
   std::vector<int> queue; queue.reserve(256);
+  std::vector<int> row_min, row_max;
+  std::vector<std::array<long long, 2>> pts, hull;
   int examined = 0;
   const int candidate_limit = opt.det_max_candidates > 0 ? opt.det_max_candidates : 1000000000;
+  constexpr float kMinSize = 3.F;
   for(int sy=0;sy<h && examined<candidate_limit;++sy)for(int sx=0;sx<w && examined<candidate_limit;++sx){
     const auto start=std::size_t(sy)*w+sx;
     if(mask[start]!=1) continue;
@@ -1078,10 +1174,9 @@ std::vector<Box> DBPost(const Tensor& prob, int dst_w, int dst_h, const Options&
     queue.push_back(int(start));
     mask[start]=2;
     std::size_t head{};
-    int minx=sx,maxx=sx,miny=sy,maxy=sy;
+    int miny=sy,maxy=sy;
     while(head<queue.size()){
       const int v=queue[head++], y=v/w, x=v%w;
-      minx=std::min(minx,x); maxx=std::max(maxx,x);
       miny=std::min(miny,y); maxy=std::max(maxy,y);
       for(int k=0;k<8;++k){
         const int nx=x+dx[k], ny=y+dy[k];
@@ -1091,27 +1186,63 @@ std::vector<Box> DBPost(const Tensor& prob, int dst_w, int dst_h, const Options&
         }
       }
     }
-    const float bw=float(maxx-minx+1), bh=float(maxy-miny+1);
-    if (std::min(bw, bh) < 3.F) continue;
-    double sum = 0.0;
-    const int box_pixels = int(bw) * int(bh);
-    for (int y = miny; y <= maxy; ++y) {
-      const float* row = probability + std::size_t(y) * w + minx;
-      for (int x = 0; x < int(bw); ++x) sum += row[x];
+    // Row extents give every point that can lie on the convex hull.
+    const int rows = maxy - miny + 1;
+    row_min.assign(std::size_t(rows), w);
+    row_max.assign(std::size_t(rows), -1);
+    for (const int v : queue) {
+      const int y = v / w - miny, x = v % w;
+      row_min[std::size_t(y)] = std::min(row_min[std::size_t(y)], x);
+      row_max[std::size_t(y)] = std::max(row_max[std::size_t(y)], x);
     }
-    const float score = float(sum / box_pixels);
+    pts.clear();
+    for (int r = 0; r < rows; ++r) {
+      pts.push_back({row_min[std::size_t(r)], r + miny});
+      if (row_max[std::size_t(r)] != row_min[std::size_t(r)]) pts.push_back({row_max[std::size_t(r)], r + miny});
+    }
+    std::sort(pts.begin(), pts.end());
+    hull.assign(pts.size() * 2, {0, 0});
+    std::size_t k = 0;
+    const auto cross = [](const std::array<long long, 2>& o, const std::array<long long, 2>& a,
+                          const std::array<long long, 2>& b) {
+      return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    };
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+      while (k >= 2 && cross(hull[k - 2], hull[k - 1], pts[i]) <= 0) --k;
+      hull[k++] = pts[i];
+    }
+    for (std::size_t i = pts.size() - 1, t = k + 1; i-- > 0;) {
+      while (k >= t && cross(hull[k - 2], hull[k - 1], pts[i]) <= 0) --k;
+      hull[k++] = pts[i];
+    }
+    hull.resize(k > 1 ? k - 1 : k);
+    const DbRect rect = MinAreaRectOfHull(hull);
+    if (std::min(rect.w, rect.h) < kMinSize) continue;
+    const auto mini = MiniBoxOrder(RectCorners(rect));
+    const float score = BoxScoreFast(probability, h, w, mini);
     if (score < opt.det_box_threshold) continue;
-    const float perimeter = 2.F * (bw + bh);
-    const float distance = perimeter > 0.F ? opt.det_unclip_ratio * bw * bh / perimeter : 0.F;
-    const float x0 = float(minx) - distance, x1 = float(maxx) + distance;
-    const float y0 = float(miny) - distance, y1 = float(maxy) + distance;
-    if (std::min(x1 - x0, y1 - y0) < 5.F) continue;
-    const float sx0 = ScaleDbCoord(x0, w, dst_w), sx1 = ScaleDbCoord(x1, w, dst_w);
-    const float sy0 = ScaleDbCoord(y0, h, dst_h), sy1 = ScaleDbCoord(y1, h, dst_h);
-    if (static_cast<int>(std::fabs(sx1 - sx0)) <= 3 ||
-        static_cast<int>(std::fabs(sy1 - sy0)) <= 3) continue;
+    const double perimeter = 2.0 * (rect.w + rect.h);
+    const double distance = perimeter > 0.0 ? rect.w * rect.h * opt.det_unclip_ratio / perimeter : 0.0;
+    DbRect grown = rect;
+    grown.w += 2.0 * distance;
+    grown.h += 2.0 * distance;
+    if (std::min(grown.w, grown.h) < kMinSize + 2.F) continue;
+    auto corners = MiniBoxOrder(RectCorners(grown));
+    for (auto& p : corners) {
+      double x = std::nearbyint(double(p.x) / w * dst_w);
+      double y = std::nearbyint(double(p.y) / h * dst_h);
+      x = std::clamp(x, 0.0, double(dst_w));
+      y = std::clamp(y, 0.0, double(dst_h));
+      // astype(int32), then clip_det_res to the last pixel.
+      p.x = float(std::min(std::max(int(x), 0), dst_w - 1));
+      p.y = float(std::min(std::max(int(y), 0), dst_h - 1));
+    }
+    corners = OrderClockwise(corners);
+    const int rw = int(std::hypot(corners[0].x - corners[1].x, corners[0].y - corners[1].y));
+    const int rh = int(std::hypot(corners[0].x - corners[3].x, corners[0].y - corners[3].y));
+    if (rw <= 3 || rh <= 3) continue;
     Box b;
-    b.p = {Point{sx0, sy0}, Point{sx1, sy0}, Point{sx1, sy1}, Point{sx0, sy1}};
+    b.p = corners;
     b.score = score;
     out.push_back(b);
   }
@@ -1133,14 +1264,16 @@ std::vector<Box> DBPostDevice(detail::VulkanTensorArena& arena,
   const int height = static_cast<int>(probability.shape[2]);
   const int width = static_cast<int>(probability.shape[3]);
   const std::size_t plane = std::size_t(height) * width;
-  // Metal runs on unified memory, so reading the probability map back costs
-  // a memcpy. The device connectivity kernel is a single serial workgroup
-  // (about 180 ms for a 1700x2200 page on M4) while the CPU flood fill is a
-  // few ms, so Metal uses the CPU DBPost on the same map. That function is
-  // the reference the device kernel reproduces, so boxes are unchanged.
-  // PPOCR_METAL_DEVICE_DB_POSTPROCESS=1 keeps the device kernel.
-  static const bool metal_device_db = std::getenv("PPOCR_METAL_DEVICE_DB_POSTPROCESS") != nullptr;
-  if (detail::MetalDriverRequested() && !metal_device_db) {
+  // The probability map is read back and DBPost runs on the CPU for every
+  // GPU backend. DBPost reproduces rapidocr 3.x (rotated minimum-area boxes,
+  // polygon score); the device kernel only emits axis-aligned component
+  // boxes, so using it would make Vulkan disagree with CPU and Metal. On
+  // Metal the readback is a memcpy from unified memory. The legacy device
+  // kernel stays available behind PPOCR_DEVICE_DB_POSTPROCESS=1 (or the old
+  // PPOCR_METAL_DEVICE_DB_POSTPROCESS=1) and does not match 3.x boxes.
+  static const bool device_db = std::getenv("PPOCR_DEVICE_DB_POSTPROCESS") != nullptr ||
+                                std::getenv("PPOCR_METAL_DEVICE_DB_POSTPROCESS") != nullptr;
+  if (!device_db) {
     const std::size_t elements = (batch_index + 1) * plane;
     std::vector<float> host(elements);
     if (!arena.Download(host.data(), probability.slot, elements)) FailGpuOnly("DB postprocess download");
@@ -1841,7 +1974,15 @@ void OCR::SetDetectionThresholds(float det_threshold, float det_box_threshold,
   impl_->opt.det_box_threshold = det_box_threshold;
   impl_->opt.det_unclip_ratio = det_unclip_ratio;
 }
-std::vector<Result> OCR::Recognize(const Image& image) const {
+std::vector<Result> OCR::Recognize(const Image& image) const { return Run(image, true, true); }
+
+std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) const {
+  if (!use_det && !use_rec) Fail("use_det and use_rec cannot both be false");
+  const bool full = use_det && use_rec;
+  if (!full && impl_->opt.backend == Backend::gpu_only) {
+    throw UnsupportedError("ppocr: use_det=false or use_rec=false runs on the CPU graph; "
+                           "the gpu_only backend does not fall back to it");
+  }
   std::lock_guard lock(impl_->recognize_mutex);
   std::unique_lock<std::recursive_mutex> gpu_lock(SharedGpuMutex(), std::defer_lock);
   if (impl_->opt.backend != Backend::cpu_only) gpu_lock.lock();
@@ -1862,7 +2003,7 @@ std::vector<Result> OCR::Recognize(const Image& image) const {
   // route after a failed optional GPU segment.  Strict gpu_only above is not:
   // it returns before this block and every Vulkan failure propagates to the
   // caller without a CPU inference retry.
-  if (impl_->enable_hybrid_gpu_graph) {
+  if (full && impl_->enable_hybrid_gpu_graph) {
     int graph_state = 0;
     {
       std::lock_guard lock(impl_->hybrid_gpu_graph_mutex);
@@ -1897,7 +2038,14 @@ std::vector<Result> OCR::Recognize(const Image& image) const {
   // concurrent recognizer batches begin. This lets the allocator reuse that
   // storage for recognition activations instead of increasing peak memory.
   const bool profile_e2e = std::getenv("PPOCR_PROFILE_E2E") != nullptr;
-  const auto boxes = [&] {
+  const auto boxes = !use_det ? std::vector<Box>{[&] {
+    // rapidocr 3.x use_det=False: the whole image is one text line.
+    Box whole;
+    const float w = float(image.width), h = float(image.height);
+    whole.p = {Point{0.F, 0.F}, Point{w, 0.F}, Point{w, h}, Point{0.F, h}};
+    whole.score = 1.F;
+    return whole;
+  }()} : [&] {
     const auto t0 = profile_e2e ? std::chrono::steady_clock::now()
                                 : std::chrono::steady_clock::time_point{};
     std::unordered_map<std::string,Tensor> det_input;
@@ -1973,6 +2121,13 @@ std::vector<Result> OCR::Recognize(const Image& image) const {
     }
     return boxes_out;
   }();
+  if (!use_rec) {
+    std::vector<Result> detected;
+    detected.reserve(boxes.size());
+    for (const auto& box : boxes) detected.push_back(MakeResult(box, std::string{}, box.score));
+    ReclaimHostHeap();
+    return detected;
+  }
   // Keep each same-width crop group contiguous. The recognizer used to build
   // a short temporary `vector<CropBounds>` for every batch; dense pages then
   // paid an allocation/move sequence for every 1--4 crops. Storing crop and
@@ -2020,6 +2175,12 @@ std::vector<Result> OCR::Recognize(const Image& image) const {
     if (!pad_max && width_align > 1 && natural_width < impl_->opt.rec_max_width) {
       bucket_width = std::min((natural_width + width_align - 1) / width_align * width_align,
                               impl_->opt.rec_max_width);
+    }
+    // use_det=false follows rapidocr 3.x TextRecognizer: the line is padded
+    // on the right to at least rec_img_shape width (320 for height 48).
+    if (!use_det) {
+      bucket_width = std::max(bucket_width,
+                              std::min(impl_->opt.rec_max_width, impl_->opt.rec_height * 320 / 48));
     }
     auto& bucket = buckets[pad_max ? page_pad_width : bucket_width];
     bucket.indices.push_back(i);

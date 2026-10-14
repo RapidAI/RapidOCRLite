@@ -54,6 +54,33 @@ class RapidOCROutput:
         return image
 
 
+@dataclass
+class TextDetOutput:
+    """``use_rec=False`` result, same fields as ``main``'s ``TextDetOutput``."""
+
+    img: Optional[np.ndarray] = None
+    boxes: Optional[np.ndarray] = None
+    scores: Optional[List[float]] = None
+    elapse: float = 0.0
+
+    def __len__(self) -> int:
+        return 0 if self.boxes is None else len(self.boxes)
+
+
+@dataclass
+class TextRecOutput:
+    """``use_det=False`` result, same fields as ``main``'s ``TextRecOutput``."""
+
+    imgs: Optional[List[np.ndarray]] = None
+    txts: Optional[Tuple[str, ...]] = None
+    scores: Tuple[float, ...] = (1.0,)
+    word_results: Tuple[Tuple[Any, ...], ...] = (("", 1.0, None),)
+    elapse: Optional[float] = None
+
+    def __len__(self) -> int:
+        return 0 if self.txts is None else len(self.txts)
+
+
 def _markdown(boxes: Optional[np.ndarray], txts: Optional[Tuple[str, ...]]) -> str:
     """Line grouping from ``rapidocr.utils.to_markdown`` on ``main``."""
 

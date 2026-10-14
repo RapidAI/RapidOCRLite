@@ -35,6 +35,7 @@ int main(void) {
 
   ppocr_result result = {0};
   Expect(ppocr_recognize(NULL, NULL, &result) == PPOCR_ERR_INVALID_ARGUMENT, "null recognize");
+  Expect(ppocr_run(NULL, NULL, PPOCR_TASK_DET, &result) == PPOCR_ERR_INVALID_ARGUMENT, "null run");
   ppocr_image_buffer image = {0};
   Expect(ppocr_load_ppm("missing.ppm", &image) != PPOCR_OK, "missing ppm");
 
