@@ -116,6 +116,25 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 
 各次运行（秒/张）：3.10.0 检测 0.4812 / 0.4998 / 0.3544，识别 0.0193 / 0.0156 / 0.0182；RapidOCRLite 检测 0.3602 / 0.3048 / 0.4078，识别 0.0180 / 0.0129 / 0.0208。每次指标都相同。text_rec 上 310 行中有 9 行与 3.x 解码不同，多为长行，原因是双线性缩放与 OpenCV 有细微差别。
 
+
+#### CPU 速度对比 rapidocr 3.10.0（PP-OCRv6 small，秒/张，越小越好）
+
+数据集与设置同上；`full` 为 212 张检测图上的检测+识别（`use_cls=False`）。交替运行，x86 取 5 次、M4 取 3 次中位数。两台机器测试时都有其他任务（x86 load 6–13，M4 load 7–11），数字仅供参考。212 页与 310 行的文本和框与上一提交完全一致。
+
+| 机器 | 模式 | rapidocr 3.10.0 | RapidOCRLite | 对比 |
+| --- | --- | ---: | ---: | ---: |
+| x86 8 vCPU，AVX-512 | 仅检测 | 0.3215 | 0.1515 | 快 2.1 倍 |
+| x86 8 vCPU，AVX-512 | 仅识别 | 0.0078 | 0.0097 | 慢 1.24 倍 |
+| x86 8 vCPU，AVX-512 | 整页 | 0.3909 | 0.2209 | 快 1.8 倍 |
+| x86，`PPOCR_FORCE_ISA=avx2` | 仅检测 | 0.3215 | 0.1668 | 快 1.9 倍 |
+| x86，`PPOCR_FORCE_ISA=avx2` | 仅识别 | 0.0078 | 0.0109 | 慢 1.40 倍 |
+| x86，`PPOCR_FORCE_ISA=avx2` | 整页 | 0.3909 | 0.2503 | 快 1.6 倍 |
+| Mac mini M4（CPU，Accelerate） | 仅检测 | 0.1465 | 0.1425 | 快 3% |
+| Mac mini M4（CPU，Accelerate） | 仅识别 | 0.0072 | 0.0126 | 慢 1.75 倍 |
+| Mac mini M4（CPU，Accelerate） | 整页 | 0.3604 | 0.1931 | 快 1.9 倍 |
+
+3.x 使用 onnxruntime 1.31.0，在 M4 上用 SME 矩阵单元做 GEMM；RapidOCRLite 通过 Accelerate 使用矩阵单元（`PPOCR_DISABLE_ACCELERATE=1` 回退到 NEON）。单行仅识别在两台机器上仍然更慢。
+
 ### 🛠️ 安装
 
 这一版在 PyPI 上的名字是 **`rapidocrlite`**，import 名仍是 `rapidocr`，用法与 `main` 一致：`pip install rapidocrlite`，然后 `from rapidocr import RapidOCR`。两个发行包安装的是同一个 `rapidocr` 包目录，所以不要在同一个环境里同时安装 `rapidocrlite` 和官方 `rapidocr`；先执行 `pip uninstall rapidocr`。

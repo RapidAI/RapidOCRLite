@@ -116,6 +116,25 @@ Machine: shared 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Pytho
 
 Runs (s/img): 3.10.0 det 0.4812 / 0.4998 / 0.3544, rec 0.0193 / 0.0156 / 0.0182; RapidOCRLite det 0.3602 / 0.3048 / 0.4078, rec 0.0180 / 0.0129 / 0.0208. Metrics were identical in every run. On text_rec, 9 of 310 lines decode differently from 3.x, mostly long lines where the bilinear resize differs slightly from OpenCV's.
 
+
+#### CPU speed vs rapidocr 3.10.0 (PP-OCRv6 small, s/img, lower is better)
+
+Same SWHL sets and settings as above; `full` is det+rec on the 212 det images (`use_cls=False`). Interleaved runs, median of 5 (x86) / 3 (M4). Both hosts were shared with other jobs (x86 load 6–13, M4 load 7–11), so treat the numbers as indicative. Texts and boxes are identical to the previous commit on all 212 pages and 310 lines.
+
+| Host | Mode | rapidocr 3.10.0 | RapidOCRLite | Lite vs 3.x |
+| --- | --- | ---: | ---: | ---: |
+| x86 8 vCPU, AVX-512 | det-only | 0.3215 | 0.1515 | 2.1× faster |
+| x86 8 vCPU, AVX-512 | rec-only | 0.0078 | 0.0097 | 1.24× slower |
+| x86 8 vCPU, AVX-512 | full page | 0.3909 | 0.2209 | 1.8× faster |
+| x86, `PPOCR_FORCE_ISA=avx2` | det-only | 0.3215 | 0.1668 | 1.9× faster |
+| x86, `PPOCR_FORCE_ISA=avx2` | rec-only | 0.0078 | 0.0109 | 1.40× slower |
+| x86, `PPOCR_FORCE_ISA=avx2` | full page | 0.3909 | 0.2503 | 1.6× faster |
+| Mac mini M4 (CPU, Accelerate) | det-only | 0.1465 | 0.1425 | 3% faster |
+| Mac mini M4 (CPU, Accelerate) | rec-only | 0.0072 | 0.0126 | 1.75× slower |
+| Mac mini M4 (CPU, Accelerate) | full page | 0.3604 | 0.1931 | 1.9× faster |
+
+3.x uses onnxruntime 1.31.0, which on M4 runs its GEMMs on the SME matrix unit; RapidOCRLite reaches the matrix unit through Accelerate (`PPOCR_DISABLE_ACCELERATE=1` falls back to NEON). Single-line rec-only remains slower on both hosts.
+
 ### 🛠️ Installation
 
 The PyPI name of this line is **`rapidocrlite`**; the import name stays `rapidocr`, so code is the same as on `main`: `pip install rapidocrlite`, then `from rapidocr import RapidOCR`. Both distributions install the same `rapidocr` package directory, so do not install `rapidocrlite` and the official `rapidocr` in one environment; run `pip uninstall rapidocr` first.
