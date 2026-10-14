@@ -502,6 +502,30 @@ void Avx512PointwiseConv8(float* dst, const float* src, const float* weights,
     const float* w5 = w4 + input_channels; const float* w6 = w5 + input_channels;
     const float* w7 = w6 + input_channels;
     std::size_t index = 0;
+    // 8 outputs x 32 lanes (16 accumulators) reuse each weight broadcast for
+    // two vectors; same bias-first ascending-channel chain (bit-identical).
+    {
+      const float* wr[8] = {w0, w1, w2, w3, w4, w5, w6, w7};
+      float* orow[8] = {o0, o1, o2, o3, o4, o5, o6, o7};
+      for (; index + 32 <= plane; index += 32) {
+        __m512 lo[8], hi[8];
+        for (int k = 0; k < 8; ++k) lo[k] = hi[k] = _mm512_set1_ps(bias ? bias[output + k] : 0.F);
+        for (int input = 0; input < input_channels; ++input) {
+          const float* xs = src + std::size_t(input) * plane + index;
+          const __m512 x0 = _mm512_loadu_ps(xs);
+          const __m512 x1 = _mm512_loadu_ps(xs + 16);
+          for (int k = 0; k < 8; ++k) {
+            const __m512 w = _mm512_set1_ps(wr[k][input]);
+            lo[k] = _mm512_fmadd_ps(w, x0, lo[k]);
+            hi[k] = _mm512_fmadd_ps(w, x1, hi[k]);
+          }
+        }
+        for (int k = 0; k < 8; ++k) {
+          _mm512_storeu_ps(orow[k] + index, lo[k]);
+          _mm512_storeu_ps(orow[k] + index + 16, hi[k]);
+        }
+      }
+    }
     for (; index + 16 <= plane; index += 16) {
       __m512 s0 = _mm512_set1_ps(bias ? bias[output] : 0.F);
       __m512 s1 = _mm512_set1_ps(bias ? bias[output + 1] : 0.F);

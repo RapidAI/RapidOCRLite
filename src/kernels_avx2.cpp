@@ -386,6 +386,31 @@ void Avx2PointwiseConv4(float* dst, const float* src, const float* weights,
       }
       out0[index] = sum0; out1[index] = sum1; out2[index] = sum2; out3[index] = sum3;
     }
+    // 4 outputs x 24 lanes = 12 independent accumulators: the 4-accumulator
+    // loop below was FMA-latency bound (~45 GFLOPS on rec 384x384 1x1).
+    // Same bias-first ascending-channel FMA chain per output (bit-identical).
+    for (; index + 24 <= index_end; index += 24) {
+      __m256 a0 = vb0, a1 = vb0, a2 = vb0, b0 = vb1, b1 = vb1, b2 = vb1;
+      __m256 c0 = vb2, c1 = vb2, c2 = vb2, d0 = vb3, d1 = vb3, d2 = vb3;
+      for (int input = 0; input < input_channels; ++input) {
+        const float* xs = src + std::size_t(input) * plane + index;
+        const __m256 x0 = _mm256_loadu_ps(xs);
+        const __m256 x1 = _mm256_loadu_ps(xs + 8);
+        const __m256 x2 = _mm256_loadu_ps(xs + 16);
+        __m256 w = _mm256_set1_ps(w0[input]);
+        a0 = _mm256_fmadd_ps(w, x0, a0); a1 = _mm256_fmadd_ps(w, x1, a1); a2 = _mm256_fmadd_ps(w, x2, a2);
+        w = _mm256_set1_ps(w1[input]);
+        b0 = _mm256_fmadd_ps(w, x0, b0); b1 = _mm256_fmadd_ps(w, x1, b1); b2 = _mm256_fmadd_ps(w, x2, b2);
+        w = _mm256_set1_ps(w2[input]);
+        c0 = _mm256_fmadd_ps(w, x0, c0); c1 = _mm256_fmadd_ps(w, x1, c1); c2 = _mm256_fmadd_ps(w, x2, c2);
+        w = _mm256_set1_ps(w3[input]);
+        d0 = _mm256_fmadd_ps(w, x0, d0); d1 = _mm256_fmadd_ps(w, x1, d1); d2 = _mm256_fmadd_ps(w, x2, d2);
+      }
+      _mm256_storeu_ps(out0 + index, a0); _mm256_storeu_ps(out0 + index + 8, a1); _mm256_storeu_ps(out0 + index + 16, a2);
+      _mm256_storeu_ps(out1 + index, b0); _mm256_storeu_ps(out1 + index + 8, b1); _mm256_storeu_ps(out1 + index + 16, b2);
+      _mm256_storeu_ps(out2 + index, c0); _mm256_storeu_ps(out2 + index + 8, c1); _mm256_storeu_ps(out2 + index + 16, c2);
+      _mm256_storeu_ps(out3 + index, d0); _mm256_storeu_ps(out3 + index + 8, d1); _mm256_storeu_ps(out3 + index + 16, d2);
+    }
     for (; index + 8 <= index_end; index += 8) {
       __m256 sum0 = vb0;
       __m256 sum1 = vb1;

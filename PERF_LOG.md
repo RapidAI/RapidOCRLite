@@ -74,3 +74,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - AVX2 single-thread rec profile (total 45.9 ms vs AVX-512 ~25): Conv.51 5.1, Conv.49 5.0 (340 MFLOP -> ~68 GFLOPS), CTC 4.8 (~120 GFLOPS, packed kernel near peak), mid expand blocks ~2.4-2.6 each, Conv.45 1.9.
   Expand kernels at ~60% of AVX2 FMA peak; previous 6x16 weight-blocked port was neutral, so weight streaming is not the limiter. Note 3.x on this host runs MLAS AVX-512 regardless of PPOCR_FORCE_ISA, so forced-AVX2 Lite competes with half-width SIMD.
 - x86 host load swings 3-14; 3.x rec itself ranged 8-20 ms/line in the same hour -> multi-thread comparisons not reproducible today.
+- 22:30 pointwise 1x1: AVX2 4x24 (12 acc) and AVX-512 8x32 (16 acc) register tiles, bit-identical. Single-thread rec: AVX2 Conv.45 1.90->1.17, Conv.18 0.90->0.55 ms; AVX-512 Conv.45 1.07->0.60, Conv.18 0.58->0.29 ms. 212/310 identical both ISAs.
