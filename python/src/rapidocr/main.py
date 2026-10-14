@@ -355,9 +355,9 @@ def _prepare_image(engine: RapidOCR, original: np.ndarray, pad: bool = True):
 def _resolve_models(cfg: ConfigNode) -> tuple:
     """Download missing det/rec/dict the way 3.x InferSession does.
 
-    Files land in ``Global.model_root_dir`` under the URL filename. A cls
-    model is downloaded when ``use_cls`` is set, matching 3.x, and is not
-    passed to the native engine.
+    Files land in ``Global.model_root_dir`` under the URL filename. The cls
+    model is never downloaded: the native engine has no angle classifier, so
+    it would be fetched and then ignored.
     """
 
     from .utils.download_file import DownloadFile, DownloadFileInput
@@ -395,9 +395,6 @@ def _resolve_models(cfg: ConfigNode) -> tuple:
                         sha256=None,
                     )
                 )
-
-    if bool(cfg.Global.get("use_cls", True)) and not cfg.Cls.get("model_path"):
-        download_task(root, _section_info(cfg.Cls))
 
     return str(det), str(rec), str(dictionary)
 
@@ -438,14 +435,13 @@ def main(arg_list: Optional[list] = None) -> None:
     image = args.img_path or args.image
     if image is None:
         raise SystemExit("rapidocr: an image path is required (positional or -img/--img_path)")
-    model_type = args.model_type or "tiny"
-    if model_type not in {"tiny", "small", "medium"}:
-        raise SystemExit(f"rapidocr: PP-OCRv6 has no {model_type!r} model")
-    params = {
-        "Det.model_type": model_type,
-        "Rec.model_type": model_type,
-        "Global.use_cls": False,
-    }
+    # No --model-type: keep config.yaml defaults (small), same as RapidOCR().
+    params: Dict[str, Any] = {"Global.use_cls": False}
+    if args.model_type:
+        if args.model_type not in {"tiny", "small", "medium"}:
+            raise SystemExit(f"rapidocr: PP-OCRv6 has no {args.model_type!r} model")
+        params["Det.model_type"] = args.model_type
+        params["Rec.model_type"] = args.model_type
     if args.text_score is not None:
         params["Global.text_score"] = args.text_score
     if args.lang_type:
