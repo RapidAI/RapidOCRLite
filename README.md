@@ -98,6 +98,33 @@ Metal is about 2× faster than NEON on hello and about 1.85× faster on the page
 
 MoltenVK does not report per-dispatch timestamps, so `PPOCR_GPU_PROFILE` shows only host-side times there. Its text also equals CPU, with 0 validation errors and identical results across 4 threads.
 
+### 📊 Accuracy (text_det / text_rec test sets)
+
+Method follows the [open-source OCR model comparison](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/): datasets [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset) (212 images) and [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset) (310 crops) loaded with `datasets`, metrics from [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 and [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1. Speed is Python wall clock per image, one process at a time.
+
+Machine: 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Python 3.12. `rapidocr==3.10.0` with onnxruntime 1.31.0 (default intra/inter threads); `rapidocr_ng==5.0.0a5` native CPU engine (AVX-512 path, 8 threads). Both run the same PP-OCRv6 **small** det/rec ONNX files (the 3.x defaults; 5.0.0a5 has the same default but its model download URL failed, so the 3.x files were passed via `Det.model_path` / `Rec.model_path`). `use_cls=False`, `text_score=0`, other settings are the shared `config.yaml` defaults.
+
+The native engine always runs det and rec together, so the comparable rows run the full pipeline on both datasets. On the recognition set this means the detector runs on each small crop first, which is why those numbers are far below rec-only.
+
+| Dataset | Metric | rapidocr 3.10.0 | rapidocr_ng 5.0.0a5 |
+| --- | --- | ---: | ---: |
+| text_det | Precision | 0.8578 | 0.8368 |
+| text_det | Recall | 0.8434 | 0.7426 |
+| text_det | H-mean | 0.8505 | 0.7869 |
+| text_det | Speed (s/img, det+rec) | 0.4240 | 0.3255 |
+| text_rec (det+rec on crops) | Exact Match | 0.4903 | 0.6742 |
+| text_rec (det+rec on crops) | Char Match | 0.5885 | 0.8177 |
+| text_rec (det+rec on crops) | Speed (s/img) | 0.4272 | 0.4022 |
+
+3.x-only reference rows, as in the article (det-only and rec-only, not possible on 5.x):
+
+| Models | Det P / R / H-mean | Det s/img | Rec Exact / Char | Rec s/img |
+| --- | --- | ---: | --- | ---: |
+| PP-OCRv6 small | 0.8540 / 0.8445 / 0.8492 | 0.3208 | 0.8419 / 0.9515 | 0.0085 |
+| PP-OCRv4 mobile | 0.8595 / 0.8434 / 0.8514 | 0.1857 | 0.8290 / 0.9432 | 0.0112 |
+
+With the same det model, 5.0.0a5 finds about 10 points fewer ground-truth boxes than 3.x on text_det; the cause has not been investigated yet; it is not a model difference.
+
 ### 🛠️ Installation
 
 The PyPI name of this line is **`rapidocr_ng`**; the import name stays `rapidocr`, so code is the same as on `main`: `pip install rapidocr_ng`, then `from rapidocr import RapidOCR`. Both distributions install the same `rapidocr` package directory, so do not install `rapidocr_ng` and the official `rapidocr` in one environment; run `pip uninstall rapidocr` first.
