@@ -457,6 +457,9 @@ bool UseAvx512Pointwise8(int output_channels, int input_channels,
       std::getenv("PPOCR_DISABLE_AVX512_POINTWISE8") == nullptr;
   if (!enabled) return false;
   if (output_channels >= 192 && input_channels >= 192 && plane >= 256) return true;
+  // SVTR rec 1x1s (384->384 on 3x80 = 240) fell to four-output tiles.
+  static const bool rec_planes = std::getenv("PPOCR_DISABLE_AVX512_POINTWISE8_REC") == nullptr;
+  if (rec_planes && output_channels >= 192 && input_channels >= 192 && plane >= 64) return true;
   // Conv.4 is 16→32 on 40x176. The IC>=24 floor kept it on four-output tiles
   // that reread 16 source planes eight times. Rec 12xW stays under plane 2048.
   // `PPOCR_DISABLE_AVX512_POINTWISE8_IC16` restores IC>=24.

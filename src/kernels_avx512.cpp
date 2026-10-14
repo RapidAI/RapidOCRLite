@@ -491,6 +491,53 @@ void Avx512PointwiseConv8(float* dst, const float* src, const float* weights,
                            const float* bias, int first_output, int last_output,
                            int input_channels, std::size_t plane) noexcept {
   int output = first_output;
+  // Packed-activation path: the strided 384-row column walk defeats the L2
+  // prefetcher; pack [tile][C][32] once per call (masked tail) and sweep it
+  // per 8-output block. Same FMA chains. PPOCR_DISABLE_PW_PACK restores.
+  static const bool pack = std::getenv("PPOCR_DISABLE_PW_PACK") == nullptr;
+  if (pack && plane >= 64 && last_output - first_output >= 16 && input_channels >= 64) {
+    const std::size_t tiles = (plane + 31) / 32;
+    thread_local std::vector<float> act;
+    act.resize(tiles * std::size_t(input_channels) * 32);
+    for (std::size_t t = 0; t < tiles; ++t) {
+      const std::size_t left = plane - t * 32;
+      const __mmask16 m0 = left >= 16 ? __mmask16(0xFFFF) : __mmask16((1u << left) - 1u);
+      const __mmask16 m1 = left >= 32 ? __mmask16(0xFFFF)
+          : (left > 16 ? __mmask16((1u << (left - 16)) - 1u) : __mmask16(0));
+      float* a = act.data() + t * std::size_t(input_channels) * 32;
+      for (int c = 0; c < input_channels; ++c) {
+        const float* row = src + std::size_t(c) * plane + t * 32;
+        _mm512_storeu_ps(a + std::size_t(c) * 32, _mm512_maskz_loadu_ps(m0, row));
+        _mm512_storeu_ps(a + std::size_t(c) * 32 + 16, _mm512_maskz_loadu_ps(m1, row + 16));
+      }
+    }
+    for (; output + 8 <= last_output; output += 8) {
+      const float* w = weights + std::size_t(output) * input_channels;
+      for (std::size_t t = 0; t < tiles; ++t) {
+        const std::size_t left = plane - t * 32;
+        const __mmask16 m0 = left >= 16 ? __mmask16(0xFFFF) : __mmask16((1u << left) - 1u);
+        const __mmask16 m1 = left >= 32 ? __mmask16(0xFFFF)
+            : (left > 16 ? __mmask16((1u << (left - 16)) - 1u) : __mmask16(0));
+        const float* a = act.data() + t * std::size_t(input_channels) * 32;
+        __m512 lo[8], hi[8];
+        for (int k = 0; k < 8; ++k) lo[k] = hi[k] = _mm512_set1_ps(bias ? bias[output + k] : 0.F);
+        for (int c = 0; c < input_channels; ++c) {
+          const __m512 x0 = _mm512_loadu_ps(a + std::size_t(c) * 32);
+          const __m512 x1 = _mm512_loadu_ps(a + std::size_t(c) * 32 + 16);
+          for (int k = 0; k < 8; ++k) {
+            const __m512 wv = _mm512_set1_ps(w[std::size_t(k) * input_channels + c]);
+            lo[k] = _mm512_fmadd_ps(wv, x0, lo[k]);
+            hi[k] = _mm512_fmadd_ps(wv, x1, hi[k]);
+          }
+        }
+        for (int k = 0; k < 8; ++k) {
+          float* o = dst + std::size_t(output + k) * plane + t * 32;
+          _mm512_mask_storeu_ps(o, m0, lo[k]);
+          _mm512_mask_storeu_ps(o + 16, m1, hi[k]);
+        }
+      }
+    }
+  }
   for (; output + 8 <= last_output; output += 8) {
     float* o0 = dst + std::size_t(output) * plane;
     float* o1 = o0 + plane; float* o2 = o1 + plane; float* o3 = o2 + plane;
