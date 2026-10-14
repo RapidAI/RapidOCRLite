@@ -29,12 +29,21 @@ jobs:
         with:
           submodules: recursive
 
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        shell: bash
+        run: choco install ninja -y
+
       - name: Build and package SDK
         shell: bash
         run: |
           set -euo pipefail
           VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
             -DPPOCR_BUILD_SHARED=ON \
@@ -43,12 +52,11 @@ jobs:
             -DPPOCR_BUILD_TESTS=OFF \
             -DPPOCR_ENABLE_VULKAN=ON \
             -DPPOCR_ENABLE_METAL=OFF
-          cmake --build build --config Release -j"$(nproc 2>/dev/null || echo 4)"
-          cmake --install build --config Release
+          cmake --build build -j"$(nproc 2>/dev/null || echo 4)"
+          cmake --install build
           NAME="RapidOCRLite-SDK-win_amd64-${VER}"
           mkdir -p dist
           mv prefix "$NAME"
-          # Prefer PowerShell Compress-Archive for a portable zip on Windows.
           powershell -NoProfile -Command "Compress-Archive -Path '$NAME' -DestinationPath 'dist/${NAME}.zip'"
           ls -la dist
           test -f "dist/${NAME}.zip"
@@ -67,12 +75,21 @@ jobs:
         with:
           submodules: recursive
 
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Install Ninja
+        shell: bash
+        run: choco install ninja -y
+
       - name: Build and package SDK
         shell: bash
         run: |
           set -euo pipefail
           VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          cmake -S . -B build -G "Visual Studio 17 2022" -A Win32 \
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
             -DPPOCR_BUILD_SHARED=ON \
@@ -81,8 +98,8 @@ jobs:
             -DPPOCR_BUILD_TESTS=OFF \
             -DPPOCR_ENABLE_VULKAN=ON \
             -DPPOCR_ENABLE_METAL=OFF
-          cmake --build build --config Release -j"$(nproc 2>/dev/null || echo 4)"
-          cmake --install build --config Release
+          cmake --build build -j"$(nproc 2>/dev/null || echo 4)"
+          cmake --install build
           NAME="RapidOCRLite-SDK-win32-${VER}"
           mkdir -p dist
           mv prefix "$NAME"
@@ -174,5 +191,4 @@ jobs:
             dist/RapidOCRLite-SDK-*.zip
             dist/RapidOCRLite-SDK-*.tar.gz
           fail_on_unmatched_files: true
-          # Do not change release body/draft state; only attach assets.
           append_body: false
