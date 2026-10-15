@@ -102,7 +102,7 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 
 方法沿用[开源 OCR 模型对比](https://rapidai.github.io/RapidOCRDocs/main/blog/2022/04/16/%E5%BC%80%E6%BA%90-ocr-%E6%A8%A1%E5%9E%8B%E5%AF%B9%E6%AF%94/)：测试集 [SWHL/text_det_test_dataset](https://huggingface.co/datasets/SWHL/text_det_test_dataset)（212 张）和 [SWHL/text_rec_test_dataset](https://huggingface.co/datasets/SWHL/text_rec_test_dataset)（310 张裁剪图），用 `datasets` 加载，指标来自 [`text_det_metric`](https://github.com/SWHL/TextDetMetric) 0.0.8 和 [`text_rec_metric`](https://github.com/SWHL/TextRecMetric) 0.0.1。检测只跑检测（`use_det=True, use_cls=False, use_rec=False`），识别只在裁剪图上跑识别（`use_det=False, use_cls=False, use_rec=True`）。速度是预热一次后的 Python 单图耗时，两边依次运行。
 
-机器：共享的 8 vCPU Intel Xeon（family 6，model 207，KVM），支持 AVX-512，Python 3.12；测试时主机上有其他任务（运行期间 load average 5–11），速度取每个包 3 次交替运行的中位数，仅供参考。`rapidocr==3.10.0` 搭配 onnxruntime 1.31.0（默认线程数）。RapidOCRLite 由本提交源码构建，原生 CPU 引擎（AVX-512，8 线程）。两边都用默认模型，即同一组 PP-OCRv6 **small** 检测/识别 ONNX 文件（SHA256 相同）；RapidOCRLite 通过 `default_models.yaml` 自动下载。其余设置均为共用的 `config.yaml` 默认值。
+机器：共享的 8 vCPU Intel Xeon（family 6，model 207，KVM），支持 AVX-512，Python 3.12；测试时主机上有其他任务（运行期间 load average 6–10），速度取 5 次交替运行的中位数，仅供参考。M4：Mac mini（10 个 CPU 核，16 GB），空闲，方法相同。下表指标为默认（exact）模式；快速模式精度见“识别快速模式”。`rapidocr==3.10.0` 搭配 onnxruntime 1.31.0（默认线程数）。RapidOCRLite 由本提交源码构建，原生 CPU 引擎（AVX-512，8 线程）。两边都用默认模型，即同一组 PP-OCRv6 **small** 检测/识别 ONNX 文件（SHA256 相同）；RapidOCRLite 通过 `default_models.yaml` 自动下载。其余设置均为共用的 `config.yaml` 默认值。
 
 | 数据集 | 指标 | rapidocr 3.10.0 | RapidOCRLite |
 | --- | --- | ---: | ---: |
