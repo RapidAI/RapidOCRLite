@@ -50,6 +50,12 @@ void LasxGemmRows(float* dst, const float* a, const float* b, const float* bias,
                   int first_row, int last_row, int cols, int depth) noexcept;
 void LasxGemmAccumulateRows(float* dst, const float* a, const float* b,
                             int first_row, int last_row, int cols, int depth) noexcept;
+void LasxExactGeluRange(float* dst, const float* src, std::size_t count) noexcept;
+int LasxArgMax(const float* values, int count) noexcept;
+void LasxDepthwiseConv(float* dst, const float* src, const float* weights, const float* bias,
+                       int first_channel, int last_channel, int input_h, int input_w,
+                       int output_h, int output_w, int kernel_h, int kernel_w, int pad_top,
+                       int pad_left) noexcept;
 #endif
 
 
@@ -1902,6 +1908,12 @@ void ExactGelu(float* dst, const float* src, std::size_t n) noexcept {
       for (int block = first; block < last; ++block) {
         const std::size_t begin = std::size_t(block) * 8192;
         const std::size_t end = std::min<std::size_t>(n, begin + 8192);
+#if defined(PPOCR_HAS_LASX_KERNELS)
+        if (HasLasx()) {
+          LasxExactGeluRange(dst + begin, src + begin, end - begin);
+          continue;
+        }
+#endif
         std::size_t i = begin;
         for (; i + 4 <= end; i += 4) vst1q_f32(dst + i, NeonGeluPs(vld1q_f32(src + i)));
         for (; i < end; ++i) {
@@ -5678,6 +5690,13 @@ void DepthwiseConv(float* dst, const float* src, const float* weights,
       (kernel_h == 3 || kernel_h == 5 || kernel_h == 7 || kernel_h == 9) &&
       kernel_h == kernel_w) {
     const auto neon = [&](int first, int last) {
+#if defined(PPOCR_HAS_LASX_KERNELS)
+      if (HasLasx()) {
+        LasxDepthwiseConv(dst, src, weights, bias, first, last, input_h, input_w, output_h,
+                          output_w, kernel_h, kernel_w, pad_top, pad_left);
+        return;
+      }
+#endif
       NeonDepthwiseConv(dst, src, weights, bias, first, last, input_h, input_w, output_h,
                         output_w, kernel_h, kernel_w, pad_top, pad_left);
     };
@@ -6170,6 +6189,10 @@ void CtcTop1(int* indices, float* probabilities, const float* logits,
     if (HasAvx2()) best = Avx2ArgMax(values, vocab);
     else
 #endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+    if (HasLasx()) best = LasxArgMax(values, vocab);
+    else
+#endif
     {
       float maximum_scalar = values[0];
       for (int i = 1; i < vocab; ++i) {
@@ -6588,6 +6611,12 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
 #if defined(PPOCR_HAS_AVX2_KERNELS)
     if (!vector_argmax && HasAvx2()) {
       best = Avx2ArgMax(row_logits, vocab);
+      vector_argmax = true;
+    }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+    if (!vector_argmax && HasLasx()) {
+      best = LasxArgMax(row_logits, vocab);
       vector_argmax = true;
     }
 #endif

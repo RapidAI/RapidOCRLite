@@ -8,8 +8,12 @@
 // path, so LASX and LSX give bit-identical results. Columns past the last
 // 16-column block use the same scalar tail expression as kernels.cpp.
 #include <lasxintrin.h>
+#include <lsxintrin.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <cstdint>
 
 namespace ppocr::detail::kernels {
 namespace {
@@ -119,6 +123,170 @@ void LasxGemmRows(float* dst, const float* a, const float* b, const float* bias,
 void LasxGemmAccumulateRows(float* dst, const float* a, const float* b,
                             int first_row, int last_row, int cols, int depth) noexcept {
   GemmRowsImpl<true>(dst, a, b, nullptr, first_row, last_row, cols, depth);
+}
+
+namespace {
+
+// Lane-wise twins of NeonExpPs / NeonErfPs / NeonGeluPs (same operations in
+// the same order, fused where NEON fuses), so every lane is bit-identical.
+inline __m256 Fma(__m256 a, __m256 b, __m256 c) noexcept {  // a + b * c
+  return __lasx_xvfmadd_s(b, c, a);
+}
+inline __m256 Fms(__m256 a, __m256 b, __m256 c) noexcept {  // a - b * c
+  return __lasx_xvfnmsub_s(b, c, a);
+}
+inline __m256 ExpPs(__m256 x) noexcept {
+  x = __lasx_xvfmin_s(__lasx_xvfmax_s(x, Splat(-87.F)), Splat(87.F));
+  const __m256 n = __lasx_xvfrintrne_s(__lasx_xvfmul_s(x, Splat(1.4426950408889634F)));
+  const __m256 f = Fms(x, n, Splat(0.6931471805599453F));
+  __m256 p = Fma(Splat(1.F / 6.F), f, Splat(1.F / 24.F));
+  p = Fma(Splat(.5F), p, f);
+  p = Fma(Splat(1.F), p, f);
+  p = Fma(Splat(1.F), p, f);
+  const __m256i biased = __lasx_xvadd_w(__lasx_xvftintrz_w_s(n), __lasx_xvreplgr2vr_w(127));
+  return __lasx_xvfmul_s(p, (__m256)__lasx_xvslli_w(biased, 23));
+}
+inline __m256 ErfPs(__m256 x) noexcept {
+  const __m256 one = Splat(1.F);
+  const __m256i bits = (__m256i)x;
+  const __m256 sign = (__m256)__lasx_xvor_v(
+      __lasx_xvand_v(bits, __lasx_xvreplgr2vr_w(int(0x80000000u))), (__m256i)one);
+  const __m256 ax = (__m256)__lasx_xvbitclri_w(bits, 31);
+  const __m256 t = __lasx_xvfdiv_s(one, Fma(one, Splat(.5F), ax));
+  __m256 poly = Fma(Splat(-.82215223F), t, Splat(.17087277F));
+  poly = Fma(Splat(1.48851587F), poly, t);
+  poly = Fma(Splat(-1.13520398F), poly, t);
+  poly = Fma(Splat(.27886807F), poly, t);
+  poly = Fma(Splat(-.18628806F), poly, t);
+  poly = Fma(Splat(.09678418F), poly, t);
+  poly = Fma(Splat(.37409196F), poly, t);
+  poly = Fma(Splat(1.00002368F), poly, t);
+  poly = Fma(Splat(-1.26551223F), poly, t);
+  const __m256 e = ExpPs(Fma(poly, __lasx_xvfmul_s(ax, ax), Splat(-1.F)));
+  return __lasx_xvfmul_s(sign, Fms(one, t, e));
+}
+inline __m256 GeluPs(__m256 x) noexcept {
+  const __m256 erf = ErfPs(__lasx_xvfmul_s(x, Splat(0.7071067811865475244F)));
+  return __lasx_xvfmul_s(Splat(.5F), __lasx_xvfmul_s(x, __lasx_xvfadd_s(Splat(1.F), erf)));
+}
+
+}  // namespace
+
+// Same element split as the NEON loop: vector lanes for the leading
+// multiple of 4, scalar erf for the last count % 4 elements.
+void LasxExactGeluRange(float* dst, const float* src, std::size_t count) noexcept {
+  std::size_t i = 0;
+  for (; i + 8 <= count; i += 8) Store(dst + i, GeluPs(Load(src + i)));
+  const std::size_t vec_end = count / 4 * 4;
+  if (i < vec_end) {
+    alignas(32) float tmp[8] = {};
+    for (std::size_t j = i; j < vec_end; ++j) tmp[j - i] = src[j];
+    Store(tmp, GeluPs(Load(tmp)));
+    for (std::size_t j = i; j < vec_end; ++j) dst[j] = tmp[j - i];
+    i = vec_end;
+  }
+  for (; i < count; ++i) {
+    const float x = src[i];
+    dst[i] = x * .5F * (1.F + std::erf(x * 0.7071067811865475244F));
+  }
+}
+
+// First index of the maximum, same result as the scalar strict-> scan.
+int LasxArgMax(const float* values, int count) noexcept {
+  int i = 0;
+  float best = values[0];
+  if (count >= 8) {
+    __m256 m = Load(values);
+    for (i = 8; i + 8 <= count; i += 8) m = __lasx_xvfmax_s(m, Load(values + i));
+    alignas(32) float lanes[8];
+    Store(lanes, m);
+    for (float v : lanes) best = std::max(best, v);
+  }
+  for (; i < count; ++i) best = std::max(best, values[i]);
+  for (int j = 0; j < count; ++j) {
+    if (values[j] == best) return j;
+  }
+  return 0;
+}
+
+// Mirrors NeonDepthwiseConv: each output is base + sum over (ky, kx) in
+// ascending order with fused multiply-add, so lanes match the 4-wide path.
+void LasxDepthwiseConv(float* dst, const float* src, const float* weights, const float* bias,
+                       int first_channel, int last_channel, int input_h, int input_w,
+                       int output_h, int output_w, int kernel_h, int kernel_w, int pad_top,
+                       int pad_left) noexcept {
+  const std::size_t input_plane = std::size_t(input_h) * input_w;
+  const std::size_t output_plane = std::size_t(output_h) * output_w;
+  const std::size_t kernel_plane = std::size_t(kernel_h) * kernel_w;
+  const int first_y = std::max(0, pad_top);
+  const int first_x = std::max(0, pad_left);
+  const int last_y = std::min(output_h, input_h + pad_top - kernel_h + 1);
+  const int last_x = std::min(output_w, input_w + pad_left - kernel_w + 1);
+  const auto edge = [&](const float* in, const float* filter, float base, int y, int x) {
+    float sum = base;
+    const int iy0 = y - pad_top, ix0 = x - pad_left;
+    for (int ky = 0; ky < kernel_h; ++ky) {
+      const int iy = iy0 + ky;
+      if (iy < 0 || iy >= input_h) continue;
+      for (int kx = 0; kx < kernel_w; ++kx) {
+        const int ix = ix0 + kx;
+        if (ix >= 0 && ix < input_w) sum += in[std::size_t(iy) * input_w + ix] * filter[ky * kernel_w + kx];
+      }
+    }
+    return sum;
+  };
+  for (int channel = first_channel; channel < last_channel; ++channel) {
+    const float* in = src + std::size_t(channel) * input_plane;
+    const float* filter = weights + std::size_t(channel) * kernel_plane;
+    float* out = dst + std::size_t(channel) * output_plane;
+    const float base = bias ? bias[channel] : 0.F;
+    for (int y = 0; y < output_h; ++y) {
+      const int iy0 = y - pad_top;
+      const bool inside = y >= first_y && y < last_y;
+      const int interior_begin = inside ? first_x : 0;
+      const int interior_end = inside ? last_x : 0;
+      float* o = out + std::size_t(y) * output_w;
+      int x = 0;
+      for (; x < interior_begin; ++x) o[x] = edge(in, filter, base, y, x);
+      for (; x + 32 <= interior_end; x += 32) {
+        __m256 s0 = Splat(base), s1 = s0, s2 = s0, s3 = s0;
+        for (int ky = 0; ky < kernel_h; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * input_w + x - pad_left;
+          const float* kernel = filter + ky * kernel_w;
+          for (int kx = 0; kx < kernel_w; ++kx) {
+            const __m256 w = Splat(kernel[kx]);
+            s0 = Fma(s0, Load(row + kx), w);
+            s1 = Fma(s1, Load(row + kx + 8), w);
+            s2 = Fma(s2, Load(row + kx + 16), w);
+            s3 = Fma(s3, Load(row + kx + 24), w);
+          }
+        }
+        Store(o + x, s0); Store(o + x + 8, s1); Store(o + x + 16, s2); Store(o + x + 24, s3);
+      }
+      for (; x + 8 <= interior_end; x += 8) {
+        __m256 sum = Splat(base);
+        for (int ky = 0; ky < kernel_h; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * input_w + x - pad_left;
+          const float* kernel = filter + ky * kernel_w;
+          for (int kx = 0; kx < kernel_w; ++kx) sum = Fma(sum, Load(row + kx), Splat(kernel[kx]));
+        }
+        Store(o + x, sum);
+      }
+      for (; x + 4 <= interior_end; x += 4) {
+        __m128 sum = (__m128){base, base, base, base};
+        for (int ky = 0; ky < kernel_h; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * input_w + x - pad_left;
+          const float* kernel = filter + ky * kernel_w;
+          for (int kx = 0; kx < kernel_w; ++kx) {
+            const float k = kernel[kx];
+            sum = __lsx_vfmadd_s((__m128)__lsx_vld(row + kx, 0), (__m128){k, k, k, k}, sum);
+          }
+        }
+        __lsx_vst((__m128i)sum, o + x, 0);
+      }
+      for (; x < output_w; ++x) o[x] = edge(in, filter, base, y, x);
+    }
+  }
 }
 
 }  // namespace ppocr::detail::kernels
