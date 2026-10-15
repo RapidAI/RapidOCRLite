@@ -134,3 +134,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 ## 2026-10-15 22:27 LoongArch
 - LSX via NEON shim (src/neon_lsx_shim.hpp): QEMU replay 0 diffs on 3 imgs vs expected_cpu_texts.json; raw texts == x86 scalar; max score diff 3.5e-5. QEMU time 342 s vs ~800 s baseline LSX-autovec build (rough only).
 - LASX GEMM (src/kernels_lasx.cpp) wired via HWCAP bit5; testing.
+- LASX (-cpu la464, active_isa lasx): 0 diffs on 3 imgs, raw texts == x86 scalar; vs LSX 2 lines differ by 1e-6 in score (summation order), text identical. QEMU 318 s vs LSX 342 s (rough only).
