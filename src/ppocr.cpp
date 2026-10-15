@@ -1,5 +1,6 @@
 #include "ppocr/ppocr.hpp"
 
+#include "db_geometry.hpp"
 #include "kernels.hpp"
 #include "onnx_lite.hpp"
 #include "vulkan_backend.hpp"
@@ -450,18 +451,20 @@ std::pair<int, int> DetInputSize(const Image& image, const Options& opt) {
   // rapidocr 3.x: limit_type "min" grows the short side up to limit_side_len;
   // "max" shrinks the long side. Each side is then snapped with half-to-even
   // rounding onto a multiple of 32, matching numpy.round / nearbyint.
+  // The ratio is a Python float (double): in float32, 750 * (736 / 300)
+  // rounds up to 1840 instead of 1839 and the width snaps to 1856, not 1824.
   const int limit = std::max(32, opt.det_limit_side_len);
-  float ratio = 1.F;
+  double ratio = 1.0;
   if (opt.det_limit_type == 1) {
     const int min_side = std::min(image.width, image.height);
-    if (min_side > 0 && min_side < limit) ratio = float(limit) / float(min_side);
+    if (min_side > 0 && min_side < limit) ratio = double(limit) / double(min_side);
   } else {
     const int max_side = std::max(image.width, image.height);
-    if (max_side > limit) ratio = float(limit) / float(max_side);
+    if (max_side > limit) ratio = double(limit) / double(max_side);
   }
   const auto snap = [ratio](int side) {
     const int resized = static_cast<int>(side * ratio);
-    return std::max(32, int(std::nearbyint(static_cast<float>(resized) / 32.F) * 32));
+    return std::max(32, int(std::nearbyint(static_cast<double>(resized) / 32.0) * 32));
   };
   return {snap(image.width), snap(image.height)};
 }
@@ -1027,110 +1030,9 @@ Tensor RecInputBatch(const Image& image, const CropBounds* crops,
 
 // rapidocr 3.x DBPostProcess (ch_ppocr_det/utils.py), reproduced without
 // OpenCV: threshold + optional 2x2 dilation, 8-connected components (the
-// outer contours of cv2.findContours), cv2.minAreaRect on the component's
-// pixel centres, "fast" score = mean probability inside the filled rotated
-// box, unclip by area*ratio/perimeter (the round-join offset of a rectangle
-// has a minimum-area rectangle grown by the distance on every side), then
-// round-half-even scaling, order_points_clockwise, clip and the <=3 px filter.
-struct DbRect { double cx, cy, w, h, ux, uy; };  // (ux,uy): unit vector along w
-
-DbRect MinAreaRectOfHull(const std::vector<std::array<long long, 2>>& hull) {
-  DbRect best{0, 0, 0, 0, 1, 0};
-  const std::size_t n = hull.size();
-  if (n == 0) return best;
-  if (n == 1) { best.cx = double(hull[0][0]); best.cy = double(hull[0][1]); return best; }
-  double best_area = -1.0;
-  for (std::size_t i = 0; i < n; ++i) {
-    const auto& a = hull[i];
-    const auto& b = hull[(i + 1) % n];
-    double ex = double(b[0] - a[0]), ey = double(b[1] - a[1]);
-    const double len = std::hypot(ex, ey);
-    if (len <= 0.0) continue;
-    ex /= len; ey /= len;
-    double umin = 1e300, umax = -1e300, vmin = 1e300, vmax = -1e300;
-    for (const auto& p : hull) {
-      const double px = double(p[0]), py = double(p[1]);
-      const double u = px * ex + py * ey, v = -px * ey + py * ex;
-      umin = std::min(umin, u); umax = std::max(umax, u);
-      vmin = std::min(vmin, v); vmax = std::max(vmax, v);
-    }
-    const double area = (umax - umin) * (vmax - vmin);
-    if (best_area < 0.0 || area < best_area - 1e-9) {
-      best_area = area;
-      const double uc = 0.5 * (umin + umax), vc = 0.5 * (vmin + vmax);
-      best = {uc * ex - vc * ey, uc * ey + vc * ex, umax - umin, vmax - vmin, ex, ey};
-    }
-  }
-  return best;
-}
-
-std::array<Point, 4> RectCorners(const DbRect& r) {
-  const double hx = 0.5 * r.w, hy = 0.5 * r.h;
-  const double vx = -r.uy, vy = r.ux;
-  std::array<Point, 4> c{};
-  const double s[4][2] = {{-1, -1}, {1, -1}, {1, 1}, {-1, 1}};
-  for (int i = 0; i < 4; ++i) {
-    c[i] = Point{float(r.cx + s[i][0] * hx * r.ux + s[i][1] * hy * vx),
-                 float(r.cy + s[i][0] * hx * r.uy + s[i][1] * hy * vy)};
-  }
-  return c;
-}
-
-// get_mini_boxes ordering: sort by x, then pick top/bottom of each pair.
-std::array<Point, 4> MiniBoxOrder(std::array<Point, 4> p) {
-  std::stable_sort(p.begin(), p.end(), [](const Point& a, const Point& b) { return a.x < b.x; });
-  const Point i1 = p[1].y > p[0].y ? p[0] : p[1];
-  const Point i4 = p[1].y > p[0].y ? p[1] : p[0];
-  const Point i2 = p[3].y > p[2].y ? p[2] : p[3];
-  const Point i3 = p[3].y > p[2].y ? p[3] : p[2];
-  return {i1, i2, i3, i4};
-}
-
-float BoxScoreFast(const float* prob, int h, int w, const std::array<Point, 4>& box) {
-  float fxmin = box[0].x, fxmax = box[0].x, fymin = box[0].y, fymax = box[0].y;
-  for (const auto& p : box) {
-    fxmin = std::min(fxmin, p.x); fxmax = std::max(fxmax, p.x);
-    fymin = std::min(fymin, p.y); fymax = std::max(fymax, p.y);
-  }
-  const int xmin = std::clamp(int(std::floor(fxmin)), 0, w - 1);
-  const int xmax = std::clamp(int(std::ceil(fxmax)), 0, w - 1);
-  const int ymin = std::clamp(int(std::floor(fymin)), 0, h - 1);
-  const int ymax = std::clamp(int(std::ceil(fymax)), 0, h - 1);
-  // cv2.fillPoly on int32-truncated vertices: a pixel is filled when its
-  // centre lies inside or on the convex quad.
-  std::array<std::array<double, 2>, 4> q{};
-  for (int i = 0; i < 4; ++i) q[i] = {double(int(box[i].x)), double(int(box[i].y))};
-  double orient = 0.0;
-  for (int i = 0; i < 4; ++i) {
-    const auto& a = q[i]; const auto& b = q[(i + 1) % 4];
-    orient += a[0] * b[1] - b[0] * a[1];
-  }
-  const double sign = orient >= 0.0 ? 1.0 : -1.0;
-  double sum = 0.0;
-  std::size_t count = 0;
-  for (int y = ymin; y <= ymax; ++y) {
-    for (int x = xmin; x <= xmax; ++x) {
-      bool inside = true;
-      for (int i = 0; i < 4 && inside; ++i) {
-        const auto& a = q[i]; const auto& b = q[(i + 1) % 4];
-        const double cross = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
-        if (sign * cross < -1e-9) inside = false;
-      }
-      if (inside) { sum += prob[std::size_t(y) * w + x]; ++count; }
-    }
-  }
-  return count == 0 ? 0.F : float(sum / double(count));
-}
-
-// imutils order_points_clockwise, as used by filter_det_res.
-std::array<Point, 4> OrderClockwise(std::array<Point, 4> p) {
-  std::stable_sort(p.begin(), p.end(), [](const Point& a, const Point& b) { return a.x < b.x; });
-  Point l0 = p[0], l1 = p[1], r0 = p[2], r1 = p[3];
-  if (l1.y < l0.y) std::swap(l0, l1);
-  if (r1.y < r0.y) std::swap(r0, r1);
-  return {l0, r0, r1, l1};
-}
-
+// outer contours of cv2.findContours), then Rapidocr3DbBox (db_geometry.cpp)
+// for the bit-exact cv2.minAreaRect / box_score_fast / pyclipper unclip /
+// second minAreaRect / float32 rounding, and TextDetector.sorted_boxes.
 void SortBoxesLikeRapidocr(std::vector<Box>& boxes) {
   // TextDetector.sorted_boxes: sort by (y, x) of the first point, then the
   // bubble pass that swaps neighbours on the same line (|dy| < 10) by x.
@@ -1166,9 +1068,11 @@ std::vector<Box> DBPost(const Tensor& prob, int dst_w, int dst_h, const Options&
   std::vector<int> queue; queue.reserve(256);
   std::vector<int> row_min, row_max;
   std::vector<std::array<long long, 2>> pts, hull;
+  std::vector<int> contour;
+  const double box_thresh = detail::ShortestDouble(opt.det_box_threshold);
+  const double unclip_ratio = detail::ShortestDouble(opt.det_unclip_ratio);
   int examined = 0;
   const int candidate_limit = opt.det_max_candidates > 0 ? opt.det_max_candidates : 1000000000;
-  constexpr float kMinSize = 3.F;
   for(int sy=0;sy<h && examined<candidate_limit;++sy)for(int sx=0;sx<w && examined<candidate_limit;++sx){
     const auto start=std::size_t(sy)*w+sx;
     if(mask[start]!=1) continue;
@@ -1219,33 +1123,29 @@ std::vector<Box> DBPost(const Tensor& prob, int dst_w, int dst_h, const Options&
       hull[k++] = pts[i];
     }
     hull.resize(k > 1 ? k - 1 : k);
-    const DbRect rect = MinAreaRectOfHull(hull);
-    if (std::min(rect.w, rect.h) < kMinSize) continue;
-    const auto mini = MiniBoxOrder(RectCorners(rect));
-    const float score = BoxScoreFast(probability, h, w, mini);
-    if (score < opt.det_box_threshold) continue;
-    const double perimeter = 2.0 * (rect.w + rect.h);
-    const double distance = perimeter > 0.0 ? rect.w * rect.h * opt.det_unclip_ratio / perimeter : 0.0;
-    DbRect grown = rect;
-    grown.w += 2.0 * distance;
-    grown.h += 2.0 * distance;
-    if (std::min(grown.w, grown.h) < kMinSize + 2.F) continue;
-    auto corners = MiniBoxOrder(RectCorners(grown));
-    for (auto& p : corners) {
-      double x = std::nearbyint(double(p.x) / w * dst_w);
-      double y = std::nearbyint(double(p.y) / h * dst_h);
-      x = std::clamp(x, 0.0, double(dst_w));
-      y = std::clamp(y, 0.0, double(dst_h));
-      // astype(int32), then clip_det_res to the last pixel.
-      p.x = float(std::min(std::max(int(x), 0), dst_w - 1));
-      p.y = float(std::min(std::max(int(y), 0), dst_h - 1));
+    // cv2.findContours starts the outer border at the raster-first pixel
+    // and walks it opposite to the monotone chain above. minAreaRect's hull
+    // (and its float32 tie-breaks) depends on that index order.
+    std::size_t first = 0;
+    for (std::size_t i = 0; i < hull.size(); ++i) {
+      if (hull[i][0] == sx && hull[i][1] == sy) { first = i; break; }
     }
-    corners = OrderClockwise(corners);
-    const int rw = int(std::hypot(corners[0].x - corners[1].x, corners[0].y - corners[1].y));
-    const int rh = int(std::hypot(corners[0].x - corners[3].x, corners[0].y - corners[3].y));
-    if (rw <= 3 || rh <= 3) continue;
+    const std::size_t m = hull.size();
+    contour.resize(m * 2);
+    for (std::size_t i = 0; i < m; ++i) {
+      const auto& p = hull[(first + m - i) % m];
+      contour[2 * i] = int(p[0]);
+      contour[2 * i + 1] = int(p[1]);
+    }
+    float xy[8];
+    float score = 0.F;
+    if (!detail::Rapidocr3DbBox(contour.data(), int(m), probability, h, w, dst_w, dst_h,
+                                box_thresh, unclip_ratio, xy,
+                                &score)) {
+      continue;
+    }
     Box b;
-    b.p = corners;
+    for (int i = 0; i < 4; ++i) b.p[std::size_t(i)] = Point{xy[2 * i], xy[2 * i + 1]};
     b.score = score;
     out.push_back(b);
   }

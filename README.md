@@ -106,15 +106,15 @@ Machine: shared 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Pytho
 
 | Dataset | Metric | rapidocr 3.10.0 | RapidOCRLite |
 | --- | --- | ---: | ---: |
-| text_det | Precision | 0.8540 | 0.8524 |
-| text_det | Recall | 0.8445 | 0.8468 |
-| text_det | H-mean | 0.8492 | 0.8496 |
+| text_det | Precision | 0.8540 | 0.8561 |
+| text_det | Recall | 0.8445 | 0.8457 |
+| text_det | H-mean | 0.8492 | 0.8509 |
 | text_det | Speed (s/img, median of 3) | 0.4812 | 0.3602 |
 | text_rec | Exact Match | 0.8419 | 0.8355 |
 | text_rec | Char Match | 0.9515 | 0.9510 |
 | text_rec | Speed (s/img, median of 3) | 0.0182 | 0.0180 |
 
-Runs (s/img): 3.10.0 det 0.4812 / 0.4998 / 0.3544, rec 0.0193 / 0.0156 / 0.0182; RapidOCRLite det 0.3602 / 0.3048 / 0.4078, rec 0.0180 / 0.0129 / 0.0208. Metrics were identical in every run. On text_rec, 9 of 310 lines decode differently from 3.x, mostly long lines where the bilinear resize differs slightly from OpenCV's.
+Runs (s/img): 3.10.0 det 0.4812 / 0.4998 / 0.3544, rec 0.0193 / 0.0156 / 0.0182; RapidOCRLite det 0.3602 / 0.3048 / 0.4078, rec 0.0180 / 0.0129 / 0.0208. Metrics were identical in every run. On text_rec, 9 of 310 lines decode differently from 3.x, mostly long lines where the bilinear resize differs slightly from OpenCV's. Detection post-processing reproduces 3.x exactly (ported `cv2.minAreaRect` / `cv2.fillPoly` arithmetic and the pyclipper unclip via vendored Clipper 6.4.2): fed the same probability map, all 212 pages give identical boxes. The remaining det box differences (131 of 212 pages, mostly 1–2 px) come from the probability map itself; detection metrics were re-measured after this change, speed rows were not (post-processing time is unchanged).
 
 
 #### CPU speed vs rapidocr 3.10.0 (PP-OCRv6 small, s/img, lower is better)

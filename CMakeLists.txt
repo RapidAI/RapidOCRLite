@@ -35,6 +35,8 @@ set(PPOCR_SOURCES
     src/ppocr.cpp
     src/vulkan_backend.cpp
     src/ppocr_c_api.cpp
+    src/db_geometry.cpp
+    src/clipper/clipper.cpp
 )
 
 add_library(ppocr_objects OBJECT ${PPOCR_SOURCES})
@@ -163,6 +165,30 @@ if(NOT MSVC AND PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
   set_source_files_properties(
       src/kernels.cpp src/onnx_lite.cpp src/ppocr.cpp src/vulkan_backend.cpp src/ppocr_c_api.cpp
       PROPERTIES COMPILE_OPTIONS "-mno-avx;-mno-avx2;-mno-avx512f")
+endif()
+
+# DB postprocess geometry reproduces OpenCV/pyclipper float results bit for
+# bit, so these two files opt out of fast-math and FMA contraction.
+if(MSVC)
+  set_source_files_properties(src/db_geometry.cpp
+      PROPERTIES COMPILE_OPTIONS "/fp:precise")
+  set_source_files_properties(src/clipper/clipper.cpp
+      PROPERTIES COMPILE_OPTIONS "/fp:precise;/w")
+else()
+  # FMA contraction follows the compiler default OpenCV wheels are built
+  # with: none on baseline x86, "on" for Clang (Apple arm64), "fast" for GCC.
+  if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
+    set(PPOCR_STRICT_FP "-fno-fast-math;-ffp-contract=off;-mno-avx;-mno-avx2;-mno-avx512f")
+  elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(PPOCR_STRICT_FP "-fno-fast-math;-ffp-contract=on")
+  else()
+    set(PPOCR_STRICT_FP "-fno-fast-math;-ffp-contract=fast")
+  endif()
+  set_source_files_properties(src/db_geometry.cpp
+      PROPERTIES COMPILE_OPTIONS "${PPOCR_STRICT_FP}")
+  # Vendored Clipper 6.4.2 is kept verbatim; silence its old-style warnings.
+  set_source_files_properties(src/clipper/clipper.cpp
+      PROPERTIES COMPILE_OPTIONS "${PPOCR_STRICT_FP};-w")
 endif()
 
 # AVX2 is isolated in its own object file. kernels.cpp remains baseline x86,
