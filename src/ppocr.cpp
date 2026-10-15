@@ -1769,7 +1769,58 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
   const std::size_t max_batch = static_cast<std::size_t>(std::max(1, opt.rec_batch_size));
   struct Batch { int width; const std::size_t* indices; std::size_t count; };
   std::vector<Batch> batches;
-  for (std::size_t first = 0; first < n; first += max_batch) {
+  static const int fast_env = [] {
+    const char* v = std::getenv("PPOCR_REC_FAST");
+    if (!v || !*v) return -1;
+    return (std::strcmp(v, "0") == 0 || std::strcmp(v, "false") == 0) ? 0 : 1;
+  }();
+  const bool fast = fast_env >= 0 ? fast_env == 1 : opt.rec_fast_mode;
+  std::vector<std::size_t> fast_order;
+  if (fast) {
+    // Fast mode: each line keeps its own resized width (no 3.10 batch padding
+    // and no 320 minimum). On x86 widths are rounded up to 32 so nearby lines
+    // share an NCHW batch (PPOCR_REC_WIDTH_ALIGN / PPOCR_DISABLE_REC_WIDTH_ALIGN);
+    // AArch64 keeps exact widths. Crop and resize stay the 3.10 ports.
+    static const int width_align = [] {
+      if (std::getenv("PPOCR_DISABLE_REC_WIDTH_ALIGN") != nullptr) return 0;
+      const char* configured = std::getenv("PPOCR_REC_WIDTH_ALIGN");
+      if (configured && *configured) {
+        char* end = nullptr;
+        const long parsed = std::strtol(configured, &end, 10);
+        if (end != configured && *end == '\0' && parsed >= 0 && parsed <= 4096)
+          return static_cast<int>(parsed);
+      }
+#if defined(__aarch64__) || defined(_M_ARM64)
+      return 0;
+#else
+      return 32;
+#endif
+    }();
+    const int max_w = std::max(1, opt.rec_max_width);
+    std::vector<int> bucket(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      const int natural = detail::cvc::RecResizedWidth(crop_w(i), crop_h(i), rec_h, max_w);
+      int w = natural;
+      if (width_align > 1 && natural < max_w)
+        w = std::min((natural + width_align - 1) / width_align * width_align, max_w);
+      // use_det=false (single line): keep 3.x's right padding to at least
+      // rec_height*320/48; short lines decode worse without it.
+      if (!use_det && std::getenv("PPOCR_REC_FAST_NO_MIN") == nullptr) w = std::max(w, std::min(max_w, rec_w));
+      bucket[i] = w;
+    }
+    fast_order = order;
+    std::stable_sort(fast_order.begin(), fast_order.end(),
+                     [&](std::size_t x, std::size_t y) { return bucket[x] < bucket[y]; });
+    for (std::size_t first = 0; first < n;) {
+      const int width = bucket[fast_order[first]];
+      std::size_t count = 0;
+      while (first + count < n && count < max_batch && bucket[fast_order[first + count]] == width)
+        ++count;
+      batches.push_back({width, fast_order.data() + first, count});
+      first += count;
+    }
+  }
+  for (std::size_t first = 0; !fast && first < n; first += max_batch) {
     const std::size_t count = std::min(max_batch, n - first);
     double max_ratio = rec_w / static_cast<double>(rec_h);
     for (std::size_t k = 0; k < count; ++k) {

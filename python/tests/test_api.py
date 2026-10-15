@@ -69,3 +69,15 @@ def test_cpu_info_and_ocr():
     again = engine(array)
     assert isinstance(again, RapidOCROutput)
     assert Path(image).is_file()
+
+
+def test_rec_fast_mode_option_layout():
+    if not os.environ.get("PPOCR_LIBRARY"):
+        pytest.skip("set PPOCR_LIBRARY to run native option checks")
+    import ctypes
+
+    from rapidocr import _native
+
+    options = _native.default_options()
+    assert options.struct_size == ctypes.sizeof(_native.Options)
+    assert options.rec_fast_mode == 0

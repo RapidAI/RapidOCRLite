@@ -109,31 +109,48 @@ Machine: shared 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Pytho
 | text_det | Precision | 0.8540 | 0.8540 |
 | text_det | Recall | 0.8445 | 0.8445 |
 | text_det | H-mean | 0.8492 | 0.8492 |
-| text_det | Speed (s/img, median of 5) | 0.3040 | 0.1356 |
+| text_det | Speed (s/img, median of 5) | 0.2804 | 0.1345 |
 | text_rec | Exact Match | 0.8419 | 0.8419 |
 | text_rec | Char Match | 0.9515 | 0.9515 |
-| text_rec | Speed (s/img, median of 5) | 0.0066 | 0.0071 |
+| text_rec | Speed (s/img, median of 5) | 0.0063 | 0.0070 |
 
 RapidOCRLite now reproduces 3.10 bit for bit on these sets: besides the DB post-processing (ported `cv2.minAreaRect` / `cv2.fillPoly` arithmetic, pyclipper unclip via vendored Clipper 6.4.2) and `sorted_boxes`, the det input resize, the text-line crop (`cv2.getPerspectiveTransform` + `warpPerspective` INTER_CUBIC / BORDER_REPLICATE, including the per-platform float/fp16 bicubic arithmetic) and the rec resize/padding/normalisation (`cv2.resize` INTER_LINEAR fixed point; on Apple arm64 the KleidiCV path OpenCV uses there) are ported (`src/cv_compat.cpp`). Result on x86 (AVX-512 and AVX2, both run orders) and M4: 0/212 full-page text differences, 0/310 rec differences, identical metrics; det boxes identical on 211/212 pages on x86 (one page differs in the probability map) and 212/212 on M4. The remaining source of difference is the network arithmetic itself (Lite kernels vs onnxruntime).
 
 
 #### CPU speed vs rapidocr 3.10.0 (PP-OCRv6 small, s/img, lower is better)
 
-Same SWHL sets and settings as above; `full` is det+rec on the 212 det images (`use_cls=False`). Interleaved runs, median of 5. The x86 host was shared with other jobs (load 6–13), so treat its numbers as indicative; the M4 rows were re-measured on the idle machine. Texts and boxes now match rapidocr 3.10 (see above). Exact rec batching (3.10's width-sorted batches of 6, padded to the widest line, minimum width 320) costs about 10–25% on `full` and some rec-only time compared with the previous per-line bucketing.
+Same SWHL sets and settings as above; `full` is det+rec on the 212 det images (`use_cls=False`). Interleaved runs, median of 5. The x86 host was shared with other jobs (load 6–10), so treat its numbers as indicative; the M4 rows were measured on the idle machine. **exact** is the default (output identical to 3.10); **fast** is `Rec.fast_mode: true` (see below).
 
-| Host | Mode | rapidocr 3.10.0 | RapidOCRLite | Lite vs 3.x |
+| Host | Mode | rapidocr 3.10.0 | Lite exact (default) | Lite fast |
 | --- | --- | ---: | ---: | ---: |
-| x86 8 vCPU, AVX-512 | det-only | 0.3040 | 0.1356 | 2.2× faster |
-| x86 8 vCPU, AVX-512 | rec-only | 0.0066 | 0.0071 | 1.08× slower |
-| x86 8 vCPU, AVX-512 | full page | 0.4200 | 0.2115 | 2.0× faster |
-| x86, `PPOCR_FORCE_ISA=avx2` | det-only | 0.3040 | 0.1384 | 2.2× faster |
-| x86, `PPOCR_FORCE_ISA=avx2` | rec-only | 0.0066 | 0.0093 | 1.41× slower |
-| x86, `PPOCR_FORCE_ISA=avx2` | full page | 0.4200 | 0.2478 | 1.7× faster |
-| Mac mini M4 (CPU, Accelerate) | det-only | 0.1117 | 0.0722 | 1.55× faster |
-| Mac mini M4 (CPU, Accelerate) | rec-only | 0.00566 | 0.00504 | 1.12× faster |
-| Mac mini M4 (CPU, Accelerate) | full page | 0.2970 | 0.1241 | 2.39× faster |
+| x86 8 vCPU, AVX-512 | det-only | 0.2804 | 0.1345 (2.1× faster) | 0.1313 (2.1× faster) |
+| x86 8 vCPU, AVX-512 | rec-only | 0.0063 | 0.0070 (1.11× slower) | 0.0067 (1.06× slower) |
+| x86 8 vCPU, AVX-512 | full page | 0.3874 | 0.2034 (1.9× faster) | 0.1892 (2.0× faster) |
+| x86, `PPOCR_FORCE_ISA=avx2` | det-only | 0.2804 | 0.1333 (2.1× faster) | 0.1217 (2.3× faster) |
+| x86, `PPOCR_FORCE_ISA=avx2` | rec-only | 0.0063 | 0.0092 (1.46× slower) | 0.0085 (1.35× slower) |
+| x86, `PPOCR_FORCE_ISA=avx2` | full page | 0.3874 | 0.2328 (1.7× faster) | 0.1960 (2.0× faster) |
+| Mac mini M4 (CPU, Accelerate) | det-only | 0.1119 | 0.0717 (1.56× faster) | 0.0713 (1.57× faster) |
+| Mac mini M4 (CPU, Accelerate) | rec-only | 0.00571 | 0.00505 (1.13× faster) | 0.00503 (1.14× faster) |
+| Mac mini M4 (CPU, Accelerate) | full page | 0.2968 | 0.1249 (2.38× faster) | 0.0995 (2.98× faster) |
 
-3.x uses onnxruntime 1.31.0, which on M4 runs its GEMMs on the SME matrix unit; RapidOCRLite reaches the matrix unit through Accelerate (`PPOCR_DISABLE_ACCELERATE=1` falls back to NEON). M4 rows: this commit, otherwise idle machine, interleaved median of 5. On x86, single-line rec-only is still about even (AVX-512) or slower (AVX2); x86 rows are from this commit on a loaded host (load 6–10).
+3.x uses onnxruntime 1.31.0, which on M4 runs its GEMMs on the SME matrix unit; RapidOCRLite reaches the matrix unit through Accelerate (`PPOCR_DISABLE_ACCELERATE=1` falls back to NEON). The det-only column does not depend on the mode; its exact/fast difference is run-to-run noise.
+
+#### Recognition fast mode
+
+By default recognition reproduces 3.10 exactly: lines sorted by aspect ratio, batches of `rec_batch_num` (6) padded to the widest line, minimum width 320. Fast mode keeps the same crop, resize and normalisation, but runs each line at about its own width (x86 rounds widths up to 32 so similar lines share a batch; AArch64 keeps exact widths). Single-line rec (`use_det=False`) keeps the 320 minimum, because dropping it cost about 2 points of exact match (`PPOCR_REC_FAST_NO_MIN=1` drops it anyway). Text can then differ slightly from 3.10.
+
+- Python: `RapidOCR(params={"Rec.fast_mode": True})` or `fast_mode: true` under `Rec:` in `config.yaml`. Other parameters are unchanged.
+- C API: `ppocr_options.rec_fast_mode = 1` (field appended at the end; callers built against an older header pass a smaller `struct_size` and get 0). C++: `ppocr::Options::rec_fast_mode`.
+- Environment: `PPOCR_REC_FAST=1` (or `0`) overrides the option.
+
+Accuracy in fast mode (same sets as above; det is not affected):
+
+| Host | text_rec Exact / Char Match | rec lines differing from 3.10 | full pages with text differing from 3.10 |
+| --- | ---: | ---: | ---: |
+| x86 AVX-512 / AVX2 | 0.8355 / 0.9510 (3.10: 0.8419 / 0.9515) | 9 / 310 | 113 / 212 |
+| M4 | 0.8452 / 0.9520 (3.10: 0.8419 / 0.9516) | 4 / 310 | 116 / 212 |
+
+In exact mode both hosts give 0 / 310 and 0 / 212.
 
 ### 🛠️ Installation
 

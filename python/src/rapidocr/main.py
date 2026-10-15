@@ -234,6 +234,8 @@ class RapidOCR:
         batch = self.cfg["Rec"].get("rec_batch_num")
         if batch:
             options.rec_batch_size = int(batch)
+        # Lite extension: Rec.fast_mode (False = exact rapidocr 3.10 output).
+        options.rec_fast_mode = 1 if _as_bool(self.cfg["Rec"].get("fast_mode", False)) else 0
         self._engine = _native.NativeOCR(det, rec, dictionary, options)
         _log_active_backend(self._engine, int(options.backend))
         return self._engine

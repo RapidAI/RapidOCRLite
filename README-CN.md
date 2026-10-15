@@ -109,31 +109,48 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 | text_det | Precision | 0.8540 | 0.8540 |
 | text_det | Recall | 0.8445 | 0.8445 |
 | text_det | H-mean | 0.8492 | 0.8492 |
-| text_det | 速度（秒/张，5 次中位数） | 0.3040 | 0.1356 |
+| text_det | 速度（秒/张，5 次中位数） | 0.2804 | 0.1345 |
 | text_rec | Exact Match | 0.8419 | 0.8419 |
 | text_rec | Char Match | 0.9515 | 0.9515 |
-| text_rec | 速度（秒/张，5 次中位数） | 0.0066 | 0.0071 |
+| text_rec | 速度（秒/张，5 次中位数） | 0.0063 | 0.0070 |
 
 RapidOCRLite 现在在这两个数据集上与 3.10 逐位一致：除检测后处理（移植 `cv2.minAreaRect` / `cv2.fillPoly` 运算，内置 Clipper 6.4.2 复现 pyclipper unclip）和 `sorted_boxes` 外，检测输入缩放、文本行裁剪（`cv2.getPerspectiveTransform` + `warpPerspective` INTER_CUBIC / BORDER_REPLICATE，含各平台 float/fp16 双三次运算）以及识别缩放/填充/归一化（`cv2.resize` INTER_LINEAR 定点；Apple arm64 上为 OpenCV 实际使用的 KleidiCV 路径）均已移植（`src/cv_compat.cpp`）。x86（AVX-512 与 AVX2，正反两种顺序）和 M4 上：整页文本 0/212 不同，识别 0/310 不同，指标完全相同；检测框 x86 上 211/212 页相同（1 页概率图不同），M4 上 212/212。剩余差异只来自网络计算本身（Lite 内核与 onnxruntime）。
 
 
 #### CPU 速度对比 rapidocr 3.10.0（PP-OCRv6 small，秒/张，越小越好）
 
-数据集与设置同上；`full` 为 212 张检测图上的检测+识别（`use_cls=False`）。交替运行，取 5 次中位数。x86 机器测试时有其他任务（load 6–13），其数字仅供参考；M4 各行在空闲机器上重新测量。文本和框现与 rapidocr 3.10 一致（见上）。逐位复现 3.10 的识别分批（按宽高比排序、每批 6 行、填充到最宽行、最小宽度 320）相比之前的按行分桶，`full` 约慢 10–25%，仅识别也略慢。
+数据集与设置同上；`full` 为 212 张检测图上的检测+识别（`use_cls=False`）。交替运行，取 5 次中位数。x86 机器测试时有其他任务（load 6–10），数字仅供参考；M4 在空闲机器上测量。**exact** 为默认模式（输出与 3.10 一致）；**fast** 为 `Rec.fast_mode: true`（见下）。
 
-| 机器 | 模式 | rapidocr 3.10.0 | RapidOCRLite | 对比 |
+| 机器 | 模式 | rapidocr 3.10.0 | Lite exact（默认） | Lite fast |
 | --- | --- | ---: | ---: | ---: |
-| x86 8 vCPU，AVX-512 | 仅检测 | 0.3040 | 0.1356 | 快 2.2 倍 |
-| x86 8 vCPU，AVX-512 | 仅识别 | 0.0066 | 0.0071 | 慢 1.08 倍 |
-| x86 8 vCPU，AVX-512 | 整页 | 0.4200 | 0.2115 | 快 2.0 倍 |
-| x86，`PPOCR_FORCE_ISA=avx2` | 仅检测 | 0.3040 | 0.1384 | 快 2.2 倍 |
-| x86，`PPOCR_FORCE_ISA=avx2` | 仅识别 | 0.0066 | 0.0093 | 慢 1.41 倍 |
-| x86，`PPOCR_FORCE_ISA=avx2` | 整页 | 0.4200 | 0.2478 | 快 1.7 倍 |
-| Mac mini M4（CPU，Accelerate） | 仅检测 | 0.1117 | 0.0722 | 快 1.55 倍 |
-| Mac mini M4（CPU，Accelerate） | 仅识别 | 0.00566 | 0.00504 | 快 1.12 倍 |
-| Mac mini M4（CPU，Accelerate） | 整页 | 0.2970 | 0.1241 | 快 2.39 倍 |
+| x86 8 vCPU，AVX-512 | 仅检测 | 0.2804 | 0.1345（快 2.1 倍） | 0.1313（快 2.1 倍） |
+| x86 8 vCPU，AVX-512 | 仅识别 | 0.0063 | 0.0070（慢 1.11 倍） | 0.0067（慢 1.06 倍） |
+| x86 8 vCPU，AVX-512 | 整页 | 0.3874 | 0.2034（快 1.9 倍） | 0.1892（快 2.0 倍） |
+| x86，`PPOCR_FORCE_ISA=avx2` | 仅检测 | 0.2804 | 0.1333（快 2.1 倍） | 0.1217（快 2.3 倍） |
+| x86，`PPOCR_FORCE_ISA=avx2` | 仅识别 | 0.0063 | 0.0092（慢 1.46 倍） | 0.0085（慢 1.35 倍） |
+| x86，`PPOCR_FORCE_ISA=avx2` | 整页 | 0.3874 | 0.2328（快 1.7 倍） | 0.1960（快 2.0 倍） |
+| Mac mini M4（CPU，Accelerate） | 仅检测 | 0.1119 | 0.0717（快 1.56 倍） | 0.0713（快 1.57 倍） |
+| Mac mini M4（CPU，Accelerate） | 仅识别 | 0.00571 | 0.00505（快 1.13 倍） | 0.00503（快 1.14 倍） |
+| Mac mini M4（CPU，Accelerate） | 整页 | 0.2968 | 0.1249（快 2.38 倍） | 0.0995（快 2.98 倍） |
 
-3.x 使用 onnxruntime 1.31.0，在 M4 上用 SME 矩阵单元做 GEMM；RapidOCRLite 通过 Accelerate 使用矩阵单元（`PPOCR_DISABLE_ACCELERATE=1` 回退到 NEON）。M4 各行：本提交，机器无其他任务，交替运行取 5 次中位数。x86 上单行仅识别仍大致持平（AVX-512）或更慢（AVX2）；x86 各行来自本提交，测试时机器有负载（load 6–10）。
+3.x 使用 onnxruntime 1.31.0，在 M4 上用 SME 矩阵单元做 GEMM；RapidOCRLite 通过 Accelerate 使用矩阵单元（`PPOCR_DISABLE_ACCELERATE=1` 回退到 NEON）。仅检测与模式无关，两列差别为测量波动。
+
+#### 识别快速模式
+
+默认情况下识别与 3.10 逐位一致：按宽高比排序，每批 `rec_batch_num`（6）行，填充到最宽行，最小宽度 320。快速模式保留相同的裁剪、缩放和归一化，但每行按接近自身的宽度运行（x86 把宽度向上取整到 32 的倍数，让相近的行合批；AArch64 保持原宽度）。单行识别（`use_det=False`）仍保留 320 最小宽度，因为去掉它会让 Exact Match 下降约 2 个点（`PPOCR_REC_FAST_NO_MIN=1` 可强制去掉）。此时文本可能与 3.10 略有不同。
+
+- Python：`RapidOCR(params={"Rec.fast_mode": True})`，或在 `config.yaml` 的 `Rec:` 下写 `fast_mode: true`。其他参数不变。
+- C API：`ppocr_options.rec_fast_mode = 1`（字段追加在结构体末尾；按旧头文件编译的调用方传入较小的 `struct_size`，得到 0）。C++：`ppocr::Options::rec_fast_mode`。
+- 环境变量：`PPOCR_REC_FAST=1`（或 `0`）覆盖该选项。
+
+快速模式的精度（数据集同上；检测不受影响）：
+
+| 机器 | text_rec Exact / Char Match | 与 3.10 不同的识别行 | 文本与 3.10 不同的整页 |
+| --- | ---: | ---: | ---: |
+| x86 AVX-512 / AVX2 | 0.8355 / 0.9510（3.10：0.8419 / 0.9515） | 9 / 310 | 113 / 212 |
+| M4 | 0.8452 / 0.9520（3.10：0.8419 / 0.9516） | 4 / 310 | 116 / 212 |
+
+exact 模式下两台机器均为 0 / 310 与 0 / 212。
 
 ### 🛠️ 安装
 

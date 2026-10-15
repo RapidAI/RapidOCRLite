@@ -104,6 +104,11 @@ struct Options {
   // measured default. Transformer exports may still change CTC results for
   // N>1; deployments can set 1 to restore strict per-crop attention.
   int rec_batch_size = 4;
+  // false: recognition input reproduces rapidocr 3.10 exactly (width-sorted
+  // batches padded to the widest line, minimum width rec_height*320/48).
+  // true: fast mode; each line runs at about its own width (similar widths
+  // share a batch, no minimum width). Env PPOCR_REC_FAST=0/1 overrides.
+  bool rec_fast_mode = false;
   // Crops whose natural widths land in the same small bucket are packed into
   // one NCHW batch. Each crop keeps its own aspect-ratio resize and is padded
   // on the right, so bucketing avoids resampling text while increasing useful

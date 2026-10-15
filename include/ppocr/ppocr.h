@@ -66,6 +66,14 @@ typedef struct ppocr_options {
   /* -1: automatic adapter. >=0: that physical device, including lavapipe.
      Read on the first Vulkan initialization in the process. */
   int vulkan_device_index;
+  /* 0 (default): recognition reproduces rapidocr 3.10 exactly (width-sorted
+     batches of rec_batch_size padded to the widest line, minimum width
+     rec_height*320/48). 1: fast mode, each line runs at about its own width
+     (lines of similar width share a batch; no minimum width). Text can differ
+     slightly from 3.10. The PPOCR_REC_FAST environment variable (0/1)
+     overrides this field. Appended field: callers built against an older
+     header pass a smaller struct_size and get 0. */
+  int rec_fast_mode;
 } ppocr_options;
 
 typedef struct ppocr_image {

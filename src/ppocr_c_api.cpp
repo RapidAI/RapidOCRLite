@@ -63,6 +63,7 @@ ppocr::Options ToOptions(const ppocr_options* options) {
   out.det_use_dilation = local.det_use_dilation;
   out.det_max_candidates = local.det_max_candidates;
   out.vulkan_device_index = local.vulkan_device_index;
+  out.rec_fast_mode = local.rec_fast_mode != 0;
   return out;
 }
 
@@ -150,6 +151,7 @@ void ppocr_options_init(ppocr_options* options) {
   options->det_use_dilation = defaults.det_use_dilation;
   options->det_max_candidates = defaults.det_max_candidates;
   options->vulkan_device_index = defaults.vulkan_device_index;
+  options->rec_fast_mode = defaults.rec_fast_mode ? 1 : 0;
 }
 
 const char* ppocr_last_error(void) { return g_error.c_str(); }

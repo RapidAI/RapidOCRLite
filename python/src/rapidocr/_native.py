@@ -46,6 +46,7 @@ class Options(ctypes.Structure):
         ("det_use_dilation", ctypes.c_int),
         ("det_max_candidates", ctypes.c_int),
         ("vulkan_device_index", ctypes.c_int),
+        ("rec_fast_mode", ctypes.c_int),
     ]
 
 

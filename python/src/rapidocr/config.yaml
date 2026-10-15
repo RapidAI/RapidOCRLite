@@ -192,3 +192,7 @@ Rec:
     rec_keys_path: null
     rec_img_shape: [3, 48, 320]
     rec_batch_num: 6
+    # RapidOCRLite only. false: output identical to rapidocr 3.10.
+    # true: faster recognition (each line at about its own width); text can
+    # differ slightly. Env PPOCR_REC_FAST=0/1 overrides.
+    fast_mode: false
