@@ -324,6 +324,12 @@ if(PPOCR_BUILD_EXAMPLES)
     set_target_properties(ppocr_c_api_demo PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:ppocr_shared>")
   endif()
 
+  add_executable(ppocr_replay examples/ppocr_replay.c)
+  target_link_libraries(ppocr_replay PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
+  if(PPOCR_BUILD_SHARED)
+    set_target_properties(ppocr_replay PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:ppocr_shared>")
+  endif()
+
   add_executable(ppocr_isa_bench examples/ppocr_isa_bench.cpp)
   ppocr_link_objects(ppocr_isa_bench)
 
