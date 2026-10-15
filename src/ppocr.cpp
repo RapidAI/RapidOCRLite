@@ -1,6 +1,7 @@
 #include "ppocr/ppocr.hpp"
 
 #include "db_geometry.hpp"
+#include "cv_compat.hpp"
 #include "kernels.hpp"
 #include "onnx_lite.hpp"
 #include "vulkan_backend.hpp"
@@ -96,48 +97,6 @@ std::size_t RecognitionWorkerLimit(Backend backend, int requested) noexcept {
   const int hardware_cap = hardware == 0 ? bounded : std::max(1, int(hardware));
   return static_cast<std::size_t>(std::min(bounded, hardware_cap));
 }
-bool PreprocessNormalizeLutEnabled() {
-  // Indirect indexed loads helped only a few tiny front ends in measurement
-  // and regressed medium's bandwidth-heavy pipeline. Keep this as an opt-in
-  // deployment experiment; the affine path is the tested default.
-  static const bool enabled = std::getenv("PPOCR_ENABLE_PREPROCESS_NORMALIZE_LUT") != nullptr;
-  return enabled;
-}
-
-// Both PP-OCRv6 front ends consume values that have first been rounded back
-// to an 8-bit RGB sample.  Their normalization is therefore a fixed 256-entry
-// transform, not work that needs to be recomputed for every output pixel.
-// Keeping the tables here avoids a per-pixel divide/multiply in detector and
-// crop preprocessing, while retaining exactly the same float input value for
-// every possible uint8 sample on x86 and ARM.
-const std::array<std::array<float, 256>, 3>& DetectorNormalizeLut() {
-  static const auto table = [] {
-    constexpr std::array<float, 3> mean{.485F, .456F, .406F};
-    constexpr std::array<float, 3> deviation{.229F, .224F, .225F};
-    std::array<std::array<float, 256>, 3> result{};
-    for (std::size_t channel = 0; channel < result.size(); ++channel) {
-      const float scale = 1.F / (255.F * deviation[channel]);
-      const float offset = -mean[channel] / deviation[channel];
-      for (std::size_t value = 0; value < result[channel].size(); ++value) {
-        result[channel][value] = static_cast<float>(value) * scale + offset;
-      }
-    }
-    return result;
-  }();
-  return table;
-}
-
-const std::array<float, 256>& RecognitionNormalizeLut() {
-  static const auto table = [] {
-    std::array<float, 256> result{};
-    for (std::size_t value = 0; value < result.size(); ++value) {
-      result[value] = static_cast<float>(value) * (2.F / 255.F) - 1.F;
-    }
-    return result;
-  }();
-  return table;
-}
-
 struct ChannelNorm {
   std::array<float, 3> scale{};
   std::array<float, 3> offset{};
@@ -158,12 +117,6 @@ bool IsDefaultDetectorNorm(const Options& opt) {
   constexpr std::array<float, 3> mean{0.485F, 0.456F, 0.406F};
   constexpr std::array<float, 3> deviation{0.229F, 0.224F, 0.225F};
   return opt.det_mean == mean && opt.det_std == deviation;
-}
-
-bool IsDefaultRecognizerNorm(const Options& opt) {
-  constexpr std::array<float, 3> mean{0.5F, 0.5F, 0.5F};
-  constexpr std::array<float, 3> deviation{0.5F, 0.5F, 0.5F};
-  return opt.rec_mean == mean && opt.rec_std == deviation;
 }
 
 // Keep front-end parallelism bounded just like graph execution.  A real NCHW
@@ -849,124 +802,40 @@ bool TryHybridVulkanDetRgbConv0(const Image& image, const Options& opt,
   return true;
 }
 
-bool TryHybridVulkanRecRgbConv0(const Image& image, const CropBounds& crop,
-                                const Options& opt, const detail::OnnxLite& rec,
-                                Tensor& stem_output, std::string& stem_output_name) {
-  if (opt.backend != Backend::hybrid || image.empty() ||
-      std::getenv("PPOCR_DISABLE_VULKAN_REC_RGB_CONV") != nullptr) return false;
-  detail::OnnxLite::HybridRgbStem stem{};
-  if (!rec.RecognizerRgbStem(stem) || !stem.weights || !stem.bias) return false;
-  const int nchw_h = opt.rec_height;
-  const int nchw_w = RecInputWidth(crop, opt);
-  if (nchw_h <= 0 || nchw_w <= 0 || crop.width <= 0 || crop.height <= 0) return false;
-  if (crop.x < 0 || crop.y < 0 || crop.x + crop.width > image.width ||
-      crop.y + crop.height > image.height) return false;
-  const int out_h = (nchw_h + 2 * stem.pad - stem.kernel) / stem.stride + 1;
-  const int out_w = (nchw_w + 2 * stem.pad - stem.kernel) / stem.stride + 1;
-  if (out_h <= 0 || out_w <= 0) return false;
-  struct AdmissionKey {
-    int source_width, source_height, crop_w, crop_h, nchw_width, nchw_height;
-    int output_channels, relu;
-    std::uint64_t context;
-    bool operator==(const AdmissionKey&) const = default;
-  };
-  struct AdmissionKeyHash {
-    std::size_t operator()(const AdmissionKey& key) const noexcept {
-      return (std::size_t(key.source_width) * 1315423911u) ^
-             (std::size_t(key.source_height) * 2654435761u) ^
-             (std::size_t(key.crop_w) << 16) ^ std::size_t(key.crop_h) ^
-             (std::size_t(key.nchw_width) << 8) ^ std::size_t(key.output_channels) ^
-             std::size_t(key.context);
-    }
-  };
-  static std::mutex admission_mutex;
-  static std::unordered_map<AdmissionKey, bool, AdmissionKeyHash> admitted;
-  const AdmissionKey shape{image.width, image.height, crop.width, crop.height, nchw_w, nchw_h,
-                           stem.output_channels, stem.relu ? 1 : 0,
-                           detail::VulkanHybridAdmissionContext()};
-  bool select_gpu{};
-  {
-    std::lock_guard lock(admission_mutex);
-    const auto found = admitted.find(shape);
-    if (found != admitted.end()) {
-      select_gpu = found->second;
-    } else {
-      double gpu_ms = 0, cpu_ms = 0;
-      select_gpu = detail::VulkanResizeRgbCropAndConv2dNoSlowerThanCpu(
-          image.width, image.height, crop.x, crop.y, crop.width, crop.height, nchw_w, nchw_h,
-          stem.output_channels, stem.kernel, stem.stride, stem.pad, stem.relu, &gpu_ms,
-          &cpu_ms);
-      admitted.emplace(shape, select_gpu);
-      if (std::getenv("PPOCR_HYBRID_TRACE") != nullptr) {
-        std::cerr << "hybrid rec RGB+Conv.0 admission gpu_ms=" << gpu_ms
-                  << " cpu_ms=" << cpu_ms << " select=" << select_gpu
-                  << " w=" << nchw_w << '\n';
-      }
-    }
+// rapidocr 3.10 DetPreProcess: cv2.resize (INTER_LINEAR) to the 32-snapped
+// size, then (float32(v) * float32(1/255) - mean) / std in float64, cast to
+// float32. Both steps are bit-exact (cv_compat + a per-value table).
+void WriteDetInput(float* output, const Image& image, int w, int h, const Options& opt) {
+  thread_local std::vector<std::uint8_t> resized;
+  resized.resize(std::size_t(w) * h * 3);
+  detail::cvc::ResizeLinear8u(image.rgb.data(), image.width, image.height,
+                              std::size_t(image.width) * 3, 3, resized.data(), w, h,
+                              std::size_t(w) * 3);
+  std::array<std::array<float, 256>, 3> lut{};
+  for (std::size_t c = 0; c < 3; ++c)
+    lut[c] = detail::cvc::DetNormalizeTable(opt.det_mean[c], opt.det_std[c]);
+  const std::size_t plane = std::size_t(w) * h;
+  float* const blue = output;
+  float* const green = blue + plane;
+  float* const red = green + plane;
+  const std::uint8_t* rgb = resized.data();
+  for (std::size_t i = 0; i < plane; ++i, rgb += 3) {
+    blue[i] = lut[0][rgb[2]];
+    green[i] = lut[1][rgb[1]];
+    red[i] = lut[2][rgb[0]];
   }
-  if (!select_gpu) return false;
-  stem_output.shape = {1, stem.output_channels, out_h, out_w};
-  stem_output.data.resize(std::size_t(stem.output_channels) * out_h * out_w);
-  std::vector<std::uint8_t> packed(std::size_t(crop.width) * crop.height * 3);
-  for (int y = 0; y < crop.height; ++y) {
-    std::memcpy(packed.data() + std::size_t(y) * crop.width * 3,
-                image.rgb.data() + (std::size_t(crop.y + y) * image.width + crop.x) * 3,
-                std::size_t(crop.width) * 3);
-  }
-  if (!detail::VulkanResizeRgbCropAndConv2d(
-          stem_output.data.data(), packed.data(), packed.size(), crop.width, crop.height,
-          0, 0, crop.width, crop.height, nchw_w, nchw_h, stem.weights, stem.bias,
-          stem.output_channels, stem.kernel, stem.stride, stem.pad, stem.relu)) {
-    return false;
-  }
-  stem_output_name = stem.output_name;
-  return true;
 }
 
 Tensor DetInput(const Image& image, const Options& opt) {
   const auto [w, h] = DetInputSize(image, opt);
-  const auto norm = ChannelNormFrom(opt.det_mean, opt.det_std);
-  if (!PreprocessNormalizeLutEnabled() || !IsDefaultDetectorNorm(opt)) {
-    const auto& scale = norm.scale;
-    const auto& offset = norm.offset;
-    if (IdentityResizeFastPathEnabled() && image.width == w && image.height == h) {
-      Tensor output{{1, 3, h, w},
-                    std::vector<float>(std::size_t(3) * h * w)};
-      detail::kernels::WriteIdentityRgbToNchw(output.data.data(), image.rgb.data(),
-                                              w, h, image.width, 0, 0,
-                                              scale.data(), offset.data(), w);
-      return output;
-    }
-    Tensor output{{1, 3, h, w},
-                  std::vector<float>(std::size_t(3) * h * w)};
-    detail::kernels::WriteBilinearRgbToNchw(
-        output.data.data(), image.rgb.data(), image.width, image.height, 0, 0,
-        image.width, image.height, w, h, scale.data(), offset.data(), w, true);
-    return output;
-  }
-  const auto& normalize = DetectorNormalizeLut();
-  return ResizeRegionToNchw(image, 0, 0, image.width, image.height, w, h,
-                            [&](int channel, float value) {
-    return normalize[static_cast<std::size_t>(channel)][static_cast<unsigned>(value)];
-  });
+  Tensor output{{1, 3, h, w}, std::vector<float>(std::size_t(3) * h * w)};
+  WriteDetInput(output.data.data(), image, w, h, opt);
+  return output;
 }
 
 int RecInputWidth(const CropBounds& crop, const Options& opt) {
   return std::clamp(int(std::ceil(float(opt.rec_height) * crop.width / crop.height)),
                     1, opt.rec_max_width);
-}
-
-bool RecPadToPageMax() noexcept {
-  // Tiny rec is CNN+CTC; right-zero padding is the same as convolution's
-  // implicit boundary and GPU already 64-aligns without changing decoded
-  // text on the gating image. Packing a page's crops to one width lets one
-  // NCHW batch use the full SIMD pool (or one Vulkan graph) instead of two
-  // exact-width serial crops. Transformer rec stays exact-width unless the
-  // flag is set. `PPOCR_DISABLE_REC_PAD_MAX` restores exact-width buckets.
-  static const bool enabled =
-      std::getenv("PPOCR_ENABLE_REC_PAD_MAX") != nullptr &&
-      std::getenv("PPOCR_DISABLE_REC_PAD_MAX") == nullptr;
-  return enabled;
 }
 
 bool GpuRecPadToPageMax() noexcept {
@@ -981,76 +850,32 @@ bool GpuRecPadToPageMax() noexcept {
   return enabled;
 }
 
-Tensor RecInputBatch(const Image& image, const CropBounds* crops,
-                     std::size_t crop_count, int width, const Options& opt,
-                     std::size_t preprocess_workers = 1) {
-  if (!crops || crop_count == 0) Fail("empty recognition batch");
-  Tensor output{{static_cast<std::int64_t>(crop_count), 3, opt.rec_height, width},
-                // Zero is also the convolution's implicit boundary value,
-                // so right padding preserves every original-width output
-                // column instead of changing its receptive field.
-                std::vector<float>(crop_count * std::size_t(3) * opt.rec_height * width, 0.F)};
-  const std::size_t image_stride = std::size_t(3) * opt.rec_height * width;
-  const auto norm = ChannelNormFrom(opt.rec_mean, opt.rec_std);
-  if (!PreprocessNormalizeLutEnabled() || !IsDefaultRecognizerNorm(opt)) {
-    const auto& scale = norm.scale;
-    const auto& offset = norm.offset;
-    RunIndexed(crop_count, preprocess_workers, [&](std::size_t i) {
-      const auto& crop = crops[i];
-      const int natural_width = RecInputWidth(crop, opt);
-      if (IdentityResizeFastPathEnabled() && crop.width == natural_width &&
-          crop.height == opt.rec_height) {
-        detail::kernels::WriteIdentityRgbToNchw(
-            output.data.data() + i * image_stride, image.rgb.data(),
-            natural_width, opt.rec_height, image.width, crop.x, crop.y,
-            scale.data(), offset.data(), width);
-        return;
-      }
-      // Rec crops already share an outer ParallelFor; keep the bilinear row
-      // walk serial so this path does not nest a second SIMD pool.
-      detail::kernels::WriteBilinearRgbToNchw(
-          output.data.data() + i * image_stride, image.rgb.data(), image.width,
-          image.height, crop.x, crop.y, crop.width, crop.height, natural_width,
-          opt.rec_height, scale.data(), offset.data(), width, false);
-    });
-  } else {
-    const auto& normalize = RecognitionNormalizeLut();
-    RunIndexed(crop_count, preprocess_workers, [&](std::size_t i) {
-      const auto& crop = crops[i];
-      const int natural_width = RecInputWidth(crop, opt);
-      WriteResizeRegionToNchw(output.data.data() + i * image_stride, image,
-                              crop.x, crop.y, crop.width, crop.height, natural_width,
-                              opt.rec_height, [&normalize](int, float value) {
-        return normalize[static_cast<unsigned>(value)];
-      }, width);
-    });
-  }
-  return output;
-}
-
 // rapidocr 3.x DBPostProcess (ch_ppocr_det/utils.py), reproduced without
 // OpenCV: threshold + optional 2x2 dilation, 8-connected components (the
 // outer contours of cv2.findContours), then Rapidocr3DbBox (db_geometry.cpp)
 // for the bit-exact cv2.minAreaRect / box_score_fast / pyclipper unclip /
 // second minAreaRect / float32 rounding, and TextDetector.sorted_boxes.
 void SortBoxesLikeRapidocr(std::vector<Box>& boxes) {
-  // TextDetector.sorted_boxes: sort by (y, x) of the first point, then the
-  // bubble pass that swaps neighbours on the same line (|dy| < 10) by x.
-  std::stable_sort(boxes.begin(), boxes.end(), [](const Box& a, const Box& b) {
-    if (a.p[0].y != b.p[0].y) return a.p[0].y < b.p[0].y;
-    return a.p[0].x < b.p[0].x;
-  });
+  // rapidocr 3.10 TextDetector.sorted_boxes: stable sort by the first point's
+  // y; a new line starts wherever the gap to the previous sorted y is >= 10
+  // (float32); then np.lexsort((x, line_id)), i.e. a stable sort by
+  // (line_id, x) over the y-sorted order.
+  std::stable_sort(boxes.begin(), boxes.end(),
+                   [](const Box& a, const Box& b) { return a.p[0].y < b.p[0].y; });
   const std::size_t n = boxes.size();
-  for (std::size_t i = 0; i + 1 < n; ++i) {
-    for (std::size_t j = i + 1; j-- > 0;) {
-      if (std::fabs(boxes[j + 1].p[0].y - boxes[j].p[0].y) < 10.F &&
-          boxes[j + 1].p[0].x < boxes[j].p[0].x) {
-        std::swap(boxes[j], boxes[j + 1]);
-      } else {
-        break;
-      }
-    }
-  }
+  std::vector<std::size_t> line(n, 0);
+  for (std::size_t i = 1; i < n; ++i)
+    line[i] = line[i - 1] + ((boxes[i].p[0].y - boxes[i - 1].p[0].y) >= 10.F ? 1 : 0);
+  std::vector<std::size_t> order(n);
+  for (std::size_t i = 0; i < n; ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+    if (line[a] != line[b]) return line[a] < line[b];
+    return boxes[a].p[0].x < boxes[b].p[0].x;
+  });
+  std::vector<Box> sorted;
+  sorted.reserve(n);
+  for (std::size_t i : order) sorted.push_back(boxes[i]);
+  boxes.swap(sorted);
 }
 
 std::vector<Box> DBPost(const Tensor& prob, int dst_w, int dst_h, const Options& opt,
@@ -1279,6 +1104,9 @@ struct OCR::Impl {
   // graph opt-in so one slow UMA graph cannot override those per-segment
   // decisions merely because it happens to run successfully.
   bool enable_hybrid_gpu_graph{};
+  // CPU recognizer for one page: rapidocr 3.10 crops, batching and resize.
+  std::vector<Result> RecognizeCrops(const Image& image, const std::vector<Box>& boxes,
+                                     bool use_det, bool profile_e2e);
   Impl(const std::string& d, const std::string& r, Options o)
       : det(d, o.backend), rec(r, o.backend), opt(o) {
     // Re-uploading both models' weights between every detector/recognizer
@@ -1901,6 +1729,188 @@ void OCR::SetDetectionThresholds(float det_threshold, float det_box_threshold,
   impl_->opt.det_box_threshold = det_box_threshold;
   impl_->opt.det_unclip_ratio = det_unclip_ratio;
 }
+// rapidocr 3.10 recognition front end (TextRecognizer.__call__ after
+// get_rotate_crop_image): crops sorted by w/h, consecutive groups of
+// rec_batch_num, each padded to int(48 * max(320/48, max w/h)), every crop
+// cv2.resize'd (INTER_LINEAR) to ceil(48 * w/h) and normalized in float32.
+// cv_compat reproduces OpenCV's crop and resize bit for bit, so the input
+// tensors equal 3.10's. use_det=false recognizes the whole image unrotated.
+std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vector<Box>& boxes,
+                                              bool use_det, bool profile_e2e) {
+  struct Crop { std::vector<std::uint8_t> rgb; int w{}, h{}; };
+  const std::size_t n = boxes.size();
+  std::vector<Crop> crops(use_det ? n : 0);
+  const auto crop_t0 = profile_e2e ? std::chrono::steady_clock::now()
+                                   : std::chrono::steady_clock::time_point{};
+  if (use_det) {
+    RunIndexed(n, static_cast<std::size_t>(std::max(1, opt.batch_preprocess_parallelism)),
+               [&](std::size_t i) {
+      float pts[8];
+      for (int k = 0; k < 4; ++k) {
+        pts[2 * k] = boxes[i].p[static_cast<std::size_t>(k)].x;
+        pts[2 * k + 1] = boxes[i].p[static_cast<std::size_t>(k)].y;
+      }
+      detail::cvc::RotateCropImage(image.rgb.data(), image.width, image.height, pts,
+                                   crops[i].rgb, crops[i].w, crops[i].h);
+    });
+  }
+  const auto crop_rgb = [&](std::size_t i) {
+    return use_det ? crops[i].rgb.data() : image.rgb.data();
+  };
+  const auto crop_w = [&](std::size_t i) { return use_det ? crops[i].w : image.width; };
+  const auto crop_h = [&](std::size_t i) { return use_det ? crops[i].h : image.height; };
+  std::vector<std::size_t> order(n);
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+    return crop_w(a) / static_cast<double>(crop_h(a)) < crop_w(b) / static_cast<double>(crop_h(b));
+  });
+  const int rec_h = opt.rec_height;
+  const int rec_w = rec_h * 320 / 48;
+  const std::size_t max_batch = static_cast<std::size_t>(std::max(1, opt.rec_batch_size));
+  struct Batch { int width; const std::size_t* indices; std::size_t count; };
+  std::vector<Batch> batches;
+  for (std::size_t first = 0; first < n; first += max_batch) {
+    const std::size_t count = std::min(max_batch, n - first);
+    double max_ratio = rec_w / static_cast<double>(rec_h);
+    for (std::size_t k = 0; k < count; ++k) {
+      const std::size_t i = order[first + k];
+      max_ratio = std::max(max_ratio, crop_w(i) * 1.0 / crop_h(i));
+    }
+    const int width = std::min(static_cast<int>(rec_h * max_ratio), std::max(1, opt.rec_max_width));
+    batches.push_back({width, order.data() + first, count});
+  }
+  std::array<std::array<float, 256>, 3> lut{};
+  for (std::size_t c = 0; c < 3; ++c)
+    lut[c] = detail::cvc::RecNormalizeTable(opt.rec_mean[c], opt.rec_std[c]);
+  std::vector<Result> out(n);
+  const auto recognition_parallelism = opt.backend == Backend::hybrid && hybrid_gpu_graph_state > 0
+      ? opt.hybrid_graph_parallelism : opt.rec_parallelism;
+  const auto workers = std::min<std::size_t>(batches.size(),
+      RecognitionWorkerLimit(opt.backend, recognition_parallelism));
+  const auto rec_preprocess_workers = std::max<std::size_t>(
+      1, std::size_t(std::max(1, opt.batch_preprocess_parallelism)) /
+             std::max<std::size_t>(1, workers));
+  const auto run_batch = [&](const Batch& batch) {
+    const auto rec_t0 = profile_e2e ? std::chrono::steady_clock::now()
+                                    : std::chrono::steady_clock::time_point{};
+    int inner_cap = 0;
+    if (workers >= 4 && std::getenv("PPOCR_DISABLE_INNER_PARALLELISM_CAP") == nullptr) {
+      inner_cap = 8;
+      if (const char* configured = std::getenv("PPOCR_BENCH_THREADS")) {
+        char* end = nullptr;
+        const long parsed = std::strtol(configured, &end, 10);
+        if (end != configured && *end == '\0' && parsed > 0)
+          inner_cap = std::max(2, int(parsed) / int(workers));
+      }
+    }
+    detail::kernels::InnerParallelismGuard inner_guard(inner_cap);
+    const int width = batch.width;
+    Tensor input{{static_cast<std::int64_t>(batch.count), 3, rec_h, width},
+                 std::vector<float>(batch.count * std::size_t(3) * rec_h * width, 0.F)};
+    const std::size_t stride = std::size_t(3) * rec_h * width;
+    RunIndexed(batch.count, rec_preprocess_workers, [&](std::size_t k) {
+      const std::size_t i = batch.indices[k];
+      const int w = crop_w(i), h = crop_h(i);
+      const int resized_w = detail::cvc::RecResizedWidth(w, h, rec_h, width);
+      thread_local std::vector<std::uint8_t> resized;
+      resized.resize(std::size_t(resized_w) * rec_h * 3);
+      detail::cvc::ResizeLinear8u(crop_rgb(i), w, h, std::size_t(w) * 3, 3, resized.data(),
+                                  resized_w, rec_h, std::size_t(resized_w) * 3);
+      float* const blue = input.data.data() + k * stride;
+      float* const green = blue + std::size_t(rec_h) * width;
+      float* const red = green + std::size_t(rec_h) * width;
+      for (int y = 0; y < rec_h; ++y) {
+        const std::uint8_t* rgb = resized.data() + std::size_t(y) * resized_w * 3;
+        const std::size_t row = std::size_t(y) * width;
+        for (int x = 0; x < resized_w; ++x, rgb += 3) {
+          blue[row + x] = lut[0][rgb[2]];
+          green[row + x] = lut[1][rgb[1]];
+          red[row + x] = lut[2][rgb[0]];
+        }
+      }
+    });
+    std::unordered_map<std::string, Tensor> rec_input;
+    rec_input.emplace("x", std::move(input));
+    const auto rec_t1 = profile_e2e ? std::chrono::steady_clock::now() : rec_t0;
+    auto logits = rec.RunCtcTop1(std::move(rec_input));
+    if (profile_e2e) {
+      std::cerr << "e2e_ms rec_pre="
+                << std::chrono::duration<double, std::milli>(rec_t1 - rec_t0).count()
+                << " rec_run="
+                << std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - rec_t1).count()
+                << " width=" << width << '\n';
+    }
+    if (logits.batches != static_cast<int>(batch.count)) Fail("recognizer logits not found");
+    for (std::size_t k = 0; k < batch.count; ++k) {
+      auto [text, confidence] = DecodeCTC(logits, k, dict);
+      const auto result_index = batch.indices[k];
+      out[result_index] = MakeResult(boxes[result_index], std::move(text), confidence);
+    }
+  };
+  // Longest-first packing onto the IndexExecutor's contiguous blocks (see
+  // the scheduling note in RecognizeBatch); outputs are indexed, so the
+  // decoded text does not depend on this order.
+  if (workers > 1 && batches.size() > workers &&
+      std::getenv("PPOCR_DISABLE_REC_LPT") == nullptr) {
+    const int count = static_cast<int>(batches.size());
+    const int active = static_cast<int>(workers);
+    const int block = (count + active - 1) / active;
+    std::vector<int> idx(static_cast<std::size_t>(count));
+    std::iota(idx.begin(), idx.end(), 0);
+    const auto cost = [&](int b) {
+      const auto& batch = batches[static_cast<std::size_t>(b)];
+      return batch.width * static_cast<int>(batch.count);
+    };
+    std::stable_sort(idx.begin(), idx.end(), [&](int a, int b) { return cost(a) > cost(b); });
+    std::vector<int> load(static_cast<std::size_t>(active)), fill(static_cast<std::size_t>(active));
+    std::vector<Batch> balanced(batches.size());
+    for (int index : idx) {
+      int best = 0;
+      bool found = false;
+      for (int worker = 0; worker < active; ++worker) {
+        const int cap = std::min(block, count - worker * block);
+        if (cap <= 0 || fill[static_cast<std::size_t>(worker)] >= cap) continue;
+        if (!found || load[static_cast<std::size_t>(worker)] < load[static_cast<std::size_t>(best)]) {
+          best = worker;
+          found = true;
+        }
+      }
+      const int slot = best * block + fill[static_cast<std::size_t>(best)];
+      balanced[static_cast<std::size_t>(slot)] = batches[static_cast<std::size_t>(index)];
+      load[static_cast<std::size_t>(best)] += cost(index);
+      ++fill[static_cast<std::size_t>(best)];
+    }
+    batches.swap(balanced);
+  }
+  const auto rec_begin = profile_e2e ? std::chrono::steady_clock::now()
+                                     : std::chrono::steady_clock::time_point{};
+  if (workers <= 1) {
+    for (const auto& batch : batches) run_batch(batch);
+  } else {
+    std::exception_ptr failure;
+    std::mutex failure_mutex;
+    IndexExecutor().Run(static_cast<int>(batches.size()), static_cast<int>(workers),
+                        [&](int first, int last) {
+      try {
+        for (int task = first; task < last; ++task)
+          run_batch(batches[static_cast<std::size_t>(task)]);
+      } catch (...) {
+        std::lock_guard lock(failure_mutex);
+        if (!failure) failure = std::current_exception();
+      }
+    });
+    if (failure) std::rethrow_exception(failure);
+  }
+  if (profile_e2e) {
+    const auto now = std::chrono::steady_clock::now();
+    std::cerr << "e2e_ms crop=" << std::chrono::duration<double, std::milli>(rec_begin - crop_t0).count()
+              << " rec=" << std::chrono::duration<double, std::milli>(now - rec_begin).count()
+              << " boxes=" << n << " rec_batches=" << batches.size() << '\n';
+  }
+  return out;
+}
+
 std::vector<Result> OCR::Recognize(const Image& image) const { return Run(image, true, true); }
 
 std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) const {
@@ -2067,220 +2077,7 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) con
     ReclaimHostHeap();
     return detected;
   }
-  // Keep each same-width crop group contiguous. The recognizer used to build
-  // a short temporary `vector<CropBounds>` for every batch; dense pages then
-  // paid an allocation/move sequence for every 1--4 crops. Storing crop and
-  // output-index arrays once lets every batch pass a zero-copy span to input
-  // preprocessing while retaining the same width bucketing and output order.
-  // The recognizer contains transformer attention, so right padding is not
-  // semantically inert: a shorter crop packed beside a wider one can retain
-  // its decoded text but receive different CTC confidence. Group by the
-  // exact natural width to preserve the public Recognize() contract while
-  // still coalescing repeated-width crops into genuine NCHW batches.
-  // Tiny CNN+CTC may pack a page to one padded width (`PPOCR_ENABLE_REC_PAD_MAX`)
-  // so two crops share one NCHW batch and the full SIMD pool.
-  struct Bucket { std::vector<std::size_t> indices; std::vector<CropBounds> crops; };
-  std::map<int, Bucket> buckets;
-  int page_pad_width = 0;
-  const bool pad_max = RecPadToPageMax();
-  if (pad_max) {
-    for (std::size_t i = 0; i < boxes.size(); ++i)
-      page_pad_width = std::max(page_pad_width, RecInputWidth(CropBoundsFor(image, boxes[i]), impl_->opt));
-  }
-  // Round natural widths up to a multiple of 32 so nearby lines share one
-  // NCHW batch. Right columns stay zero. 64 changed a decoded line on the
-  // gating page; 32 did not. The same packing slowed the 16-thread NEON
-  // page, so AArch64 keeps exact widths unless PPOCR_REC_WIDTH_ALIGN is set.
-  // `PPOCR_DISABLE_REC_WIDTH_ALIGN` restores exact widths.
-  static const int width_align = [] {
-    if (std::getenv("PPOCR_DISABLE_REC_WIDTH_ALIGN") != nullptr) return 0;
-    const char* configured = std::getenv("PPOCR_REC_WIDTH_ALIGN");
-    if (configured && *configured) {
-      char* end = nullptr;
-      const long parsed = std::strtol(configured, &end, 10);
-      if (end != configured && *end == '\0' && parsed >= 0 && parsed <= 4096)
-        return static_cast<int>(parsed);
-    }
-#if defined(__aarch64__)
-    return 0;
-#else
-    return 32;
-#endif
-  }();
-  for(std::size_t i=0;i<boxes.size();++i) {
-    const auto crop=CropBoundsFor(image,boxes[i]);
-    const int natural_width = RecInputWidth(crop,impl_->opt);
-    int bucket_width = natural_width;
-    if (!pad_max && width_align > 1 && natural_width < impl_->opt.rec_max_width) {
-      bucket_width = std::min((natural_width + width_align - 1) / width_align * width_align,
-                              impl_->opt.rec_max_width);
-    }
-    // use_det=false follows rapidocr 3.x TextRecognizer: the line is padded
-    // on the right to at least rec_img_shape width (320 for height 48).
-    if (!use_det) {
-      bucket_width = std::max(bucket_width,
-                              std::min(impl_->opt.rec_max_width, impl_->opt.rec_height * 320 / 48));
-    }
-    auto& bucket = buckets[pad_max ? page_pad_width : bucket_width];
-    bucket.indices.push_back(i);
-    bucket.crops.push_back(crop);
-  }
-  std::vector<Result> out(boxes.size());
-  const int max_batch=std::max(1,impl_->opt.rec_batch_size);
-  struct Batch { int width; const CropBounds* crops; const std::size_t* indices; std::size_t count; };
-  std::vector<Batch> batches;
-  for(auto& [width,bucket]:buckets) {
-    for(std::size_t first=0;first<bucket.crops.size();first+=max_batch) {
-      const std::size_t count=std::min<std::size_t>(max_batch,bucket.crops.size()-first);
-      batches.push_back({width,bucket.crops.data()+first,bucket.indices.data()+first,count});
-    }
-  }
-  // Keep width order deterministic.  A largest-first outer scheduling trial
-  // was retained only long enough to A/B on dense pages: this graph's shared
-  // SIMD pool makes the ordinary width order faster and less variable on the
-  // target host, so FIFO construction is the production policy.
-  const auto recognition_parallelism = impl_->opt.backend == Backend::hybrid &&
-      impl_->hybrid_gpu_graph_state > 0
-      ? impl_->opt.hybrid_graph_parallelism : impl_->opt.rec_parallelism;
-  const auto workers=std::min<std::size_t>(batches.size(),
-      RecognitionWorkerLimit(impl_->opt.backend, recognition_parallelism));
-  // Multiple same-width graph batches may already run concurrently below.
-  // Divide the front-end resize budget between them instead of multiplying
-  // CPU threads on dense pages. This preserves the one-Vulkan-dispatch-per-
-  // NCHW-batch property while reducing the time before that submission.
-  const auto rec_preprocess_workers = std::max<std::size_t>(
-      1, std::size_t(std::max(1, impl_->opt.batch_preprocess_parallelism)) /
-             std::max<std::size_t>(1, workers));
-  int max_rec_width = 0;
-  for (const auto& batch : batches)
-    max_rec_width = std::max(max_rec_width, batch.width);
-  const auto run_batch=[&](const Batch& batch) {
-    const auto rec_t0 = profile_e2e ? std::chrono::steady_clock::now()
-                                    : std::chrono::steady_clock::time_point{};
-    std::unordered_map<std::string,Tensor> rec_input;
-    Tensor rec_stem;
-    std::string rec_stem_name;
-    // Two recognizer crops used to stack two 16-thread SIMD pools (32-way
-    // oversubscribe on the gating 16-thread budget). Cap each crop's inner
-    // ParallelFor so the pair stays within PPOCR_BENCH_THREADS.
-    int inner_cap = 0;
-    // Two-crop tiny pages want the full SIMD pool on each graph; stacking
-    // 8+8 was slower than 16+overflow on the gating pair. Cap only when
-    // many rec batches would otherwise multiply the worker budget.
-    if (workers >= 4 && std::getenv("PPOCR_DISABLE_INNER_PARALLELISM_CAP") == nullptr) {
-      inner_cap = 8;
-      if (const char* configured = std::getenv("PPOCR_BENCH_THREADS")) {
-        char* end = nullptr;
-        const long parsed = std::strtol(configured, &end, 10);
-        if (end != configured && *end == '\0' && parsed > 0)
-          inner_cap = std::max(2, int(parsed) / int(workers));
-      }
-    }
-    detail::kernels::InnerParallelismGuard inner_guard(inner_cap);
-    // Two rec crops share one Vulkan queue. GPU the wall (widest) crop only
-    // so the other crop stays on CPU SIMD without serializing on the fence.
-    if (batch.count == 1 && batch.width == max_rec_width &&
-        TryHybridVulkanRecRgbConv0(image, batch.crops[0], impl_->opt, impl_->rec, rec_stem,
-                                   rec_stem_name)) {
-      rec_input.emplace(std::move(rec_stem_name), std::move(rec_stem));
-      rec_input.emplace("x", Tensor{{1}, {0.F}});
-    } else {
-      rec_input.emplace("x",RecInputBatch(image,batch.crops,batch.count,batch.width,impl_->opt,
-                                            rec_preprocess_workers));
-    }
-    const auto rec_t1 = profile_e2e ? std::chrono::steady_clock::now() : rec_t0;
-    auto logits=impl_->rec.RunCtcTop1(std::move(rec_input));
-    if (profile_e2e) {
-      std::cerr << "e2e_ms rec_pre="
-                << std::chrono::duration<double, std::milli>(rec_t1 - rec_t0).count()
-                << " rec_run="
-                << std::chrono::duration<double, std::milli>(
-                       std::chrono::steady_clock::now() - rec_t1).count()
-                << " width=" << batch.width << '\n';
-    }
-    if(logits.batches!=static_cast<int>(batch.count)) Fail("recognizer logits not found");
-    for(std::size_t i=0;i<batch.count;++i) {
-      auto [text,confidence]=DecodeCTC(logits,i,impl_->dict);
-      const auto result_index=batch.indices[i];
-      if (const auto trace_index = TraceOcrCropResult(); trace_index && result_index == *trace_index) {
-        const auto offset = i * static_cast<std::size_t>(logits.steps);
-        std::cerr << "CPU trace CTC result=" << result_index << " rows=";
-        for (int step = 0; step < logits.steps; ++step) {
-          if (step) std::cerr << ',';
-          std::cerr << logits.indices[offset + static_cast<std::size_t>(step)] << '@'
-                    << logits.probabilities[offset + static_cast<std::size_t>(step)];
-        }
-        std::cerr << '\n';
-      }
-      out[result_index]=MakeResult(boxes[result_index],std::move(text),confidence);
-    }
-  };
-  // Width-sorted batches put every wide crop on the last worker. Each crop
-  // already owns a worker, and the inner SIMD pool runs serially there, so
-  // the page wall is the heaviest contiguous slice. Pack longest batches
-  // into the same block sizes IndexExecutor uses. Output slots stay indexed,
-  // so the decoded text does not depend on this order.
-  if (workers > 1 && batches.size() > workers &&
-      std::getenv("PPOCR_DISABLE_REC_LPT") == nullptr) {
-    const int n = static_cast<int>(batches.size());
-    const int active = static_cast<int>(workers);
-    const int block = (n + active - 1) / active;
-    std::vector<int> order(static_cast<std::size_t>(n));
-    std::iota(order.begin(), order.end(), 0);
-    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {
-      const auto& left = batches[static_cast<std::size_t>(a)];
-      const auto& right = batches[static_cast<std::size_t>(b)];
-      return left.width * static_cast<int>(left.count) >
-             right.width * static_cast<int>(right.count);
-    });
-    std::vector<int> load(static_cast<std::size_t>(active));
-    std::vector<int> fill(static_cast<std::size_t>(active));
-    std::vector<Batch> balanced(batches.size());
-    for (int index : order) {
-      int best = 0;
-      bool found = false;
-      for (int worker = 0; worker < active; ++worker) {
-        const int cap = std::min(block, n - worker * block);
-        if (cap <= 0 || fill[static_cast<std::size_t>(worker)] >= cap) continue;
-        if (!found || load[static_cast<std::size_t>(worker)] < load[static_cast<std::size_t>(best)]) {
-          best = worker;
-          found = true;
-        }
-      }
-      const int slot = best * block + fill[static_cast<std::size_t>(best)];
-      balanced[static_cast<std::size_t>(slot)] = batches[static_cast<std::size_t>(index)];
-      load[static_cast<std::size_t>(best)] +=
-          batches[static_cast<std::size_t>(index)].width *
-          static_cast<int>(batches[static_cast<std::size_t>(index)].count);
-      ++fill[static_cast<std::size_t>(best)];
-    }
-    batches.swap(balanced);
-  }
-  const auto rec_begin = profile_e2e ? std::chrono::steady_clock::now()
-                                     : std::chrono::steady_clock::time_point{};
-  if(workers<=1) {
-    for(const auto& batch:batches) run_batch(batch);
-  } else {
-    std::exception_ptr failure;
-    std::mutex failure_mutex;
-    IndexExecutor().Run(static_cast<int>(batches.size()), static_cast<int>(workers),
-                        [&](int first, int last) {
-      try {
-        for (int task = first; task < last; ++task) run_batch(batches[static_cast<std::size_t>(task)]);
-      } catch (...) {
-        std::lock_guard lock(failure_mutex);
-        if (!failure) failure = std::current_exception();
-      }
-    });
-    if (failure) std::rethrow_exception(failure);
-  }
-  if (profile_e2e) {
-    std::cerr << "e2e_ms rec="
-              << std::chrono::duration<double, std::milli>(
-                     std::chrono::steady_clock::now() - rec_begin).count()
-              << " boxes=" << boxes.size() << " rec_batches=" << batches.size()
-              << '\n';
-  }
+  auto out = impl_->RecognizeCrops(image, boxes, use_det, profile_e2e);
   ReclaimHostHeap();
   return out;
 }
@@ -2473,7 +2270,6 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
     Tensor input{{static_cast<std::int64_t>(batch.count), 3, batch.height, batch.width},
                  std::vector<float>(batch.count * std::size_t(3) * batch.height * batch.width)};
     const auto stride = std::size_t(3) * batch.height * batch.width;
-    const auto det_norm = ChannelNormFrom(impl_->opt.det_mean, impl_->opt.det_std);
     // There is only one detector graph dispatch for a same-shape NCHW
     // batch.  Parallelize the independent resizes before it; otherwise the
     // GPU (and the CPU's SIMD batch kernels) wait for a serial front end on
@@ -2483,12 +2279,8 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
                 std::min(batch.count, preprocess_workers_per_detector_batch),
                 [&](std::size_t item) {
       const auto page = batch.pages[item];
-      WriteResizeRegionToNchw(input.data.data() + item * stride, images[page], 0, 0,
-                              images[page].width, images[page].height, batch.width, batch.height,
-                              [&](int channel, float value) {
-                                const auto index = static_cast<std::size_t>(channel);
-                                return value * det_norm.scale[index] + det_norm.offset[index];
-                              });
+      WriteDetInput(input.data.data() + item * stride, images[page], batch.width, batch.height,
+                    impl_->opt);
     });
     std::unordered_map<std::string, Tensor> det_input;
     det_input.emplace("x", std::move(input));
@@ -2510,77 +2302,11 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
   };
   run_indexed(detector_batches.size(), workers, detect_batch);
 
-  struct GlobalCrop {
-    std::size_t page_index;
-    std::size_t result_index;
-    CropBounds crop;
-  };
-  // Transformer attention is sensitive to right padding. Group crops by
-  // exact resized width rather than merely a padded bucket width, so a crop
-  // evaluated through RecognizeBatch has exactly the same tensor shape as the
-  // corresponding standalone inference. This still creates real NCHW batches
-  // for repeated widths without silently changing crop resampling.
-  struct Bucket { std::vector<GlobalCrop> crops; };
-  std::map<int, Bucket> buckets;
+  // Recognition follows Recognize() page by page (rapidocr 3.10 batching is
+  // per page), so every nested result equals the standalone call.
   for (std::size_t page = 0; page < images.size(); ++page) {
-    output[page].resize(page_boxes[page].size());
-    for (std::size_t index = 0; index < page_boxes[page].size(); ++index) {
-      const auto crop = CropBoundsFor(images[page], page_boxes[page][index]);
-      const int natural_width = RecInputWidth(crop, impl_->opt);
-      buckets[natural_width].crops.push_back({page, index, crop});
-    }
+    output[page] = impl_->RecognizeCrops(images[page], page_boxes[page], true, false);
   }
-
-  // Keep CPU/Hybrid batch OCR numerically equivalent to per-page inference.
-  // The current transformer export has N>1 attention sensitivity; GPU-only
-  // uses its separately validated device batch executor above.
-  const int max_batch = impl_->opt.backend == Backend::gpu_only
-      ? std::max(1, impl_->opt.rec_batch_size) : 1;
-  struct Batch { int width; const GlobalCrop* crops; std::size_t count; };
-  std::vector<Batch> batches;
-  for (auto& [width, bucket] : buckets) {
-    for (std::size_t first = 0; first < bucket.crops.size(); first += max_batch) {
-      const auto count = std::min<std::size_t>(max_batch, bucket.crops.size() - first);
-      batches.push_back({width, bucket.crops.data() + first, count});
-    }
-  }
-  const auto requested_rec_parallelism = impl_->opt.backend == Backend::hybrid &&
-      impl_->hybrid_gpu_graph_state > 0
-      ? impl_->opt.hybrid_graph_parallelism : impl_->opt.rec_parallelism;
-  const auto rec_workers = std::min<std::size_t>(batches.size(),
-      RecognitionWorkerLimit(impl_->opt.backend, requested_rec_parallelism));
-  const auto rec_preprocess_workers = std::max<std::size_t>(
-      1, batch_preprocess_parallelism / std::max<std::size_t>(1, rec_workers));
-  const auto run_batch = [&](std::size_t batch_index) {
-    const auto& batch = batches[batch_index];
-    Tensor input{{static_cast<std::int64_t>(batch.count), 3, impl_->opt.rec_height, batch.width},
-                 std::vector<float>(batch.count * std::size_t(3) * impl_->opt.rec_height *
-                                    batch.width, 0.F)};
-    const std::size_t stride = std::size_t(3) * impl_->opt.rec_height * batch.width;
-    const auto rec_norm = ChannelNormFrom(impl_->opt.rec_mean, impl_->opt.rec_std);
-    run_indexed(batch.count, std::min(batch.count, rec_preprocess_workers),
-                [&](std::size_t i) {
-      const auto& item = batch.crops[i];
-      WriteResizeRegionToNchw(input.data.data() + i * stride, images[item.page_index],
-                              item.crop.x, item.crop.y, item.crop.width, item.crop.height,
-                              batch.width, impl_->opt.rec_height,
-                              [&rec_norm](int channel, float value) {
-                                const auto index = static_cast<std::size_t>(channel);
-                                return value * rec_norm.scale[index] + rec_norm.offset[index];
-                              }, batch.width);
-    });
-    std::unordered_map<std::string, Tensor> rec_input;
-    rec_input.emplace("x", std::move(input));
-    auto logits = impl_->rec.RunCtcTop1(std::move(rec_input));
-    if (logits.batches != static_cast<int>(batch.count)) Fail("recognizer logits not found");
-    for (std::size_t i = 0; i < batch.count; ++i) {
-      const auto& item = batch.crops[i];
-      auto [text, confidence] = DecodeCTC(logits, i, impl_->dict);
-      output[item.page_index][item.result_index] =
-          MakeResult(page_boxes[item.page_index][item.result_index], std::move(text), confidence);
-    }
-  };
-  run_indexed(batches.size(), rec_workers, run_batch);
   ReclaimHostHeap();
   return output;
 }

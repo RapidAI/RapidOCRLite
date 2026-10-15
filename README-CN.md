@@ -106,34 +106,34 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 
 | 数据集 | 指标 | rapidocr 3.10.0 | RapidOCRLite |
 | --- | --- | ---: | ---: |
-| text_det | Precision | 0.8540 | 0.8561 |
-| text_det | Recall | 0.8445 | 0.8457 |
-| text_det | H-mean | 0.8492 | 0.8509 |
-| text_det | 速度（秒/张，3 次中位数） | 0.4812 | 0.3602 |
-| text_rec | Exact Match | 0.8419 | 0.8355 |
-| text_rec | Char Match | 0.9515 | 0.9510 |
-| text_rec | 速度（秒/张，3 次中位数） | 0.0182 | 0.0180 |
+| text_det | Precision | 0.8540 | 0.8540 |
+| text_det | Recall | 0.8445 | 0.8445 |
+| text_det | H-mean | 0.8492 | 0.8492 |
+| text_det | 速度（秒/张，5 次中位数） | 0.3040 | 0.1356 |
+| text_rec | Exact Match | 0.8419 | 0.8419 |
+| text_rec | Char Match | 0.9515 | 0.9515 |
+| text_rec | 速度（秒/张，5 次中位数） | 0.0066 | 0.0071 |
 
-各次运行（秒/张）：3.10.0 检测 0.4812 / 0.4998 / 0.3544，识别 0.0193 / 0.0156 / 0.0182；RapidOCRLite 检测 0.3602 / 0.3048 / 0.4078，识别 0.0180 / 0.0129 / 0.0208。每次指标都相同。text_rec 上 310 行中有 9 行与 3.x 解码不同，多为长行，原因是双线性缩放与 OpenCV 有细微差别。检测后处理与 3.x 完全一致（移植了 `cv2.minAreaRect` / `cv2.fillPoly` 的运算，并通过内置的 Clipper 6.4.2 复现 pyclipper 的 unclip）：输入同一张概率图时，212 页的框全部相同。剩余的检测框差异（212 页中 131 页，多为 1–2 像素）来自概率图本身；此次改动后重新测了检测指标，速度行未重测（后处理耗时不变）。
+RapidOCRLite 现在在这两个数据集上与 3.10 逐位一致：除检测后处理（移植 `cv2.minAreaRect` / `cv2.fillPoly` 运算，内置 Clipper 6.4.2 复现 pyclipper unclip）和 `sorted_boxes` 外，检测输入缩放、文本行裁剪（`cv2.getPerspectiveTransform` + `warpPerspective` INTER_CUBIC / BORDER_REPLICATE，含各平台 float/fp16 双三次运算）以及识别缩放/填充/归一化（`cv2.resize` INTER_LINEAR 定点；Apple arm64 上为 OpenCV 实际使用的 KleidiCV 路径）均已移植（`src/cv_compat.cpp`）。x86（AVX-512 与 AVX2，正反两种顺序）和 M4 上：整页文本 0/212 不同，识别 0/310 不同，指标完全相同；检测框 x86 上 211/212 页相同（1 页概率图不同），M4 上 212/212。剩余差异只来自网络计算本身（Lite 内核与 onnxruntime）。
 
 
 #### CPU 速度对比 rapidocr 3.10.0（PP-OCRv6 small，秒/张，越小越好）
 
-数据集与设置同上；`full` 为 212 张检测图上的检测+识别（`use_cls=False`）。交替运行，取 5 次中位数。x86 机器测试时有其他任务（load 6–13），其数字仅供参考；M4 各行在空闲机器上重新测量。212 页与 310 行的文本和框与上一提交完全一致。
+数据集与设置同上；`full` 为 212 张检测图上的检测+识别（`use_cls=False`）。交替运行，取 5 次中位数。x86 机器测试时有其他任务（load 6–13），其数字仅供参考；M4 各行在空闲机器上重新测量。文本和框现与 rapidocr 3.10 一致（见上）。逐位复现 3.10 的识别分批（按宽高比排序、每批 6 行、填充到最宽行、最小宽度 320）相比之前的按行分桶，`full` 约慢 10–25%，仅识别也略慢。
 
 | 机器 | 模式 | rapidocr 3.10.0 | RapidOCRLite | 对比 |
 | --- | --- | ---: | ---: | ---: |
-| x86 8 vCPU，AVX-512 | 仅检测 | 0.3215 | 0.1515 | 快 2.1 倍 |
-| x86 8 vCPU，AVX-512 | 仅识别 | 0.0078 | 0.0097 | 慢 1.24 倍 |
-| x86 8 vCPU，AVX-512 | 整页 | 0.3909 | 0.2209 | 快 1.8 倍 |
-| x86，`PPOCR_FORCE_ISA=avx2` | 仅检测 | 0.3215 | 0.1668 | 快 1.9 倍 |
-| x86，`PPOCR_FORCE_ISA=avx2` | 仅识别 | 0.0078 | 0.0109 | 慢 1.40 倍 |
-| x86，`PPOCR_FORCE_ISA=avx2` | 整页 | 0.3909 | 0.2503 | 快 1.6 倍 |
-| Mac mini M4（CPU，Accelerate） | 仅检测 | 0.1121 | 0.0727 | 快 1.54 倍 |
-| Mac mini M4（CPU，Accelerate） | 仅识别 | 0.00570 | 0.00500 | 快 1.14 倍 |
-| Mac mini M4（CPU，Accelerate） | 整页 | 0.2973 | 0.0974 | 快 3.05 倍 |
+| x86 8 vCPU，AVX-512 | 仅检测 | 0.3040 | 0.1356 | 快 2.2 倍 |
+| x86 8 vCPU，AVX-512 | 仅识别 | 0.0066 | 0.0071 | 慢 1.08 倍 |
+| x86 8 vCPU，AVX-512 | 整页 | 0.4200 | 0.2115 | 快 2.0 倍 |
+| x86，`PPOCR_FORCE_ISA=avx2` | 仅检测 | 0.3040 | 0.1384 | 快 2.2 倍 |
+| x86，`PPOCR_FORCE_ISA=avx2` | 仅识别 | 0.0066 | 0.0093 | 慢 1.41 倍 |
+| x86，`PPOCR_FORCE_ISA=avx2` | 整页 | 0.4200 | 0.2478 | 快 1.7 倍 |
+| Mac mini M4（CPU，Accelerate） | 仅检测 | 0.1117 | 0.0722 | 快 1.55 倍 |
+| Mac mini M4（CPU，Accelerate） | 仅识别 | 0.00566 | 0.00504 | 快 1.12 倍 |
+| Mac mini M4（CPU，Accelerate） | 整页 | 0.2970 | 0.1241 | 快 2.39 倍 |
 
-3.x 使用 onnxruntime 1.31.0，在 M4 上用 SME 矩阵单元做 GEMM；RapidOCRLite 通过 Accelerate 使用矩阵单元（`PPOCR_DISABLE_ACCELERATE=1` 回退到 NEON）。M4 各行：提交 eb9753d，机器无其他任务，交替运行取 5 次中位数。x86 上单行仅识别仍大致持平（AVX-512）或更慢（AVX2）；x86 各行来自 b9f3866，测试时机器有负载。
+3.x 使用 onnxruntime 1.31.0，在 M4 上用 SME 矩阵单元做 GEMM；RapidOCRLite 通过 Accelerate 使用矩阵单元（`PPOCR_DISABLE_ACCELERATE=1` 回退到 NEON）。M4 各行：本提交，机器无其他任务，交替运行取 5 次中位数。x86 上单行仅识别仍大致持平（AVX-512）或更慢（AVX2）；x86 各行来自本提交，测试时机器有负载（load 6–10）。
 
 ### 🛠️ 安装
 

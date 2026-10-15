@@ -47,8 +47,22 @@ def _resize_to_ratio(img: np.ndarray, side: float, grow: bool) -> Tuple[np.ndarr
         raise ResizeImgError("resize_w or resize_h is less than or equal to 0")
     if resize_h == height and resize_w == width:
         return img, 1.0, 1.0
-    resized = np.asarray(Image.fromarray(img).resize((resize_w, resize_h), Image.BILINEAR))
+    resized = _cv_resize(img, resize_w, resize_h)
     return resized, height / resize_h, width / resize_w
+
+
+def _cv_resize(img: np.ndarray, width: int, height: int) -> np.ndarray:
+    """cv2.resize INTER_LINEAR as 3.x does; the native port is bit-exact."""
+
+    try:
+        from .._native import resize_linear_rgb
+
+        out = resize_linear_rgb(img, width, height)
+    except (ImportError, OSError):
+        out = None
+    if out is not None:
+        return out
+    return np.asarray(Image.fromarray(img).resize((width, height), Image.BILINEAR))
 
 
 def apply_vertical_padding(

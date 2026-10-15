@@ -106,34 +106,34 @@ Machine: shared 8 vCPU Intel Xeon (family 6, model 207, KVM) with AVX-512, Pytho
 
 | Dataset | Metric | rapidocr 3.10.0 | RapidOCRLite |
 | --- | --- | ---: | ---: |
-| text_det | Precision | 0.8540 | 0.8561 |
-| text_det | Recall | 0.8445 | 0.8457 |
-| text_det | H-mean | 0.8492 | 0.8509 |
-| text_det | Speed (s/img, median of 3) | 0.4812 | 0.3602 |
-| text_rec | Exact Match | 0.8419 | 0.8355 |
-| text_rec | Char Match | 0.9515 | 0.9510 |
-| text_rec | Speed (s/img, median of 3) | 0.0182 | 0.0180 |
+| text_det | Precision | 0.8540 | 0.8540 |
+| text_det | Recall | 0.8445 | 0.8445 |
+| text_det | H-mean | 0.8492 | 0.8492 |
+| text_det | Speed (s/img, median of 5) | 0.3040 | 0.1356 |
+| text_rec | Exact Match | 0.8419 | 0.8419 |
+| text_rec | Char Match | 0.9515 | 0.9515 |
+| text_rec | Speed (s/img, median of 5) | 0.0066 | 0.0071 |
 
-Runs (s/img): 3.10.0 det 0.4812 / 0.4998 / 0.3544, rec 0.0193 / 0.0156 / 0.0182; RapidOCRLite det 0.3602 / 0.3048 / 0.4078, rec 0.0180 / 0.0129 / 0.0208. Metrics were identical in every run. On text_rec, 9 of 310 lines decode differently from 3.x, mostly long lines where the bilinear resize differs slightly from OpenCV's. Detection post-processing reproduces 3.x exactly (ported `cv2.minAreaRect` / `cv2.fillPoly` arithmetic and the pyclipper unclip via vendored Clipper 6.4.2): fed the same probability map, all 212 pages give identical boxes. The remaining det box differences (131 of 212 pages, mostly 1–2 px) come from the probability map itself; detection metrics were re-measured after this change, speed rows were not (post-processing time is unchanged).
+RapidOCRLite now reproduces 3.10 bit for bit on these sets: besides the DB post-processing (ported `cv2.minAreaRect` / `cv2.fillPoly` arithmetic, pyclipper unclip via vendored Clipper 6.4.2) and `sorted_boxes`, the det input resize, the text-line crop (`cv2.getPerspectiveTransform` + `warpPerspective` INTER_CUBIC / BORDER_REPLICATE, including the per-platform float/fp16 bicubic arithmetic) and the rec resize/padding/normalisation (`cv2.resize` INTER_LINEAR fixed point; on Apple arm64 the KleidiCV path OpenCV uses there) are ported (`src/cv_compat.cpp`). Result on x86 (AVX-512 and AVX2, both run orders) and M4: 0/212 full-page text differences, 0/310 rec differences, identical metrics; det boxes identical on 211/212 pages on x86 (one page differs in the probability map) and 212/212 on M4. The remaining source of difference is the network arithmetic itself (Lite kernels vs onnxruntime).
 
 
 #### CPU speed vs rapidocr 3.10.0 (PP-OCRv6 small, s/img, lower is better)
 
-Same SWHL sets and settings as above; `full` is det+rec on the 212 det images (`use_cls=False`). Interleaved runs, median of 5. The x86 host was shared with other jobs (load 6–13), so treat its numbers as indicative; the M4 rows were re-measured on the idle machine. Texts and boxes are identical to the previous commit on all 212 pages and 310 lines.
+Same SWHL sets and settings as above; `full` is det+rec on the 212 det images (`use_cls=False`). Interleaved runs, median of 5. The x86 host was shared with other jobs (load 6–13), so treat its numbers as indicative; the M4 rows were re-measured on the idle machine. Texts and boxes now match rapidocr 3.10 (see above). Exact rec batching (3.10's width-sorted batches of 6, padded to the widest line, minimum width 320) costs about 10–25% on `full` and some rec-only time compared with the previous per-line bucketing.
 
 | Host | Mode | rapidocr 3.10.0 | RapidOCRLite | Lite vs 3.x |
 | --- | --- | ---: | ---: | ---: |
-| x86 8 vCPU, AVX-512 | det-only | 0.3215 | 0.1515 | 2.1× faster |
-| x86 8 vCPU, AVX-512 | rec-only | 0.0078 | 0.0097 | 1.24× slower |
-| x86 8 vCPU, AVX-512 | full page | 0.3909 | 0.2209 | 1.8× faster |
-| x86, `PPOCR_FORCE_ISA=avx2` | det-only | 0.3215 | 0.1668 | 1.9× faster |
-| x86, `PPOCR_FORCE_ISA=avx2` | rec-only | 0.0078 | 0.0109 | 1.40× slower |
-| x86, `PPOCR_FORCE_ISA=avx2` | full page | 0.3909 | 0.2503 | 1.6× faster |
-| Mac mini M4 (CPU, Accelerate) | det-only | 0.1121 | 0.0727 | 1.54× faster |
-| Mac mini M4 (CPU, Accelerate) | rec-only | 0.00570 | 0.00500 | 1.14× faster |
-| Mac mini M4 (CPU, Accelerate) | full page | 0.2973 | 0.0974 | 3.05× faster |
+| x86 8 vCPU, AVX-512 | det-only | 0.3040 | 0.1356 | 2.2× faster |
+| x86 8 vCPU, AVX-512 | rec-only | 0.0066 | 0.0071 | 1.08× slower |
+| x86 8 vCPU, AVX-512 | full page | 0.4200 | 0.2115 | 2.0× faster |
+| x86, `PPOCR_FORCE_ISA=avx2` | det-only | 0.3040 | 0.1384 | 2.2× faster |
+| x86, `PPOCR_FORCE_ISA=avx2` | rec-only | 0.0066 | 0.0093 | 1.41× slower |
+| x86, `PPOCR_FORCE_ISA=avx2` | full page | 0.4200 | 0.2478 | 1.7× faster |
+| Mac mini M4 (CPU, Accelerate) | det-only | 0.1117 | 0.0722 | 1.55× faster |
+| Mac mini M4 (CPU, Accelerate) | rec-only | 0.00566 | 0.00504 | 1.12× faster |
+| Mac mini M4 (CPU, Accelerate) | full page | 0.2970 | 0.1241 | 2.39× faster |
 
-3.x uses onnxruntime 1.31.0, which on M4 runs its GEMMs on the SME matrix unit; RapidOCRLite reaches the matrix unit through Accelerate (`PPOCR_DISABLE_ACCELERATE=1` falls back to NEON). M4 rows: commit eb9753d, otherwise idle machine, interleaved median of 5. On x86, single-line rec-only is still about even (AVX-512) or slower (AVX2); x86 rows are from b9f3866 on a loaded host.
+3.x uses onnxruntime 1.31.0, which on M4 runs its GEMMs on the SME matrix unit; RapidOCRLite reaches the matrix unit through Accelerate (`PPOCR_DISABLE_ACCELERATE=1` falls back to NEON). M4 rows: this commit, otherwise idle machine, interleaved median of 5. On x86, single-line rec-only is still about even (AVX-512) or slower (AVX2); x86 rows are from this commit on a loaded host (load 6–10).
 
 ### 🛠️ Installation
 

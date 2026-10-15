@@ -153,6 +153,11 @@ PPOCR_API int ppocr_load_ppm(const char* path, ppocr_image_buffer* image);
 PPOCR_API void ppocr_image_free(ppocr_image_buffer* image);
 
 PPOCR_API void ppocr_query_backend_info(ppocr_backend_info* info);
+/* cv2.resize(src, (dst_width, dst_height)) with INTER_LINEAR on a packed
+   3-channel 8-bit image, bit-exact with the OpenCV 5.0 wheels rapidocr 3.10
+   uses. Returns 0 on success, nonzero for invalid arguments. */
+PPOCR_API int ppocr_resize_linear_rgb(const unsigned char* src, int src_width, int src_height,
+                                      unsigned char* dst, int dst_width, int dst_height);
 /* Pins the Vulkan physical device before the first initialization.
    index < 0 leaves the current choice unchanged. */
 PPOCR_API void ppocr_request_vulkan_device(int device_index);

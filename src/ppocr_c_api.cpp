@@ -1,6 +1,7 @@
 #include "ppocr/ppocr.h"
 
 #include "ppocr/ppocr.hpp"
+#include "cv_compat.hpp"
 #include "vulkan_backend.hpp"
 
 #include <cstdio>
@@ -340,6 +341,15 @@ int ppocr_metal_available(void) {
   } catch (...) {
     return 0;
   }
+}
+
+int ppocr_resize_linear_rgb(const unsigned char* src, int src_width, int src_height,
+                            unsigned char* dst, int dst_width, int dst_height) {
+  if (!src || !dst || src_width <= 0 || src_height <= 0 || dst_width <= 0 || dst_height <= 0)
+    return 1;
+  ppocr::detail::cvc::ResizeLinear8u(src, src_width, src_height, std::size_t(src_width) * 3, 3,
+                                     dst, dst_width, dst_height, std::size_t(dst_width) * 3);
+  return 0;
 }
 
 void ppocr_query_cpu_info(ppocr_cpu_info* info) {

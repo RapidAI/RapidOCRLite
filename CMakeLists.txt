@@ -36,6 +36,7 @@ set(PPOCR_SOURCES
     src/vulkan_backend.cpp
     src/ppocr_c_api.cpp
     src/db_geometry.cpp
+    src/cv_compat.cpp
     src/clipper/clipper.cpp
 )
 
@@ -167,10 +168,11 @@ if(NOT MSVC AND PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
       PROPERTIES COMPILE_OPTIONS "-mno-avx;-mno-avx2;-mno-avx512f")
 endif()
 
-# DB postprocess geometry reproduces OpenCV/pyclipper float results bit for
-# bit, so these two files opt out of fast-math and FMA contraction.
+# DB postprocess geometry and the OpenCV crop/resize port (cv_compat)
+# reproduce OpenCV/pyclipper float results bit for bit, so these files opt
+# out of fast-math and FMA contraction.
 if(MSVC)
-  set_source_files_properties(src/db_geometry.cpp
+  set_source_files_properties(src/db_geometry.cpp src/cv_compat.cpp
       PROPERTIES COMPILE_OPTIONS "/fp:precise")
   set_source_files_properties(src/clipper/clipper.cpp
       PROPERTIES COMPILE_OPTIONS "/fp:precise;/w")
@@ -184,7 +186,7 @@ else()
   else()
     set(PPOCR_STRICT_FP "-fno-fast-math;-ffp-contract=fast")
   endif()
-  set_source_files_properties(src/db_geometry.cpp
+  set_source_files_properties(src/db_geometry.cpp src/cv_compat.cpp
       PROPERTIES COMPILE_OPTIONS "${PPOCR_STRICT_FP}")
   # Vendored Clipper 6.4.2 is kept verbatim; silence its old-style warnings.
   set_source_files_properties(src/clipper/clipper.cpp
@@ -194,11 +196,15 @@ endif()
 # AVX2 is isolated in its own object file. kernels.cpp remains baseline x86,
 # so CPUs without AVX/AVX2 can safely take its scalar fallback at runtime.
 if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
-  target_sources(ppocr_objects PRIVATE src/kernels_avx2.cpp)
+  target_sources(ppocr_objects PRIVATE src/kernels_avx2.cpp src/cv_compat_avx2.cpp)
   target_compile_definitions(ppocr_objects PRIVATE PPOCR_HAS_AVX2_KERNELS=1)
   if(MSVC)
     set_source_files_properties(src/kernels_avx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/fp:fast")
+    set_source_files_properties(src/cv_compat_avx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/fp:precise")
   else()
+    # OpenCV's AVX2 bicubic kernel, rounding step for rounding step.
+    set_source_files_properties(src/cv_compat_avx2.cpp PROPERTIES COMPILE_OPTIONS
+        "-mavx2;-mfma;-mno-avx512f;-fno-fast-math;-ffp-contract=off")
     # -mno-avx512* is last-wins together with -mavx2 and forbids the compiler
     # from rewriting this file with EVEX/zmm encodings.
     set_source_files_properties(src/kernels_avx2.cpp PROPERTIES COMPILE_OPTIONS

@@ -185,6 +185,11 @@ def _bind(lib: ctypes.CDLL) -> None:
     if request_device is not None:
         request_device.argtypes = [ctypes.c_int]
         request_device.restype = None
+    resize = getattr(lib, "ppocr_resize_linear_rgb", None)
+    if resize is not None:
+        resize.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
+                           ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+        resize.restype = ctypes.c_int
 
 
 class NativeOCR:
@@ -298,6 +303,21 @@ def backend_info() -> dict:
         "device_name": info.device_name.split(b"\x00", 1)[0].decode(errors="replace"),
         "vulkan_runtime_generation": int(info.vulkan_runtime_generation),
     }
+
+
+def resize_linear_rgb(img: np.ndarray, width: int, height: int) -> Optional[np.ndarray]:
+    """cv2.resize(img, (width, height)) for an HxWx3 uint8 image, bit-exact
+    with OpenCV 5.0. None when the loaded library predates the export."""
+
+    lib = load_library()
+    resize = getattr(lib, "ppocr_resize_linear_rgb", None)
+    if resize is None or img.dtype != np.uint8 or img.ndim != 3 or img.shape[2] != 3:
+        return None
+    src = np.ascontiguousarray(img)
+    out = np.empty((height, width, 3), dtype=np.uint8)
+    if resize(src.ctypes.data, src.shape[1], src.shape[0], out.ctypes.data, width, height) != 0:
+        return None
+    return out
 
 
 def metal_available() -> bool:
