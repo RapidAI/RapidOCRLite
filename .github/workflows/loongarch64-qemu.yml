@@ -1,0 +1,103 @@
+name: loongarch64 qemu
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: loongarch64-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  qemu:
+    name: loongarch64 ${{ matrix.isa }} (QEMU user mode)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        isa: [lasx, lsx]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the loongarch64 cross toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++-14-loongarch64-linux-gnu qemu-user ninja-build cmake g++
+          for t in gcc g++; do
+            if ! command -v loongarch64-linux-gnu-$t >/dev/null; then
+              sudo ln -s "$(command -v loongarch64-linux-gnu-$t-14)" /usr/local/bin/loongarch64-linux-gnu-$t
+            fi
+          done
+          loongarch64-linux-gnu-g++ --version
+          qemu-loongarch64 --version
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build the host library and capture reference inputs
+        run: |
+          python -m pip install -r python/tests/ci-constraints.txt PyYAML requests tqdm
+          cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_BUILD_EXAMPLES=OFF
+          cmake --build build-host -j"$(nproc)"
+          PPOCR_LIBRARY="$(ls build-host/libppocr.so | head -1)" PYTHONPATH=python/src \
+          PPOCR_TEST_DET=ci-models/PP-OCRv6_det_tiny.onnx \
+          PPOCR_TEST_REC=ci-models/PP-OCRv6_rec_tiny.onnx \
+          PPOCR_TEST_DICT=ci-models/ppocrv6_tiny_dict.txt \
+            python tests/cross/capture_cases.py cases
+
+      - name: Cross-build for loongarch64
+        run: |
+          cmake -S . -B build-la -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchains/loongarch64-linux-gnu.cmake" \
+            -DPPOCR_ENABLE_VULKAN=OFF
+          cmake --build build-la -j"$(nproc)"
+          file build-la/ppocr_replay
+
+      - name: Replay under qemu-loongarch64 (${{ matrix.isa }})
+        env:
+          PPOCR_FORCE_ISA: ${{ matrix.isa }}
+        run: |
+          set -o pipefail
+          qemu-loongarch64 -cpu la464 -L /usr/loongarch64-linux-gnu build-la/ppocr_replay \
+            ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt cases/options.bin \
+            $(python -c "import json;print(' '.join('cases/'+c['file'] for c in json.load(open('cases/manifest.json'))['cases']))") \
+            > replay.txt 2> replay.err
+          cat replay.err
+          grep -qx "active_isa ${{ matrix.isa }}" replay.err
+          python tests/cross/compare.py cases replay.txt
+
+      - name: Package the loongarch64 SDK tarball
+        if: matrix.isa == 'lasx'
+        run: |
+          cmake --install build-la --prefix sdk/ppocr-linux-loongarch64
+          tar -C sdk -czf ppocr-linux-loongarch64.tar.gz ppocr-linux-loongarch64
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.isa == 'lasx'
+        with:
+          name: sdk-linux-loongarch64
+          path: ppocr-linux-loongarch64.tar.gz

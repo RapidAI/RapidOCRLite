@@ -130,3 +130,7 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - Fast mode, x86 eval: det unchanged; full-page text diffs vs 3.10 113/212 (131 lines differ on identical-box pages); rec-only 25/310 diffs, EM 0.8226 without the 320 minimum. Keeping the 320 minimum for use_det=False (as the pre-0406a7f path did) gives EM 0.8355 / CM 0.9510 at 6.75 vs 6.21 ms/line, so fast mode keeps it; `PPOCR_REC_FAST_NO_MIN=1` drops it.
 - Fast mode with the 320 minimum: x86 rec EM 0.8355 / CM 0.9510 (AVX-512 = AVX2), 9/310 rec diffs vs 3.10; M4 eval: det unchanged, full-page text diffs 116/212, rec 4/310 diffs, EM 0.8452 / CM 0.9520. Default (exact) re-checked: 0/212, 0/310 on x86 and M4.
 - Speed, 5-run interleaved medians, s/img det/rec/full. x86 (loaded): 3.10 0.2804/0.0063/0.3874; AVX-512 exact 0.1345/0.0070/0.2034, fast 0.1313/0.0067/0.1892; AVX2 exact 0.1333/0.0092/0.2328, fast 0.1217/0.0085/0.1960. M4 (idle): 3.10 0.1119/0.00571/0.2968; exact 0.0717/0.00505/0.1249; fast 0.0713/0.00503/0.0995.
+
+## 2026-10-15 22:27 LoongArch
+- LSX via NEON shim (src/neon_lsx_shim.hpp): QEMU replay 0 diffs on 3 imgs vs expected_cpu_texts.json; raw texts == x86 scalar; max score diff 3.5e-5. QEMU time 342 s vs ~800 s baseline LSX-autovec build (rough only).
+- LASX GEMM (src/kernels_lasx.cpp) wired via HWCAP bit5; testing.

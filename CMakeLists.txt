@@ -195,6 +195,13 @@ endif()
 
 # AVX2 is isolated in its own object file. kernels.cpp remains baseline x86,
 # so CPUs without AVX/AVX2 can safely take its scalar fallback at runtime.
+if(PPOCR_CPU MATCHES "loongarch64" AND NOT MSVC)
+  # LSX is the la64v1.0 baseline (NEON code paths via src/neon_lsx_shim.hpp);
+  # LASX kernels live in their own TU and are entered after a HWCAP check.
+  target_sources(ppocr_objects PRIVATE src/kernels_lasx.cpp)
+  set_source_files_properties(src/kernels_lasx.cpp PROPERTIES COMPILE_OPTIONS "-mlasx")
+  target_compile_definitions(ppocr_objects PRIVATE PPOCR_HAS_LASX_KERNELS=1)
+endif()
 if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
   target_sources(ppocr_objects PRIVATE src/kernels_avx2.cpp src/cv_compat_avx2.cpp)
   target_compile_definitions(ppocr_objects PRIVATE PPOCR_HAS_AVX2_KERNELS=1)

@@ -124,7 +124,8 @@ typedef struct ppocr_cpu_info {
   int avx512;
   int neon;
   int threads;
-  char active_isa[16]; /* "avx512", "avx2", "neon", or "scalar" */
+  char active_isa[16]; /* "avx512", "avx2", "neon", "lasx", "lsx", or "scalar";
+                          LoongArch LSX/LASX report through the neon_* fields */
 } ppocr_cpu_info;
 
 /* Fills options with the same defaults as ppocr::Options and sets struct_size. */

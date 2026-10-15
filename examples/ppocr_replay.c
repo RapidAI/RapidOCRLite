@@ -39,6 +39,11 @@ int main(int argc, char** argv) {
   options.struct_size = (int)((size_t)size < sizeof(options) ? (size_t)size : sizeof(options));
   options.backend = PPOCR_BACKEND_CPU;
   free(raw);
+  {
+    ppocr_cpu_info cpu;
+    ppocr_query_cpu_info(&cpu);
+    fprintf(stderr, "active_isa %s\n", cpu.active_isa);
+  }
   ppocr_ocr* ocr = ppocr_create(argv[1], argv[2], argv[3], &options);
   if (!ocr) return fprintf(stderr, "create: %s\n", ppocr_last_error()), 1;
   for (int i = 5; i < argc; ++i) {

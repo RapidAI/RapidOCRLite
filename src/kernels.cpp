@@ -34,9 +34,24 @@
 #endif
 #if defined(__ARM_NEON) || defined(__ARM_NEON__)
 #include <arm_neon.h>
+#define PPOCR_NEON_LIKE 1
+#elif defined(__loongarch_sx) && !defined(PPOCR_DISABLE_LSX)
+// LoongArch LSX runs the NEON code paths through a 4-lane intrinsic shim.
+#include "neon_lsx_shim.hpp"
+#include <sys/auxv.h>
+#define PPOCR_NEON_LIKE 1
+#define PPOCR_NEON_IS_LSX 1
 #endif
 
 namespace ppocr::detail::kernels {
+
+#if defined(PPOCR_HAS_LASX_KERNELS)
+void LasxGemmRows(float* dst, const float* a, const float* b, const float* bias,
+                  int first_row, int last_row, int cols, int depth) noexcept;
+void LasxGemmAccumulateRows(float* dst, const float* a, const float* b,
+                            int first_row, int last_row, int cols, int depth) noexcept;
+#endif
+
 
 #if defined(PPOCR_HAS_ACCELERATE)
 namespace {
@@ -305,7 +320,7 @@ void Avx512LayerNormAffine(float*, const float*, const float*, const float*,
 
 namespace {
 
-enum class ForcedIsa { automatic, scalar, avx2, avx512, neon };
+enum class ForcedIsa { automatic, scalar, avx2, avx512, neon, lasx };
 
 #if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))
 struct HostIsa {
@@ -375,6 +390,8 @@ ForcedIsa ForcedIsaSelection() noexcept {
     if (std::strcmp(text, "avx2") == 0) return ForcedIsa::avx2;
     if (std::strcmp(text, "avx512") == 0) return ForcedIsa::avx512;
     if (std::strcmp(text, "neon") == 0) return ForcedIsa::neon;
+    if (std::strcmp(text, "lsx") == 0) return ForcedIsa::neon;  // LoongArch 128-bit path
+    if (std::strcmp(text, "lasx") == 0) return ForcedIsa::lasx;
     return ForcedIsa::automatic;
   }();
   return forced;
@@ -688,10 +705,29 @@ bool UseAvx512ConvWideTile8(int output_channels, int input_channels,
 }
 
 bool HasNeon() noexcept {
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
+#if defined(PPOCR_NEON_IS_LSX)
+  // HWCAP_LOONGARCH_LSX (bit 4). The toolchain baseline (la64v1.0) already
+  // assumes LSX, but keep the explicit kernels off if the kernel says no.
+  static const bool lsx = (getauxval(AT_HWCAP) & (1ul << 4)) != 0;
+  if (!lsx) return false;
+#endif
   const ForcedIsa forced = ForcedIsaSelection();
   return forced != ForcedIsa::scalar && forced != ForcedIsa::avx2 &&
          forced != ForcedIsa::avx512;
+#else
+  return false;
+#endif
+}
+
+// LoongArch 256-bit LASX (HWCAP_LOONGARCH_LASX, bit 5). PPOCR_FORCE_ISA=lsx,
+// neon or scalar keeps it off.
+bool HasLasx() noexcept {
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  static const bool lasx = (getauxval(AT_HWCAP) & (1ul << 5)) != 0;
+  if (!lasx || !HasNeon()) return false;
+  const ForcedIsa forced = ForcedIsaSelection();
+  return forced == ForcedIsa::automatic || forced == ForcedIsa::lasx;
 #else
   return false;
 #endif
@@ -1001,7 +1037,7 @@ void ScalarGemmAccumulateRows(float* dst, const float* a, const float* b,
   }
 }
 
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
 // Register-blocked NEON GEMM. The previous kernel reloaded and stored C on
 // every K, which is memory-bound for the recognizer vocabulary GEMM. This
 // keeps a 2x16 accumulator tile in q registers and applies the same vmla
@@ -1164,7 +1200,13 @@ void NeonGemmAccumulateRows(float* dst, const float* a, const float* b,
 
 void ScalarOrNeonGemmRows(float* dst, const float* a, const float* b, const float* bias,
                           int first_row, int last_row, int cols, int depth) noexcept {
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx() && NeonGemmBlocked()) {
+    LasxGemmRows(dst, a, b, bias, first_row, last_row, cols, depth);
+    return;
+  }
+#endif
   if (HasNeon() && NeonGemmBlocked()) {
     NeonGemmRows(dst, a, b, bias, first_row, last_row, cols, depth);
     return;
@@ -1175,7 +1217,13 @@ void ScalarOrNeonGemmRows(float* dst, const float* a, const float* b, const floa
 
 void ScalarOrNeonGemmAccumulateRows(float* dst, const float* a, const float* b,
                                     int first_row, int last_row, int cols, int depth) noexcept {
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx() && NeonGemmBlocked()) {
+    LasxGemmAccumulateRows(dst, a, b, first_row, last_row, cols, depth);
+    return;
+  }
+#endif
   if (HasNeon() && NeonGemmBlocked()) {
     NeonGemmAccumulateRows(dst, a, b, first_row, last_row, cols, depth);
     return;
@@ -1198,7 +1246,7 @@ IsaDispatch QueryIsa() noexcept {
 #if defined(PPOCR_HAS_AVX512_KERNELS)
   info.avx512_compiled = true;
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   info.neon_compiled = true;
 #endif
   info.avx2 = HasAvx2();
@@ -1207,7 +1255,12 @@ IsaDispatch QueryIsa() noexcept {
   info.threads = RequestedParallelism();
   if (info.avx512) info.active = "avx512";
   else if (info.avx2) info.active = "avx2";
+#if defined(PPOCR_NEON_IS_LSX)
+  else if (HasLasx()) info.active = "lasx";
+  else if (info.neon) info.active = "lsx";
+#else
   else if (info.neon) info.active = "neon";
+#endif
   else info.active = "scalar";
   return info;
 }
@@ -1406,7 +1459,7 @@ void WidenU8ToFloat(float* dst, const std::uint8_t* src, std::size_t n) noexcept
     return;
   }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   std::size_t index = 0;
   for (; index + 16 <= n; index += 16) {
     const uint8x16_t bytes = vld1q_u8(src + index);
@@ -1437,7 +1490,7 @@ void Binary(float* dst, const float* a, const float* b, std::size_t n,
   if (HasAvx2()) { Avx2Binary(dst, a, b, n, op); return; }
 #endif
   std::size_t i = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (HasNeon() && op != BinaryOp::div) for (; i + 4 <= n; i += 4) {
     const float32x4_t x = vld1q_f32(a + i), y = vld1q_f32(b + i);
     if (op == BinaryOp::add) vst1q_f32(dst + i, vaddq_f32(x, y));
@@ -1626,7 +1679,7 @@ void NearestResize2xAdd(float* dst, const float* src, const float* residual,
   const int output_width = input_width * 2;
   const std::size_t input_plane = std::size_t(input_height) * input_width;
   const std::size_t output_plane = input_plane * 4;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (simd_enabled && HasNeon()) {
     for (int plane = 0; plane < batches * channels; ++plane) {
       const float* input = src + std::size_t(plane) * input_plane;
@@ -1706,7 +1759,7 @@ void Square(float* dst, const float* src, std::size_t n) noexcept {
 #if defined(PPOCR_HAS_AVX2_KERNELS)
   if (HasAvx2()) { Avx2Square(dst, src, n); return; }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     std::size_t i = 0;
     for (; i + 4 <= n; i += 4) {
@@ -1800,7 +1853,7 @@ void Gelu(float* dst, const float* src, std::size_t n,
   ExactGelu(dst, src, n);
 }
 
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
 float32x4_t NeonGeluPs(float32x4_t x) noexcept;
 #endif
 void ExactGelu(float* dst, const float* src, std::size_t n) noexcept {
@@ -1841,7 +1894,7 @@ void ExactGelu(float* dst, const float* src, std::size_t n) noexcept {
     return;
   }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   // NEON erf polynomial (same NeonGeluPs the fused NEON expand kernel uses);
   // scalar std::erf cost ~1 ms per recognizer block on M4.
   if (simd_enabled && HasNeon()) {
@@ -2045,7 +2098,7 @@ void HardSwish(float* dst, const float* src, std::size_t n) noexcept {
   if (HasAvx2()) { Avx2HardSwish(dst, src, n); return; }
 #endif
   std::size_t i = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const auto sixth = vdupq_n_f32(1.F / 6.F), half = vdupq_n_f32(.5F);
     const auto zero = vdupq_n_f32(0.F), one = vdupq_n_f32(1.F);
@@ -2070,7 +2123,7 @@ void ScaleShift(float* dst, const float* src, std::size_t n, float scale, float 
   if (HasAvx2()) { Avx2ScaleShift(dst, src, n, scale, shift); return; }
 #endif
   std::size_t i = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const auto s = vdupq_n_f32(scale), b = vdupq_n_f32(shift);
     for (; i + 4 <= n; i += 4) vst1q_f32(dst+i, vmlaq_f32(b, vld1q_f32(src+i), s));
@@ -2126,7 +2179,7 @@ void HardSigmoid(float* dst, const float* src, std::size_t n, float alpha,
   if (HasAvx2()) { Avx2HardSigmoid(dst, src, n, alpha, beta); return; }
 #endif
   std::size_t i = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const float32x4_t a = vdupq_n_f32(alpha), b = vdupq_n_f32(beta);
     const float32x4_t zero = vdupq_n_f32(0.F), one = vdupq_n_f32(1.F);
@@ -2199,7 +2252,7 @@ void Sigmoid(float* dst, const float* src, std::size_t n) noexcept {
 
 void Swish(float* dst, const float* src, std::size_t n) noexcept {
   std::size_t i = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   // NEON has no portable vector exponential in the baseline ISA.  Keep four
   // independent scalar exponentials together so compilers can schedule the
   // loads/stores efficiently while preserving the exact logistic expression.
@@ -2238,7 +2291,7 @@ void Relu(float* dst, const float* src, std::size_t n) noexcept {
   if (HasAvx2()) { Avx2Relu(dst, src, n); return; }
 #endif
   std::size_t i = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const float32x4_t zero = vdupq_n_f32(0.F);
     for (; i + 4 <= n; i += 4) vst1q_f32(dst + i, vmaxq_f32(vld1q_f32(src + i), zero));
@@ -2255,7 +2308,7 @@ void Axpy(float* dst, const float* src, float alpha, std::size_t n) noexcept {
   if (HasAvx2()) { Avx2Axpy(dst, src, alpha, n); return; }
 #endif
   std::size_t i = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const float32x4_t a = vdupq_n_f32(alpha);
     for (; i + 4 <= n; i += 4) {
@@ -2272,7 +2325,7 @@ void Avx512ExpandGeluProjectAdd(float*, const float*, const float*, const float*
                                 std::size_t, std::size_t) noexcept;
 #endif
 
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
 float32x4_t NeonExpPs(float32x4_t x) noexcept {
   const float32x4_t min_x = vdupq_n_f32(-87.F);
   const float32x4_t max_x = vdupq_n_f32(87.F);
@@ -2928,7 +2981,7 @@ void ExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weig
     return;
   }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   static const bool neon_expand = std::getenv("PPOCR_DISABLE_NEON_EXPAND_GELU") == nullptr;
   if (HasNeon() && neon_expand) {
     const int tiles = static_cast<int>((plane + 15) / 16);
@@ -2994,7 +3047,7 @@ void PointwiseConv(float* dst, const float* src, const float* weights,
       return;
     }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
     if (HasNeon()) {
       int output = first;
       for (; output + 4 <= last; output += 4) {
@@ -3329,7 +3382,7 @@ void PointwiseConvAdd(float* dst, const float* src, const float* weights,
       return;
     }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
     if (HasNeon()) {
       int output = first;
       for (; output + 4 <= last; output += 4) {
@@ -4188,7 +4241,7 @@ void Conv2d(float* dst, const float* src, const float* weights, const float* bia
     return;
   }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   static const bool neon_conv = std::getenv("PPOCR_DISABLE_NEON_CONV") == nullptr;
   if (HasNeon() && neon_conv && stride_h == 1 && stride_w == 1 && simd_kernel) {
     const auto neon = [&](int first, int last) {
@@ -5407,7 +5460,7 @@ void MaxPool2x2Same(float* dst, const float* src, std::size_t planes,
         const float* row0 = in + std::size_t(y) * width;
         const float* row1 = row0 + width;
         int x = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
         if (HasNeon()) {
           for (; x + 4 <= width - 1; x += 4) {
             const float32x4_t top = vmaxq_f32(vld1q_f32(row0 + x), vld1q_f32(row0 + x + 1));
@@ -5474,7 +5527,7 @@ void MaxPool2x2Valid(float* dst, const float* src, std::size_t planes,
         const float* row1 = row0 + width;
         float* row_out = out + std::size_t(y) * output_width;
         int x = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
         if (HasNeon()) {
           for (; x + 4 <= output_width; x += 4) {
             const float32x4_t top = vmaxq_f32(vld1q_f32(row0 + x), vld1q_f32(row0 + x + 1));
@@ -5619,7 +5672,7 @@ void DepthwiseConv(float* dst, const float* src, const float* weights,
     return;
   }
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   static const bool neon_dw = std::getenv("PPOCR_DISABLE_NEON_DW") == nullptr;
   if (HasNeon() && neon_dw && stride_h == 1 && stride_w == 1 &&
       (kernel_h == 3 || kernel_h == 5 || kernel_h == 7 || kernel_h == 9) &&
@@ -6082,7 +6135,7 @@ void SpatialMean(float* dst, const float* src, std::size_t planes,
     const float* values = src + plane * spatial;
     float sum = 0.F;
     std::size_t index = 0;
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
     if (HasNeon()) {
       float32x4_t accum = vdupq_n_f32(0.F);
       for (; index + 4 <= spatial; index += 4) {
@@ -6888,7 +6941,7 @@ void BuildDetectorMask(std::uint8_t* mask, const float* probability, int height,
     }
   } else
 #endif
-#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#if defined(PPOCR_NEON_LIKE)
   if (simd && HasNeon() && width >= 4) {
     const float32x4_t thresh = vdupq_n_f32(threshold);
     const auto body = [&](int y0, int y1) {
