@@ -1,0 +1,31 @@
+{
+ "image": "return_word_debug.jpg",
+ "model": "lite",
+ "time_ms_median_of_3": 16.4,
+ "threads": 4,
+ "lines": [
+  {
+   "order": 1,
+   "box": [
+    [
+     239.6,
+     114.4
+    ],
+    [
+     254.6,
+     114.4
+    ],
+    [
+     254.6,
+     157.8
+    ],
+    [
+     239.6,
+     157.8
+    ]
+   ],
+   "text": "-",
+   "score": 0.8516
+  }
+ ]
+}

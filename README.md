@@ -1,8 +1,7 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://github.com/RapidAI/RapidOCR/releases/download/v1.1.0/Logov2_black.png"  width="60%" height="60%">
-    <source media="(prefers-color-scheme: light)" srcset="https://github.com/RapidAI/RapidOCR/releases/download/v1.1.0/Logov2_white.png"  width="60%" height="60%">
-    <img alt="RapidOCR" src="https://github.com/RapidAI/RapidOCR/releases/download/v1.1.0/Logov2_white.png">
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/images/rapidocrlite_logo_dark.svg">
+    <img src="./docs/images/rapidocrlite_logo.svg" alt="RapidOCRLite" width="60%">
   </picture>
 
 <div>&nbsp;</div>
@@ -30,6 +29,27 @@ Join our [Discord](https://discord.gg/33eyQJq498)
 </div>
 
 **RapidOCRLite** (PyPI `RapidOCRLite` 5.0.0a6) is the lightweight, fast edition of RapidOCR: a C++ PP-OCRv6 engine with a C ABI, a C++ API, and a Python package whose import name is still `rapidocr` and whose Python API is fully compatible with RapidOCR. The ONNX Runtime 3.x line (latest tag `v3.9.2`) stays in [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR). Hosted demos linked from the badges above run that 3.x line.
+
+### 🧪 `model_type="lite"` (experimental, bundled Indra OCR weights)
+
+`RapidOCR(params={"Det.model_type": "lite", "Rec.model_type": "lite"})` runs the bundled [Indra OCR](https://huggingface.co/datalab-to/indra-ocr) models from `python/src/rapidocr/models/lite/` (about 17.1 MB). Nothing is downloaded.
+
+- **Different license.** These weights are **not** Apache-2.0. They use a modified OpenRAIL-M license (see `models/lite/LICENSE` and `NOTICE`), with use restrictions:
+  - Entities with more than USD 20M revenue or funding in the prior year may use them only for personal use or research.
+  - Entities that offer products or services competing with Datalab may not use them.
+  - The license also covers the model's Output (paragraph 8).
+- **Runtime.** Fully native: libppocr's C++ kernels run every model and the image preprocessing; the pipeline code is vendored from indra-ocr 0.3.2 (Apache-2.0, `python/src/rapidocr/_indra_vendor/`). No onnxruntime, OpenCV or indra-ocr is needed. `PPOCR_INDRA_BACKEND=ort` runs the upstream onnxruntime pipeline instead, as a test-only reference (install `indra-ocr==0.3.2` yourself).
+- **Same public API.** Differences from PP-OCRv6: boxes are axis-aligned rectangles, `txts` come in reading order, and `box_thresh` / `unclip_ratio` have no effect.
+
+### 🖼️ lite vs PP-OCR examples
+
+Six side-by-side samples (printed scan with two columns and a table, dense mixed Chinese/English text, poster, photographed form, street sign, vertical text) are in the Chinese README: [README-CN.md](./README-CN.md), section "lite 与 PP-OCR 效果对照". Each sample shows the original, the detection boxes of PP-OCRv6 small (blue) and lite (red, numbers = reading order), a "redraw" image (recognized text drawn in black at each box position), per-page time and the recognized text. In short: lite reads printed documents in better order and faster; PP-OCR is clearly better on posters, photos, scene text and vertical text.
+
+<p>
+<img src="docs/lite_examples/images/synthetic_scan_report_ppocr_boxes.jpg" alt="PP-OCRv6 small boxes on a two-column scanned report" width="380">
+<img src="docs/lite_examples/images/synthetic_scan_report_lite_boxes.jpg" alt="lite boxes on a two-column scanned report" width="380">
+</p>
+<sub>Two-column scanned report: PP-OCRv6 small (left, blue) interleaves the two columns; lite (right, red) reads the left column, then the right column.</sub>
 
 ### 📝 Introduction
 
