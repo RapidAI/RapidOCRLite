@@ -865,4 +865,89 @@ void LasxDepthwiseExpandGeluProjectAdd3x3S1(
   }
 }
 
+
+// 1x1 conv: 4 output channels x 16 spatial (two 8-lane tiles), FMA in input
+// channel order — same structure as the NEON path in PointwiseConv.
+void LasxPointwiseConv(float* dst, const float* src, const float* weights,
+                       const float* bias, int first_output, int last_output,
+                       int input_channels, std::size_t plane) noexcept {
+  int output = first_output;
+  for (; output + 4 <= last_output; output += 4) {
+    float* out0 = dst + std::size_t(output) * plane;
+    float* out1 = out0 + plane;
+    float* out2 = out1 + plane;
+    float* out3 = out2 + plane;
+    const float* w0 = weights + std::size_t(output) * input_channels;
+    const float* w1 = w0 + input_channels;
+    const float* w2 = w1 + input_channels;
+    const float* w3 = w2 + input_channels;
+    const float b0 = bias ? bias[output] : 0.F;
+    const float b1 = bias ? bias[output + 1] : 0.F;
+    const float b2 = bias ? bias[output + 2] : 0.F;
+    const float b3 = bias ? bias[output + 3] : 0.F;
+    std::size_t index = 0;
+    for (; index + 16 <= plane; index += 16) {
+      __m256 s00 = Splat(b0), s01 = s00;
+      __m256 s10 = Splat(b1), s11 = s10;
+      __m256 s20 = Splat(b2), s21 = s20;
+      __m256 s30 = Splat(b3), s31 = s30;
+      for (int input = 0; input < input_channels; ++input) {
+        const float* values = src + std::size_t(input) * plane + index;
+        const __m256 x0 = Load(values), x1 = Load(values + 8);
+        const __m256 a0 = Splat(w0[input]), a1 = Splat(w1[input]);
+        const __m256 a2 = Splat(w2[input]), a3 = Splat(w3[input]);
+        s00 = Fma(s00, x0, a0); s01 = Fma(s01, x1, a0);
+        s10 = Fma(s10, x0, a1); s11 = Fma(s11, x1, a1);
+        s20 = Fma(s20, x0, a2); s21 = Fma(s21, x1, a2);
+        s30 = Fma(s30, x0, a3); s31 = Fma(s31, x1, a3);
+      }
+      Store(out0 + index, s00); Store(out0 + index + 8, s01);
+      Store(out1 + index, s10); Store(out1 + index + 8, s11);
+      Store(out2 + index, s20); Store(out2 + index + 8, s21);
+      Store(out3 + index, s30); Store(out3 + index + 8, s31);
+    }
+    for (; index + 8 <= plane; index += 8) {
+      __m256 s0 = Splat(b0), s1 = Splat(b1), s2 = Splat(b2), s3 = Splat(b3);
+      for (int input = 0; input < input_channels; ++input) {
+        const __m256 x = Load(src + std::size_t(input) * plane + index);
+        s0 = Fma(s0, x, Splat(w0[input]));
+        s1 = Fma(s1, x, Splat(w1[input]));
+        s2 = Fma(s2, x, Splat(w2[input]));
+        s3 = Fma(s3, x, Splat(w3[input]));
+      }
+      Store(out0 + index, s0); Store(out1 + index, s1);
+      Store(out2 + index, s2); Store(out3 + index, s3);
+    }
+    for (; index < plane; ++index) {
+      float v0 = b0, v1 = b1, v2 = b2, v3 = b3;
+      for (int input = 0; input < input_channels; ++input) {
+        const float x = src[std::size_t(input) * plane + index];
+        v0 += w0[input] * x; v1 += w1[input] * x;
+        v2 += w2[input] * x; v3 += w3[input] * x;
+      }
+      out0[index] = v0; out1[index] = v1; out2[index] = v2; out3[index] = v3;
+    }
+  }
+  for (; output < last_output; ++output) {
+    float* out = dst + std::size_t(output) * plane;
+    const float* w = weights + std::size_t(output) * input_channels;
+    const float base = bias ? bias[output] : 0.F;
+    std::size_t index = 0;
+    for (; index + 8 <= plane; index += 8) {
+      __m256 sum = Splat(base);
+      for (int input = 0; input < input_channels; ++input) {
+        sum = Fma(sum, Load(src + std::size_t(input) * plane + index), Splat(w[input]));
+      }
+      Store(out + index, sum);
+    }
+    for (; index < plane; ++index) {
+      float sum = base;
+      for (int input = 0; input < input_channels; ++input) {
+        sum += w[input] * src[std::size_t(input) * plane + index];
+      }
+      out[index] = sum;
+    }
+  }
+}
+
 }  // namespace ppocr::detail::kernels

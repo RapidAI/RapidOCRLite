@@ -74,6 +74,9 @@ void LasxDepthwiseExpandGeluProjectAdd3x3S1(
     const float* expand_weights, const float* expand_bias,
     const float* project_weights, const float* project_bias, int channels,
     int hidden, int height, int width, int y0, int y1) noexcept;
+void LasxPointwiseConv(float* dst, const float* src, const float* weights,
+                       const float* bias, int first_output, int last_output,
+                       int input_channels, std::size_t plane) noexcept;
 #endif
 
 
@@ -1543,6 +1546,13 @@ void BinaryInplace(float* left, const float* right, std::size_t n,
 #endif
 #if defined(PPOCR_HAS_AVX2_KERNELS)
   if (HasAvx2()) { Avx2Binary(left, left, right, n, op); return; }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx() && op != BinaryOp::div) {
+    const int code = op == BinaryOp::add ? 0 : (op == BinaryOp::sub ? 1 : 2);
+    LasxBinary(left, left, right, n, code);
+    return;
+  }
 #endif
   for (std::size_t i = 0; i < n; ++i) {
     switch (op) {
@@ -3106,6 +3116,12 @@ void PointwiseConv(float* dst, const float* src, const float* weights,
 #if defined(PPOCR_HAS_AVX2_KERNELS)
     if (HasAvx2()) {
       Avx2PointwiseConv4(dst, src, weights, bias, first, last, input_channels, plane);
+      return;
+    }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+    if (HasLasx()) {
+      LasxPointwiseConv(dst, src, weights, bias, first, last, input_channels, plane);
       return;
     }
 #endif
