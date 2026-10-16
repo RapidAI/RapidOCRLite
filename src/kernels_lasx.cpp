@@ -31,6 +31,17 @@ inline __m256 Fms(__m256 a, __m256 b, __m256 c) noexcept {
   return __lasx_xvfnmsub_s(b, c, a);
 }
 
+// Pack one 16-column panel of B into K-contiguous layout: packed[k*16 + c].
+// Same k-ascending FMA order as the strided loads; only memory layout changes.
+inline void PackB16(float* packed, const float* b, int cols, int depth, int col0) noexcept {
+  for (int k = 0; k < depth; ++k) {
+    const float* src = b + std::size_t(k) * cols + col0;
+    float* dst = packed + std::size_t(k) * 16;
+    Store(dst, Load(src));
+    Store(dst + 8, Load(src + 8));
+  }
+}
+
 template <bool Accumulate>
 void GemmRowsImpl(float* dst, const float* a, const float* b, const float* bias,
                   int first_row, int last_row, int cols, int depth) noexcept {
@@ -38,6 +49,167 @@ void GemmRowsImpl(float* dst, const float* a, const float* b, const float* bias,
   // separate mul+add: scores may differ by ~1 ulp from the older Mla path,
   // text stays identical under the QEMU replay corpus.
   const int vector_cols = cols / 8 * 8;
+  // For deep GEMMs, pack B into 16-col K-contiguous panels so each k-step
+  // touches 64 B contiguous bytes instead of striding by cols.
+  if (depth >= 48 && vector_cols >= 16) {
+    thread_local std::vector<float> packed;
+    const int panels = vector_cols / 16;
+    packed.resize(std::size_t(depth) * 16);
+    int row = first_row;
+    for (; row + 3 < last_row; row += 4) {
+      float* out0 = dst + std::size_t(row) * cols;
+      float* out1 = out0 + cols;
+      float* out2 = out1 + cols;
+      float* out3 = out2 + cols;
+      const float* left0 = a + std::size_t(row) * depth;
+      const float* left1 = left0 + depth;
+      const float* left2 = left1 + depth;
+      const float* left3 = left2 + depth;
+      int col = 0;
+      for (int panel = 0; panel < panels; ++panel, col += 16) {
+        PackB16(packed.data(), b, cols, depth, col);
+        __m256 a0, a1, b0, b1, c0, c1, d0, d1;
+        if (Accumulate) {
+          a0 = Load(out0 + col); a1 = Load(out0 + col + 8);
+          b0 = Load(out1 + col); b1 = Load(out1 + col + 8);
+          c0 = Load(out2 + col); c1 = Load(out2 + col + 8);
+          d0 = Load(out3 + col); d1 = Load(out3 + col + 8);
+        } else {
+          a0 = bias ? Load(bias + col) : Splat(0.F);
+          a1 = bias ? Load(bias + col + 8) : Splat(0.F);
+          b0 = a0; b1 = a1; c0 = a0; c1 = a1; d0 = a0; d1 = a1;
+        }
+        for (int k = 0; k < depth; ++k) {
+          const __m256 l0 = Splat(left0[k]), l1 = Splat(left1[k]);
+          const __m256 l2 = Splat(left2[k]), l3 = Splat(left3[k]);
+          const float* right = packed.data() + std::size_t(k) * 16;
+          const __m256 r0 = Load(right), r1 = Load(right + 8);
+          a0 = Fma(a0, l0, r0); a1 = Fma(a1, l0, r1);
+          b0 = Fma(b0, l1, r0); b1 = Fma(b1, l1, r1);
+          c0 = Fma(c0, l2, r0); c1 = Fma(c1, l2, r1);
+          d0 = Fma(d0, l3, r0); d1 = Fma(d1, l3, r1);
+        }
+        Store(out0 + col, a0); Store(out0 + col + 8, a1);
+        Store(out1 + col, b0); Store(out1 + col + 8, b1);
+        Store(out2 + col, c0); Store(out2 + col + 8, c1);
+        Store(out3 + col, d0); Store(out3 + col + 8, d1);
+      }
+      for (; col + 8 <= vector_cols; col += 8) {
+        __m256 c0, c1, c2, c3;
+        if (Accumulate) {
+          c0 = Load(out0 + col); c1 = Load(out1 + col);
+          c2 = Load(out2 + col); c3 = Load(out3 + col);
+        } else {
+          c0 = bias ? Load(bias + col) : Splat(0.F);
+          c1 = c0; c2 = c0; c3 = c0;
+        }
+        for (int k = 0; k < depth; ++k) {
+          const __m256 r = Load(b + std::size_t(k) * cols + col);
+          c0 = Fma(c0, Splat(left0[k]), r);
+          c1 = Fma(c1, Splat(left1[k]), r);
+          c2 = Fma(c2, Splat(left2[k]), r);
+          c3 = Fma(c3, Splat(left3[k]), r);
+        }
+        Store(out0 + col, c0); Store(out1 + col, c1);
+        Store(out2 + col, c2); Store(out3 + col, c3);
+      }
+      for (; col < cols; ++col) {
+        float v0 = Accumulate ? out0[col] : (bias ? bias[col] : 0.F);
+        float v1 = Accumulate ? out1[col] : v0;
+        float v2 = Accumulate ? out2[col] : v0;
+        float v3 = Accumulate ? out3[col] : v0;
+        for (int k = 0; k < depth; ++k) {
+          const float weight = b[std::size_t(k) * cols + col];
+          v0 += left0[k] * weight; v1 += left1[k] * weight;
+          v2 += left2[k] * weight; v3 += left3[k] * weight;
+        }
+        out0[col] = v0; out1[col] = v1; out2[col] = v2; out3[col] = v3;
+      }
+    }
+    for (; row + 1 < last_row; row += 2) {
+      float* out0 = dst + std::size_t(row) * cols;
+      float* out1 = out0 + cols;
+      const float* left0 = a + std::size_t(row) * depth;
+      const float* left1 = left0 + depth;
+      int col = 0;
+      for (int panel = 0; panel < panels; ++panel, col += 16) {
+        PackB16(packed.data(), b, cols, depth, col);
+        __m256 a0, a1, b0, b1;
+        if (Accumulate) {
+          a0 = Load(out0 + col); a1 = Load(out0 + col + 8);
+          b0 = Load(out1 + col); b1 = Load(out1 + col + 8);
+        } else {
+          a0 = bias ? Load(bias + col) : Splat(0.F);
+          a1 = bias ? Load(bias + col + 8) : Splat(0.F);
+          b0 = a0; b1 = a1;
+        }
+        for (int k = 0; k < depth; ++k) {
+          const __m256 l0 = Splat(left0[k]), l1 = Splat(left1[k]);
+          const float* right = packed.data() + std::size_t(k) * 16;
+          const __m256 r0 = Load(right), r1 = Load(right + 8);
+          a0 = Fma(a0, l0, r0); a1 = Fma(a1, l0, r1);
+          b0 = Fma(b0, l1, r0); b1 = Fma(b1, l1, r1);
+        }
+        Store(out0 + col, a0); Store(out0 + col + 8, a1);
+        Store(out1 + col, b0); Store(out1 + col + 8, b1);
+      }
+      for (; col + 8 <= vector_cols; col += 8) {
+        __m256 c0, c1;
+        if (Accumulate) {
+          c0 = Load(out0 + col); c1 = Load(out1 + col);
+        } else {
+          c0 = bias ? Load(bias + col) : Splat(0.F);
+          c1 = c0;
+        }
+        for (int k = 0; k < depth; ++k) {
+          const __m256 r = Load(b + std::size_t(k) * cols + col);
+          c0 = Fma(c0, Splat(left0[k]), r);
+          c1 = Fma(c1, Splat(left1[k]), r);
+        }
+        Store(out0 + col, c0); Store(out1 + col, c1);
+      }
+      for (; col < cols; ++col) {
+        float v0 = Accumulate ? out0[col] : (bias ? bias[col] : 0.F);
+        float v1 = Accumulate ? out1[col] : v0;
+        for (int k = 0; k < depth; ++k) {
+          const float weight = b[std::size_t(k) * cols + col];
+          v0 += left0[k] * weight;
+          v1 += left1[k] * weight;
+        }
+        out0[col] = v0;
+        out1[col] = v1;
+      }
+    }
+    for (; row < last_row; ++row) {
+      float* out = dst + std::size_t(row) * cols;
+      const float* left = a + std::size_t(row) * depth;
+      int col = 0;
+      for (int panel = 0; panel < panels; ++panel, col += 16) {
+        PackB16(packed.data(), b, cols, depth, col);
+        __m256 c0 = Accumulate ? Load(out + col) : (bias ? Load(bias + col) : Splat(0.F));
+        __m256 c1 = Accumulate ? Load(out + col + 8) : (bias ? Load(bias + col + 8) : Splat(0.F));
+        for (int k = 0; k < depth; ++k) {
+          const __m256 av = Splat(left[k]);
+          const float* right = packed.data() + std::size_t(k) * 16;
+          c0 = Fma(c0, av, Load(right));
+          c1 = Fma(c1, av, Load(right + 8));
+        }
+        Store(out + col, c0); Store(out + col + 8, c1);
+      }
+      for (; col + 8 <= vector_cols; col += 8) {
+        __m256 c = Accumulate ? Load(out + col) : (bias ? Load(bias + col) : Splat(0.F));
+        for (int k = 0; k < depth; ++k)
+          c = Fma(c, Splat(left[k]), Load(b + std::size_t(k) * cols + col));
+        Store(out + col, c);
+      }
+      for (; col < cols; ++col) {
+        float value = Accumulate ? out[col] : (bias ? bias[col] : 0.F);
+        for (int k = 0; k < depth; ++k) value += left[k] * b[std::size_t(k) * cols + col];
+        out[col] = value;
+      }
+    }
+    return;
+  }
   int row = first_row;
   for (; row + 3 < last_row; row += 4) {
     float* out0 = dst + std::size_t(row) * cols;
@@ -946,6 +1118,154 @@ void LasxPointwiseConv(float* dst, const float* src, const float* weights,
         sum += w[input] * src[std::size_t(input) * plane + index];
       }
       out[index] = sum;
+    }
+  }
+}
+
+
+// Fused 5x5 SAME depthwise → 1x1 pointwise (+ ReLU / HardSwish / exact GELU).
+// Same C*W row scratch pattern as Avx2DepthwisePointwiseConv5x5S1.
+void LasxDepthwisePointwiseConv5x5S1(
+    float* dst, const float* src, const float* dw_weights, const float* dw_bias,
+    const float* pw_weights, const float* pw_bias, int channels, int output_channels,
+    int height, int width, int activation, int y0, int y1) noexcept {
+  if (!dst || !src || !dw_weights || !pw_weights || channels <= 0 ||
+      output_channels <= 0 || height <= 0 || width <= 0) {
+    return;
+  }
+  if (y0 < 0) y0 = 0;
+  if (y1 < 0 || y1 > height) y1 = height;
+  if (y0 >= y1) return;
+  const std::size_t plane = std::size_t(height) * width;
+  const int first_y = 2, first_x = 2;
+  const int last_y = std::min(height, height - 2);
+  const int last_x = std::min(width, width - 2);
+  const __m256 zero = Splat(0.F), one = Splat(1.F), half = Splat(.5F);
+  const __m256 sixth = Splat(1.F / 6.F);
+  const auto activate = [&](__m256 x) noexcept {
+    if (activation == 1) return __lasx_xvfmax_s(x, zero);
+    if (activation == 2) {
+      const __m256 gate = __lasx_xvfmin_s(one, __lasx_xvfmax_s(zero, Fma(half, x, sixth)));
+      return __lasx_xvfmul_s(x, gate);
+    }
+    if (activation == 3) return GeluPs(x);
+    return x;
+  };
+  const auto activate_scalar = [&](float x) noexcept {
+    if (activation == 1) return std::max(x, 0.F);
+    if (activation == 2) return x * std::clamp(x / 6.F + .5F, 0.F, 1.F);
+    if (activation == 3) return x * .5F * (1.F + std::erf(x * 0.7071067811865475244F));
+    return x;
+  };
+  thread_local std::vector<float> dw_row;
+  dw_row.resize(std::size_t(channels) * width);
+  for (int y = y0; y < y1; ++y) {
+    const int iy0 = y - 2;
+    const int interior_begin = y >= first_y && y < last_y ? first_x : 0;
+    const int interior_end = y >= first_y && y < last_y ? last_x : 0;
+    for (int channel = 0; channel < channels; ++channel) {
+      const float* in = src + std::size_t(channel) * plane;
+      const float* filter = dw_weights + std::size_t(channel) * 25;
+      float* out = dw_row.data() + std::size_t(channel) * width;
+      const float base = dw_bias ? dw_bias[channel] : 0.F;
+      int x = 0;
+      for (; x < interior_begin; ++x) {
+        float sum = base;
+        const int ix0 = x - 2;
+        for (int ky = 0; ky < 5; ++ky) {
+          const int iy = iy0 + ky;
+          if (iy < 0 || iy >= height) continue;
+          for (int kx = 0; kx < 5; ++kx) {
+            const int ix = ix0 + kx;
+            if (ix >= 0 && ix < width) sum += in[std::size_t(iy) * width + ix] * filter[ky * 5 + kx];
+          }
+        }
+        out[x] = sum;
+      }
+      for (; x + 8 <= interior_end; x += 8) {
+        __m256 sum = Splat(base);
+        for (int ky = 0; ky < 5; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * width + x - 2;
+          const float* k = filter + ky * 5;
+          sum = Fma(sum, Load(row), Splat(k[0]));
+          sum = Fma(sum, Load(row + 1), Splat(k[1]));
+          sum = Fma(sum, Load(row + 2), Splat(k[2]));
+          sum = Fma(sum, Load(row + 3), Splat(k[3]));
+          sum = Fma(sum, Load(row + 4), Splat(k[4]));
+        }
+        Store(out + x, sum);
+      }
+      for (; x < width; ++x) {
+        float sum = base;
+        const int ix0 = x - 2;
+        for (int ky = 0; ky < 5; ++ky) {
+          const int iy = iy0 + ky;
+          if (iy < 0 || iy >= height) continue;
+          for (int kx = 0; kx < 5; ++kx) {
+            const int ix = ix0 + kx;
+            if (ix >= 0 && ix < width) sum += in[std::size_t(iy) * width + ix] * filter[ky * 5 + kx];
+          }
+        }
+        out[x] = sum;
+      }
+    }
+    const std::size_t row = std::size_t(y) * width;
+    int output = 0;
+    for (; output + 4 <= output_channels; output += 4) {
+      const float b0 = pw_bias ? pw_bias[output] : 0.F;
+      const float b1 = pw_bias ? pw_bias[output + 1] : 0.F;
+      const float b2 = pw_bias ? pw_bias[output + 2] : 0.F;
+      const float b3 = pw_bias ? pw_bias[output + 3] : 0.F;
+      const float* w0 = pw_weights + std::size_t(output) * channels;
+      const float* w1 = w0 + channels;
+      const float* w2 = w1 + channels;
+      const float* w3 = w2 + channels;
+      int x = 0;
+      for (; x + 8 <= width; x += 8) {
+        __m256 s0 = Splat(b0), s1 = Splat(b1), s2 = Splat(b2), s3 = Splat(b3);
+        for (int input = 0; input < channels; ++input) {
+          const __m256 v = Load(dw_row.data() + std::size_t(input) * width + x);
+          s0 = Fma(s0, v, Splat(w0[input]));
+          s1 = Fma(s1, v, Splat(w1[input]));
+          s2 = Fma(s2, v, Splat(w2[input]));
+          s3 = Fma(s3, v, Splat(w3[input]));
+        }
+        Store(dst + std::size_t(output) * plane + row + x, activate(s0));
+        Store(dst + std::size_t(output + 1) * plane + row + x, activate(s1));
+        Store(dst + std::size_t(output + 2) * plane + row + x, activate(s2));
+        Store(dst + std::size_t(output + 3) * plane + row + x, activate(s3));
+      }
+      for (; x < width; ++x) {
+        float s0 = b0, s1 = b1, s2 = b2, s3 = b3;
+        for (int input = 0; input < channels; ++input) {
+          const float v = dw_row[std::size_t(input) * width + x];
+          s0 += w0[input] * v; s1 += w1[input] * v;
+          s2 += w2[input] * v; s3 += w3[input] * v;
+        }
+        dst[std::size_t(output) * plane + row + x] = activate_scalar(s0);
+        dst[std::size_t(output + 1) * plane + row + x] = activate_scalar(s1);
+        dst[std::size_t(output + 2) * plane + row + x] = activate_scalar(s2);
+        dst[std::size_t(output + 3) * plane + row + x] = activate_scalar(s3);
+      }
+    }
+    for (; output < output_channels; ++output) {
+      const float* filter = pw_weights + std::size_t(output) * channels;
+      const float base = pw_bias ? pw_bias[output] : 0.F;
+      float* out = dst + std::size_t(output) * plane + row;
+      int x = 0;
+      for (; x + 8 <= width; x += 8) {
+        __m256 sum = Splat(base);
+        for (int input = 0; input < channels; ++input) {
+          sum = Fma(sum, Load(dw_row.data() + std::size_t(input) * width + x), Splat(filter[input]));
+        }
+        Store(out + x, activate(sum));
+      }
+      for (; x < width; ++x) {
+        float sum = base;
+        for (int input = 0; input < channels; ++input)
+          sum += filter[input] * dw_row[std::size_t(input) * width + x];
+        out[x] = activate_scalar(sum);
+      }
     }
   }
 }

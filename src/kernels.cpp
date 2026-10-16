@@ -69,6 +69,10 @@ void LasxDepthwisePointwiseConv3x3S1(
     float* dst, const float* src, const float* dw_weights, const float* dw_bias,
     const float* pw_weights, const float* pw_bias, int channels, int output_channels,
     int height, int width, int activation, int y0, int y1) noexcept;
+void LasxDepthwisePointwiseConv5x5S1(
+    float* dst, const float* src, const float* dw_weights, const float* dw_bias,
+    const float* pw_weights, const float* pw_bias, int channels, int output_channels,
+    int height, int width, int activation, int y0, int y1) noexcept;
 void LasxDepthwiseExpandGeluProjectAdd3x3S1(
     float* dst, const float* src, const float* dw_weights, const float* dw_bias,
     const float* expand_weights, const float* expand_bias,
@@ -5932,6 +5936,27 @@ bool DepthwisePointwiseConvFused(float* dst, const float* src,
         const float* batch_src = src + std::size_t(batch) * in_batch;
         const auto body = [&](int first, int last) {
           Avx2DepthwisePointwiseConv5x5S1(
+              batch_dst, batch_src, depthwise_weights, depthwise_bias,
+              pointwise_weights, pointwise_bias, channels, output_channels, height,
+              width, activation, first, last);
+        };
+        if (height >= 16) ParallelFor(height, body);
+        else body(0, height);
+      }
+      return true;
+    }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+    // Same size gate as the 3x3 LASX fusion: tiny rec maps stay two-pass.
+    if (HasLasx() && height >= 24 && width >= 48 &&
+        std::getenv("PPOCR_DISABLE_LASX_DWPW5_FUSED") == nullptr) {
+      const std::size_t in_batch = std::size_t(channels) * height * width;
+      const std::size_t out_batch = std::size_t(output_channels) * height * width;
+      for (int batch = 0; batch < batches; ++batch) {
+        float* batch_dst = dst + std::size_t(batch) * out_batch;
+        const float* batch_src = src + std::size_t(batch) * in_batch;
+        const auto body = [&](int first, int last) {
+          LasxDepthwisePointwiseConv5x5S1(
               batch_dst, batch_src, depthwise_weights, depthwise_bias,
               pointwise_weights, pointwise_bias, channels, output_channels, height,
               width, activation, first, last);
