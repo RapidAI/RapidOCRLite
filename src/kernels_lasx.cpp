@@ -1429,4 +1429,31 @@ void LasxGemmPacked32(float* dst, const float* a, const float* packed_b,
   }
 }
 
+
+float LasxSoftmaxDenom(const float* logits, int vocab, float maximum) noexcept {
+  if (!logits || vocab <= 0) return 0.F;
+  const __m256 vmax = Splat(maximum);
+  __m256 vsum = Splat(0.F);
+  int column = 0;
+  for (; column + 8 <= vocab; column += 8) {
+    vsum = __lasx_xvfadd_s(vsum, ExpPs(__lasx_xvfsub_s(Load(logits + column), vmax)));
+  }
+  float sum = HSum(vsum);
+  for (; column < vocab; ++column) sum += std::exp(logits[column] - maximum);
+  return sum;
+}
+
+
+void LasxIm2colCopyStride2(float* dst, const float* src, int len) noexcept {
+  int i = 0;
+  for (; i + 8 <= len; i += 8) {
+    alignas(32) float tmp[16];
+    Store(tmp, Load(src + 2 * i));
+    Store(tmp + 8, Load(src + 2 * i + 8));
+    dst[i] = tmp[0]; dst[i + 1] = tmp[2]; dst[i + 2] = tmp[4]; dst[i + 3] = tmp[6];
+    dst[i + 4] = tmp[8]; dst[i + 5] = tmp[10]; dst[i + 6] = tmp[12]; dst[i + 7] = tmp[14];
+  }
+  for (; i < len; ++i) dst[i] = src[2 * i];
+}
+
 }  // namespace ppocr::detail::kernels

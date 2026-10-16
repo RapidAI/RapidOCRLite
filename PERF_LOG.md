@@ -144,3 +144,5 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - 2026-10-16 14:55 LASX 5x5 DW+PW fused (H>=24,W>=48) + GEMM B-panel packing (depth>=48, 16-col K-contiguous): QEMU 0 text diffs; QEMU wall 226 s vs prior 247 s (~1.09x) and vs early baseline 276 s (~1.22x).
 - 2026-10-16 15:35 LASX online CTC (GemmPacked32 + argmax/softmax, no full logits) + LSX NeonGemm 4-row: QEMU 0 text diffs; QEMU wall 217 s vs prior 226 s (~1.04x) and vs 276 s start (~1.27x).
 - LSX-only (PPOCR_FORCE_ISA=lsx, 4-row NeonGemm): QEMU 0 text diffs; QEMU wall 230 s (vs LASX 217 s).
+- 2026-10-16 16:32 LasxSoftmaxDenom (emit_row non-online) + Im2colCopyStride2 (LASX/NEON vld2); NEON SoftmaxDenom gated off (ExpPs slower than libm under QEMU); LoongArch default thread-cap@4 gated off (314 s regression). QEMU 0 text diffs; wall 220 s vs 217 s prior (~flat).
+- LSX ExpandGelu already via NeonExpandGeluProjectAdd when HasLasx is false.

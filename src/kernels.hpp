@@ -9,6 +9,8 @@ namespace ppocr::detail::kernels {
 // Persistent-pool range split. Used by independent 1x1 Conv islands so FPN
 // laterals can run together without each nesting another ParallelFor.
 void ParallelForRange(int count, const std::function<void(int, int)>& fn);
+// Strided src[0],src[2],... -> dst[0],dst[1],... for im2col strips.
+void Im2colCopyStride2(float* dst, const float* src, int len) noexcept;
 
 enum class BinaryOp { add, sub, mul, div };
 

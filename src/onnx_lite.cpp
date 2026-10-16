@@ -3427,7 +3427,7 @@ void SmallConvIm2colGemm(float* dst, const std::vector<const float*>& planes,
               const float* sp = plane + seg_off[g];
               const int len = seg_n[g];
               if (stride_w == 1) std::memcpy(d, sp, std::size_t(len) * sizeof(float));
-              else if (stride_w == 2) for (int t = 0; t < len; ++t) d[t] = sp[2 * t];
+              else if (stride_w == 2) kernels::Im2colCopyStride2(d, sp, len);
               else for (int t = 0; t < len; ++t) d[t] = sp[t * stride_w];
             }
           }

@@ -84,6 +84,8 @@ void LasxPointwiseConv(float* dst, const float* src, const float* weights,
 void LasxGemmPacked32(float* dst, const float* a, const float* packed_b,
                       const float* bias, int rows, int cols, int depth,
                       int* ctc_arg, float* ctc_max, float* ctc_sum) noexcept;
+float LasxSoftmaxDenom(const float* logits, int vocab, float maximum) noexcept;
+void LasxIm2colCopyStride2(float* dst, const float* src, int len) noexcept;
 #endif
 
 
@@ -1363,6 +1365,27 @@ IsaDispatch QueryIsa() noexcept {
 void ParallelForRange(int count, const std::function<void(int, int)>& fn) {
   ParallelFor(count, fn);
 }
+
+void Im2colCopyStride2(float* dst, const float* src, int len) noexcept {
+  if (!dst || !src || len <= 0) return;
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx()) {
+    LasxIm2colCopyStride2(dst, src, len);
+    return;
+  }
+#endif
+  int i = 0;
+#if defined(PPOCR_NEON_LIKE)
+  if (HasNeon()) {
+    for (; i + 4 <= len; i += 4) {
+      const float32x4x2_t v = vld2q_f32(src + 2 * i);
+      vst1q_f32(dst + i, v.val[0]);
+    }
+  }
+#endif
+  for (; i < len; ++i) dst[i] = src[2 * i];
+}
+
 
 void WriteIdentityRgbToNchw(float* dst, const std::uint8_t* rgb, int width,
                             int height, int source_width, int left, int top,
@@ -6844,6 +6867,14 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
           std::getenv("PPOCR_DISABLE_AVX512_CTC_SOFTMAX") == nullptr;
       if (simd_sm && HasAvx512() && vocab >= 16) {
         sum = Avx512SoftmaxDenom(row_logits, vocab, maximum);
+      } else
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+      // Online CTC already folds the denom; this covers non-online emit_row.
+      // NEON/LSX keep the scalar 4-wide std::exp path: NeonExpPs is slower
+      // under QEMU than libm for this reduction.
+      if (HasLasx() && vocab >= 8) {
+        sum = LasxSoftmaxDenom(row_logits, vocab, maximum);
       } else
 #endif
       {
