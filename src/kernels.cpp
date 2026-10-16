@@ -2011,11 +2011,25 @@ void BatchNormGelu(float* dst, const float* src, const float* scale,
         // On targets without the x86 approximate kernels, Gelu() deliberately
         // retains exact Erf even when the deployment flag is set. Preserve
         // that cross-architecture contract here as well.
+#if defined(PPOCR_HAS_LASX_KERNELS)
+        if (HasLasx()) {
+          LasxScaleShift(dst + base, src + base, spatial, factor, offset);
+          LasxExactGeluRange(dst + base, dst + base, spatial);
+          continue;
+        }
+#endif
         for (std::size_t index = 0; index < spatial; ++index) {
           const float x = src[base + index] * factor + offset;
           dst[base + index] = x * .5F * (1.F + std::erf(x * inv_sqrt2));
         }
       } else {
+#if defined(PPOCR_HAS_LASX_KERNELS)
+        if (HasLasx()) {
+          LasxScaleShift(dst + base, src + base, spatial, factor, offset);
+          LasxExactGeluRange(dst + base, dst + base, spatial);
+          continue;
+        }
+#endif
         for (std::size_t index = 0; index < spatial; ++index) {
           const float x = src[base + index] * factor + offset;
           dst[base + index] = x * .5F * (1.F + std::erf(x * inv_sqrt2));

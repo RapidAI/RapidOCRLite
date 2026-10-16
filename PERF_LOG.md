@@ -140,3 +140,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - 2026-10-16 13:13 LASX elementwise (Binary/HardSwish/ScaleShift/HardSigmoid 8-wide), GEMM FMA + 4-row blocking (vectorize cols/8*8), gated DW+PW 3x3 SAME fusion (H>=24,W>=48): QEMU 0 text diffs; QEMU wall 240 s vs 276 s baseline (~1.15x) and vs Expand-only 248 s. Ungated DWPW was 278 s (regressed) so size-gated.
 - 2026-10-16 13:42 LASX fused DepthwiseExpandGeluProjectAdd 3x3S1 (H>=24,W>=48): QEMU 0 text diffs; QEMU wall 251 s vs prior 240 s (noise; still ~1.10x vs 276 s baseline).
 - 2026-10-16 14:18 LASX PointwiseConv (4 OC x 16 spatial) + BinaryInplace: QEMU 0 text diffs; QEMU wall 251 s (flat vs prior under QEMU; 1x1 now LASX not LSX).
+- 2026-10-16 14:29 BatchNormGelu exact path uses LasxScaleShift+LasxExactGeluRange: QEMU 0 text diffs; QEMU wall 247 s.
