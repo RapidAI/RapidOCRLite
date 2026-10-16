@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace ppocr::detail::kernels {
 namespace {
@@ -288,5 +289,213 @@ void LasxDepthwiseConv(float* dst, const float* src, const float* weights, const
     }
   }
 }
+
+
+// Fused expand → exact GELU → project + residual. Spatial tiles of 16 use two
+// 8-lane LASX accumulators (same FMA + erf order as NeonExpandGeluProjectAdd's
+// 4-lane path, wider). Trailing spatials share the scalar loop.
+void LasxExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weights,
+                              const float* expand_bias, const float* project_weights,
+                              const float* project_bias, int channels, int hidden,
+                              std::size_t plane, std::size_t spatial_begin,
+                              std::size_t spatial_end) noexcept {
+  if (!dst || !src || !expand_weights || !project_weights || channels <= 0 || hidden <= 0 ||
+      spatial_begin >= spatial_end || spatial_end > plane) {
+    return;
+  }
+  thread_local std::vector<float> hidden_tile;
+  hidden_tile.resize(std::size_t(hidden) * 16);
+  constexpr float inv_sqrt2s = 0.7071067811865475244F;
+  const auto scalar_at = [&](std::size_t spatial) {
+    for (int hidden_channel = 0; hidden_channel < hidden; ++hidden_channel) {
+      float sum = expand_bias ? expand_bias[hidden_channel] : 0.F;
+      const float* filter = expand_weights + std::size_t(hidden_channel) * channels;
+      for (int channel = 0; channel < channels; ++channel) {
+        sum += filter[channel] * src[std::size_t(channel) * plane + spatial];
+      }
+      hidden_tile[static_cast<std::size_t>(hidden_channel)] =
+          sum * .5F * (1.F + std::erf(sum * inv_sqrt2s));
+    }
+    for (int channel = 0; channel < channels; ++channel) {
+      float sum = (project_bias ? project_bias[channel] : 0.F) +
+                  src[std::size_t(channel) * plane + spatial];
+      const float* filter = project_weights + std::size_t(channel) * hidden;
+      for (int hidden_channel = 0; hidden_channel < hidden; ++hidden_channel) {
+        sum += filter[hidden_channel] * hidden_tile[static_cast<std::size_t>(hidden_channel)];
+      }
+      dst[std::size_t(channel) * plane + spatial] = sum;
+    }
+  };
+  std::size_t spatial = spatial_begin;
+  for (; spatial + 16 <= spatial_end; spatial += 16) {
+    int hidden_channel = 0;
+    for (; hidden_channel + 4 <= hidden; hidden_channel += 4) {
+      const float* e0 = expand_weights + std::size_t(hidden_channel) * channels;
+      const float* e1 = e0 + channels;
+      const float* e2 = e1 + channels;
+      const float* e3 = e2 + channels;
+      __m256 a00 = Splat(expand_bias ? expand_bias[hidden_channel] : 0.F);
+      __m256 a01 = a00;
+      __m256 a10 = Splat(expand_bias ? expand_bias[hidden_channel + 1] : 0.F);
+      __m256 a11 = a10;
+      __m256 a20 = Splat(expand_bias ? expand_bias[hidden_channel + 2] : 0.F);
+      __m256 a21 = a20;
+      __m256 a30 = Splat(expand_bias ? expand_bias[hidden_channel + 3] : 0.F);
+      __m256 a31 = a30;
+      for (int channel = 0; channel < channels; ++channel) {
+        const float* in = src + std::size_t(channel) * plane + spatial;
+        const __m256 x0 = Load(in), x1 = Load(in + 8);
+        const __m256 w0 = Splat(e0[channel]), w1 = Splat(e1[channel]);
+        const __m256 w2 = Splat(e2[channel]), w3 = Splat(e3[channel]);
+        a00 = Fma(a00, x0, w0); a01 = Fma(a01, x1, w0);
+        a10 = Fma(a10, x0, w1); a11 = Fma(a11, x1, w1);
+        a20 = Fma(a20, x0, w2); a21 = Fma(a21, x1, w2);
+        a30 = Fma(a30, x0, w3); a31 = Fma(a31, x1, w3);
+      }
+      float* tile = hidden_tile.data() + std::size_t(hidden_channel) * 16;
+      Store(tile, GeluPs(a00)); Store(tile + 8, GeluPs(a01));
+      tile += 16;
+      Store(tile, GeluPs(a10)); Store(tile + 8, GeluPs(a11));
+      tile += 16;
+      Store(tile, GeluPs(a20)); Store(tile + 8, GeluPs(a21));
+      tile += 16;
+      Store(tile, GeluPs(a30)); Store(tile + 8, GeluPs(a31));
+    }
+    for (; hidden_channel < hidden; ++hidden_channel) {
+      const float* filter = expand_weights + std::size_t(hidden_channel) * channels;
+      __m256 a0 = Splat(expand_bias ? expand_bias[hidden_channel] : 0.F);
+      __m256 a1 = a0;
+      for (int channel = 0; channel < channels; ++channel) {
+        const float* in = src + std::size_t(channel) * plane + spatial;
+        const __m256 w = Splat(filter[channel]);
+        a0 = Fma(a0, Load(in), w);
+        a1 = Fma(a1, Load(in + 8), w);
+      }
+      float* tile = hidden_tile.data() + std::size_t(hidden_channel) * 16;
+      Store(tile, GeluPs(a0)); Store(tile + 8, GeluPs(a1));
+    }
+    int channel = 0;
+    for (; channel + 4 <= channels; channel += 4) {
+      const float* p0 = project_weights + std::size_t(channel) * hidden;
+      const float* p1 = p0 + hidden;
+      const float* p2 = p1 + hidden;
+      const float* p3 = p2 + hidden;
+      const float* s0 = src + std::size_t(channel) * plane + spatial;
+      const float* s1 = src + std::size_t(channel + 1) * plane + spatial;
+      const float* s2 = src + std::size_t(channel + 2) * plane + spatial;
+      const float* s3 = src + std::size_t(channel + 3) * plane + spatial;
+      __m256 b00 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel] : 0.F), Load(s0));
+      __m256 b01 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel] : 0.F), Load(s0 + 8));
+      __m256 b10 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 1] : 0.F), Load(s1));
+      __m256 b11 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 1] : 0.F), Load(s1 + 8));
+      __m256 b20 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 2] : 0.F), Load(s2));
+      __m256 b21 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 2] : 0.F), Load(s2 + 8));
+      __m256 b30 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 3] : 0.F), Load(s3));
+      __m256 b31 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 3] : 0.F), Load(s3 + 8));
+      for (int h = 0; h < hidden; ++h) {
+        const float* g = hidden_tile.data() + std::size_t(h) * 16;
+        const __m256 g0 = Load(g), g1 = Load(g + 8);
+        const __m256 w0 = Splat(p0[h]), w1 = Splat(p1[h]);
+        const __m256 w2 = Splat(p2[h]), w3 = Splat(p3[h]);
+        b00 = Fma(b00, g0, w0); b01 = Fma(b01, g1, w0);
+        b10 = Fma(b10, g0, w1); b11 = Fma(b11, g1, w1);
+        b20 = Fma(b20, g0, w2); b21 = Fma(b21, g1, w2);
+        b30 = Fma(b30, g0, w3); b31 = Fma(b31, g1, w3);
+      }
+      float* d0 = dst + std::size_t(channel) * plane + spatial;
+      Store(d0, b00); Store(d0 + 8, b01);
+      d0 = dst + std::size_t(channel + 1) * plane + spatial;
+      Store(d0, b10); Store(d0 + 8, b11);
+      d0 = dst + std::size_t(channel + 2) * plane + spatial;
+      Store(d0, b20); Store(d0 + 8, b21);
+      d0 = dst + std::size_t(channel + 3) * plane + spatial;
+      Store(d0, b30); Store(d0 + 8, b31);
+    }
+    for (; channel < channels; ++channel) {
+      const float* filter = project_weights + std::size_t(channel) * hidden;
+      const float* in = src + std::size_t(channel) * plane + spatial;
+      const __m256 bias = Splat(project_bias ? project_bias[channel] : 0.F);
+      __m256 a0 = __lasx_xvfadd_s(bias, Load(in));
+      __m256 a1 = __lasx_xvfadd_s(bias, Load(in + 8));
+      for (int h = 0; h < hidden; ++h) {
+        const float* g = hidden_tile.data() + std::size_t(h) * 16;
+        const __m256 w = Splat(filter[h]);
+        a0 = Fma(a0, Load(g), w);
+        a1 = Fma(a1, Load(g + 8), w);
+      }
+      float* out = dst + std::size_t(channel) * plane + spatial;
+      Store(out, a0); Store(out + 8, a1);
+    }
+  }
+  for (; spatial + 8 <= spatial_end; spatial += 8) {
+    int hidden_channel = 0;
+    for (; hidden_channel + 4 <= hidden; hidden_channel += 4) {
+      const float* e0 = expand_weights + std::size_t(hidden_channel) * channels;
+      const float* e1 = e0 + channels;
+      const float* e2 = e1 + channels;
+      const float* e3 = e2 + channels;
+      __m256 a0 = Splat(expand_bias ? expand_bias[hidden_channel] : 0.F);
+      __m256 a1 = Splat(expand_bias ? expand_bias[hidden_channel + 1] : 0.F);
+      __m256 a2 = Splat(expand_bias ? expand_bias[hidden_channel + 2] : 0.F);
+      __m256 a3 = Splat(expand_bias ? expand_bias[hidden_channel + 3] : 0.F);
+      for (int channel = 0; channel < channels; ++channel) {
+        const __m256 x = Load(src + std::size_t(channel) * plane + spatial);
+        a0 = Fma(a0, x, Splat(e0[channel]));
+        a1 = Fma(a1, x, Splat(e1[channel]));
+        a2 = Fma(a2, x, Splat(e2[channel]));
+        a3 = Fma(a3, x, Splat(e3[channel]));
+      }
+      Store(hidden_tile.data() + std::size_t(hidden_channel) * 8, GeluPs(a0));
+      Store(hidden_tile.data() + std::size_t(hidden_channel + 1) * 8, GeluPs(a1));
+      Store(hidden_tile.data() + std::size_t(hidden_channel + 2) * 8, GeluPs(a2));
+      Store(hidden_tile.data() + std::size_t(hidden_channel + 3) * 8, GeluPs(a3));
+    }
+    for (; hidden_channel < hidden; ++hidden_channel) {
+      const float* filter = expand_weights + std::size_t(hidden_channel) * channels;
+      __m256 acc = Splat(expand_bias ? expand_bias[hidden_channel] : 0.F);
+      for (int channel = 0; channel < channels; ++channel) {
+        acc = Fma(acc, Load(src + std::size_t(channel) * plane + spatial), Splat(filter[channel]));
+      }
+      Store(hidden_tile.data() + std::size_t(hidden_channel) * 8, GeluPs(acc));
+    }
+    int channel = 0;
+    for (; channel + 4 <= channels; channel += 4) {
+      const float* p0 = project_weights + std::size_t(channel) * hidden;
+      const float* p1 = p0 + hidden;
+      const float* p2 = p1 + hidden;
+      const float* p3 = p2 + hidden;
+      __m256 a0 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel] : 0.F),
+                                  Load(src + std::size_t(channel) * plane + spatial));
+      __m256 a1 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 1] : 0.F),
+                                  Load(src + std::size_t(channel + 1) * plane + spatial));
+      __m256 a2 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 2] : 0.F),
+                                  Load(src + std::size_t(channel + 2) * plane + spatial));
+      __m256 a3 = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel + 3] : 0.F),
+                                  Load(src + std::size_t(channel + 3) * plane + spatial));
+      for (int h = 0; h < hidden; ++h) {
+        const __m256 g = Load(hidden_tile.data() + std::size_t(h) * 8);
+        a0 = Fma(a0, g, Splat(p0[h]));
+        a1 = Fma(a1, g, Splat(p1[h]));
+        a2 = Fma(a2, g, Splat(p2[h]));
+        a3 = Fma(a3, g, Splat(p3[h]));
+      }
+      Store(dst + std::size_t(channel) * plane + spatial, a0);
+      Store(dst + std::size_t(channel + 1) * plane + spatial, a1);
+      Store(dst + std::size_t(channel + 2) * plane + spatial, a2);
+      Store(dst + std::size_t(channel + 3) * plane + spatial, a3);
+    }
+    for (; channel < channels; ++channel) {
+      const float* filter = project_weights + std::size_t(channel) * hidden;
+      __m256 acc = __lasx_xvfadd_s(Splat(project_bias ? project_bias[channel] : 0.F),
+                                   Load(src + std::size_t(channel) * plane + spatial));
+      for (int h = 0; h < hidden; ++h) {
+        acc = Fma(acc, Load(hidden_tile.data() + std::size_t(h) * 8), Splat(filter[h]));
+      }
+      Store(dst + std::size_t(channel) * plane + spatial, acc);
+    }
+  }
+  for (; spatial < spatial_end; ++spatial) scalar_at(spatial);
+}
+
 
 }  // namespace ppocr::detail::kernels

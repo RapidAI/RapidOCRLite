@@ -56,6 +56,11 @@ void LasxDepthwiseConv(float* dst, const float* src, const float* weights, const
                        int first_channel, int last_channel, int input_h, int input_w,
                        int output_h, int output_w, int kernel_h, int kernel_w, int pad_top,
                        int pad_left) noexcept;
+void LasxExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weights,
+                              const float* expand_bias, const float* project_weights,
+                              const float* project_bias, int channels, int hidden,
+                              std::size_t plane, std::size_t spatial_begin,
+                              std::size_t spatial_end) noexcept;
 #endif
 
 
@@ -2986,6 +2991,22 @@ void ExpandGeluProjectAdd(float* dst, const float* src, const float* expand_weig
       const std::size_t begin = std::size_t(first) * 8;
       const std::size_t end = std::min(plane, std::size_t(last) * 8);
       Avx2ExpandGeluProjectAdd(dst, src, expand_weights, expand_bias, project_weights,
+                               project_bias, channels, hidden, plane, begin, end);
+    };
+    if (work >= std::int64_t{3000000} && tiles > 2) ParallelFor(tiles, body);
+    else body(0, tiles);
+    return;
+  }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  static const bool lasx_expand = std::getenv("PPOCR_DISABLE_LASX_EXPAND_GELU") == nullptr;
+  if (HasLasx() && lasx_expand) {
+    const int tiles = static_cast<int>((plane + 15) / 16);
+    const auto work = std::int64_t(channels) * hidden * static_cast<std::int64_t>(plane);
+    const auto body = [&](int first, int last) {
+      const std::size_t begin = std::size_t(first) * 16;
+      const std::size_t end = std::min(plane, std::size_t(last) * 16);
+      LasxExpandGeluProjectAdd(dst, src, expand_weights, expand_bias, project_weights,
                                project_bias, channels, hidden, plane, begin, end);
     };
     if (work >= std::int64_t{3000000} && tiles > 2) ParallelFor(tiles, body);
