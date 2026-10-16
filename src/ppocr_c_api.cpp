@@ -1,10 +1,17 @@
+#define PPOCR_NO_OPTIONS_INIT_MACRO
 #include "ppocr/ppocr.h"
 
 #include "ppocr/ppocr.hpp"
 #include "cv_compat.hpp"
 #include "vulkan_backend.hpp"
+#include "indra/lite_pipeline.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <cstddef>
 #include <cstdio>
+#include <memory>
+#include <thread>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -30,7 +37,7 @@ ppocr::Options ToOptions(const ppocr_options* options) {
   ppocr::Options out;
   if (!options) return out;
   ppocr_options local{};
-  ppocr_options_init(&local);
+  ppocr_options_init_ex(&local, sizeof(local));
   const int bytes = options->struct_size > 0 ? options->struct_size : static_cast<int>(sizeof(ppocr_options));
   const int copy = bytes < static_cast<int>(sizeof(local)) ? bytes : static_cast<int>(sizeof(local));
   if (copy > 0) std::memcpy(&local, options, static_cast<std::size_t>(copy));
@@ -64,6 +71,13 @@ ppocr::Options ToOptions(const ppocr_options* options) {
   out.det_max_candidates = local.det_max_candidates;
   out.vulkan_device_index = local.vulkan_device_index;
   out.rec_fast_mode = local.rec_fast_mode != 0;
+  // model_type only counts when the caller's struct_size covers it (else AUTO).
+  const bool has_model_type = options->struct_size >= static_cast<int>(offsetof(ppocr_options, model_type) + sizeof(int));
+  switch (has_model_type ? local.model_type : PPOCR_MODEL_AUTO) {
+    case PPOCR_MODEL_PPOCR: out.model_type = ppocr::ModelType::ppocr; break;
+    case PPOCR_MODEL_LITE: out.model_type = ppocr::ModelType::lite; break;
+    default: out.model_type = ppocr::ModelType::auto_detect; break;
+  }
   return out;
 }
 
@@ -115,15 +129,57 @@ ppocr::Image Borrow(const ppocr_image& image) {
 
 }  // namespace
 
+namespace {
+// Lite (Indra) results keep their fractional box coordinates in the C ABI.
+int FillLite(const std::vector<ppocr::indra::LiteLine>& src, ppocr_result* result) {
+  result->items = nullptr;
+  result->count = 0;
+  if (src.empty()) return PPOCR_OK;
+  auto* items = static_cast<ppocr_text_box*>(std::calloc(src.size(), sizeof(ppocr_text_box)));
+  if (!items) return Fail(PPOCR_ERR_NOMEM, "out of memory");
+  for (std::size_t i = 0; i < src.size(); ++i) {
+    const auto& l = src[i];
+    items[i].text = Dup(l.text);
+    if (!items[i].text) {
+      for (std::size_t j = 0; j < i; ++j) std::free(items[j].text);
+      std::free(items);
+      return Fail(PPOCR_ERR_NOMEM, "out of memory");
+    }
+    items[i].confidence = l.conf;
+    const int x0 = static_cast<int>(std::floor(l.x0)), y0 = static_cast<int>(std::floor(l.y0));
+    items[i].bbox_x = x0;
+    items[i].bbox_y = y0;
+    items[i].bbox_w = static_cast<int>(std::ceil(l.x1)) - x0;
+    items[i].bbox_h = static_cast<int>(std::ceil(l.y1)) - y0;
+    items[i].box[0] = {l.x0, l.y0};
+    items[i].box[1] = {l.x1, l.y0};
+    items[i].box[2] = {l.x1, l.y1};
+    items[i].box[3] = {l.x0, l.y1};
+  }
+  result->items = items;
+  result->count = src.size();
+  return PPOCR_OK;
+}
+}  // namespace
+
+// Either the PP-OCRv6 engine or, when det_model is a lite folder (meta.json), the Indra lite engine.
 struct ppocr_ocr {
-  ppocr::OCR engine;
-  explicit ppocr_ocr(ppocr::OCR engine_in) : engine(std::move(engine_in)) {}
+  std::unique_ptr<ppocr::OCR> ocr;
+  std::unique_ptr<ppocr::indra::LiteEngine> lite;
+  std::string lite_note;
+  explicit ppocr_ocr(ppocr::OCR engine_in) : ocr(std::make_unique<ppocr::OCR>(std::move(engine_in))) {}
+  explicit ppocr_ocr(std::unique_ptr<ppocr::indra::LiteEngine> l) : lite(std::move(l)) { lite_note = lite->Note(); }
+  ppocr::OCR& engine() { return *ocr; }
+  const ppocr::OCR& engine() const { return *ocr; }
 };
 
 extern "C" {
 
-void ppocr_options_init(ppocr_options* options) {
-  if (!options) return;
+void ppocr_options_init_ex(ppocr_options* options, size_t size) {
+  if (!options || size < sizeof(int)) return;
+  ppocr_options full;
+  ppocr_options* out = options;
+  options = &full;
   std::memset(options, 0, sizeof(*options));
   options->struct_size = static_cast<int>(sizeof(ppocr_options));
   options->backend = PPOCR_BACKEND_HYBRID;
@@ -152,6 +208,15 @@ void ppocr_options_init(ppocr_options* options) {
   options->det_max_candidates = defaults.det_max_candidates;
   options->vulkan_device_index = defaults.vulkan_device_index;
   options->rec_fast_mode = defaults.rec_fast_mode ? 1 : 0;
+  options->model_type = PPOCR_MODEL_AUTO;
+  const size_t n = size < sizeof(full) ? size : sizeof(full);
+  std::memcpy(out, &full, n);
+  out->struct_size = static_cast<int>(n);
+}
+
+// Pre-model_type layout (binaries built against older headers).
+void ppocr_options_init(ppocr_options* options) {
+  ppocr_options_init_ex(options, offsetof(ppocr_options, model_type));
 }
 
 const char* ppocr_last_error(void) { return g_error.c_str(); }
@@ -159,11 +224,35 @@ const char* ppocr_last_error(void) { return g_error.c_str(); }
 ppocr_ocr* ppocr_create(const char* det_model, const char* rec_model,
                         const char* dictionary, const ppocr_options* options) {
   ClearError();
-  if (!det_model || !rec_model || !dictionary) {
+  int model_type = PPOCR_MODEL_AUTO;
+  if (options && options->struct_size >= static_cast<int>(offsetof(ppocr_options, model_type) + sizeof(int)))
+    model_type = options->model_type;
+  if (model_type != PPOCR_MODEL_AUTO && model_type != PPOCR_MODEL_PPOCR && model_type != PPOCR_MODEL_LITE) {
+    Fail(PPOCR_ERR_INVALID_ARGUMENT, "model_type must be PPOCR_MODEL_AUTO, PPOCR_MODEL_PPOCR or PPOCR_MODEL_LITE");
+    return nullptr;
+  }
+  const bool lite_dir = det_model && ppocr::indra::LiteEngine::IsLiteDir(det_model);
+  if (model_type == PPOCR_MODEL_LITE && !lite_dir) {
+    Fail(det_model ? PPOCR_ERR_MODEL : PPOCR_ERR_INVALID_ARGUMENT,
+         "model_type=lite needs det_model to be a lite model folder containing meta.json");
+    return nullptr;
+  }
+  if (model_type == PPOCR_MODEL_PPOCR && lite_dir) {
+    Fail(PPOCR_ERR_MODEL, "model_type=ppocr, but det_model is a lite model folder (meta.json); use PPOCR_MODEL_LITE or AUTO");
+    return nullptr;
+  }
+  const bool lite = lite_dir;
+  if (!det_model || (!lite && (!rec_model || !dictionary))) {
     Fail(PPOCR_ERR_INVALID_ARGUMENT, "model and dictionary paths are required");
     return nullptr;
   }
   try {
+    if (lite) {  // model type "lite": det_model is the Indra folder; rec_model / dictionary are ignored
+      const ppocr::Options o = ToOptions(options);
+      const int hw = static_cast<int>(std::thread::hardware_concurrency());
+      const int threads = std::max(1, hw > 0 ? std::min(o.rec_parallelism, hw) : o.rec_parallelism);
+      return new ppocr_ocr(std::make_unique<ppocr::indra::LiteEngine>(det_model, threads));
+    }
     auto* handle = new ppocr_ocr(ppocr::OCR(det_model, rec_model, dictionary, ToOptions(options)));
     return handle;
   } catch (const std::bad_alloc&) {
@@ -186,7 +275,8 @@ int ppocr_set_det_thresholds(ppocr_ocr* ocr, float det_threshold, float det_box_
   ClearError();
   if (!ocr) return Fail(PPOCR_ERR_INVALID_ARGUMENT, "null OCR handle");
   try {
-    ocr->engine.SetDetectionThresholds(det_threshold, det_box_threshold, det_unclip_ratio);
+    if (ocr->lite) return PPOCR_OK;  // Indra's line decoder has fixed thresholds
+    ocr->engine().SetDetectionThresholds(det_threshold, det_box_threshold, det_unclip_ratio);
     return PPOCR_OK;
   } catch (const std::exception& ex) {
     return Fail(PPOCR_ERR_INVALID_ARGUMENT, ex.what());
@@ -200,7 +290,11 @@ int ppocr_recognize(ppocr_ocr* ocr, const ppocr_image* image, ppocr_result* resu
   result->count = 0;
   if (!ocr || !image) return Fail(PPOCR_ERR_INVALID_ARGUMENT, "null OCR handle or image");
   try {
-    return FillResult(ocr->engine.Recognize(Borrow(*image)), result);
+    if (ocr->lite) {
+      if (!image->rgb || image->width <= 0 || image->height <= 0) return Fail(PPOCR_ERR_INVALID_ARGUMENT, "empty image");
+      return FillLite(ocr->lite->Run(image->rgb, image->width, image->height, 3), result);
+    }
+    return FillResult(ocr->engine().Recognize(Borrow(*image)), result);
   } catch (const std::bad_alloc&) {
     return Fail(PPOCR_ERR_NOMEM, "out of memory");
   } catch (const std::exception& ex) {
@@ -219,7 +313,11 @@ int ppocr_run(ppocr_ocr* ocr, const ppocr_image* image, int tasks, ppocr_result*
     return Fail(PPOCR_ERR_INVALID_ARGUMENT, "tasks must be PPOCR_TASK_DET, PPOCR_TASK_REC or both");
   }
   try {
-    return FillResult(ocr->engine.Run(Borrow(*image), det, rec), result);
+    if (ocr->lite) {
+      if (!image->rgb || image->width <= 0 || image->height <= 0) return Fail(PPOCR_ERR_INVALID_ARGUMENT, "empty image");
+      return FillLite(ocr->lite->Run(image->rgb, image->width, image->height, (det ? 1 : 0) | (rec ? 2 : 0)), result);
+    }
+    return FillResult(ocr->engine().Run(Borrow(*image), det, rec), result);
   } catch (const ppocr::UnsupportedError& ex) {
     return Fail(PPOCR_ERR_UNSUPPORTED, ex.what());
   } catch (const std::bad_alloc&) {
@@ -240,10 +338,26 @@ int ppocr_recognize_batch(ppocr_ocr* ocr, const ppocr_image* images, size_t coun
     outs[i].count = 0;
   }
   try {
+    if (ocr->lite) {
+      std::vector<ppocr::indra::LiteEngine::BatchImage> ims;
+      for (size_t i = 0; i < count; ++i) {
+        if (!images[i].rgb || images[i].width <= 0 || images[i].height <= 0) return Fail(PPOCR_ERR_INVALID_ARGUMENT, "empty image");
+        ims.push_back({images[i].rgb, images[i].width, images[i].height});
+      }
+      auto pages = ocr->lite->RunBatch(ims);
+      for (size_t i = 0; i < count; ++i) {
+        const int status = FillLite(pages[i], &outs[i]);
+        if (status != PPOCR_OK) {
+          for (size_t j = 0; j < i; ++j) ppocr_result_free(&outs[j]);
+          return status;
+        }
+      }
+      return PPOCR_OK;
+    }
     std::vector<ppocr::Image> owned;
     owned.reserve(count);
     for (size_t i = 0; i < count; ++i) owned.push_back(Borrow(images[i]));
-    const auto batch = ocr->engine.RecognizeBatch(owned);
+    const auto batch = ocr->engine().RecognizeBatch(owned);
     if (batch.size() != count) return Fail(PPOCR_ERR_RUNTIME, "batch size mismatch");
     for (size_t i = 0; i < count; ++i) {
       const int status = FillResult(batch[i], &outs[i]);
@@ -324,7 +438,8 @@ int ppocr_vulkan_validation_error_count(void) {
 
 int ppocr_active_backend(const ppocr_ocr* ocr) {
   if (!ocr) return -1;
-  switch (ocr->engine.ActiveBackend()) {
+  if (ocr->lite) return PPOCR_BACKEND_CPU;
+  switch (ocr->engine().ActiveBackend()) {
     case ppocr::Backend::cpu_only: return PPOCR_BACKEND_CPU;
     case ppocr::Backend::gpu_only: return PPOCR_BACKEND_GPU;
     case ppocr::Backend::hybrid: return PPOCR_BACKEND_HYBRID;
@@ -334,7 +449,8 @@ int ppocr_active_backend(const ppocr_ocr* ocr) {
 }
 
 const char* ppocr_backend_note(const ppocr_ocr* ocr) {
-  return ocr ? ocr->engine.BackendNote().c_str() : "";
+  if (ocr && ocr->lite) return ocr->lite_note.c_str();
+  return ocr ? ocr->engine().BackendNote().c_str() : "";
 }
 
 int ppocr_metal_available(void) {

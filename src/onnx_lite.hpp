@@ -40,6 +40,8 @@ class OnnxLite {
   // `backend` is an execution policy, not an ONNX feature. Only verified
   // elementwise Vulkan segments may be selected by hybrid; every other node
   // continues through the portable CPU executor.
+  // Empty executor (no model); used by an engine that runs the Indra lite pipeline instead.
+  OnnxLite() = default;
   explicit OnnxLite(const std::string& file, Backend backend = Backend::cpu_only);
   // Inputs are passed by value so call sites can transfer their activation
   // storage into the executor.  This avoids copying large NCHW batches before

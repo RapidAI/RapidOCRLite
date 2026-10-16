@@ -131,6 +131,10 @@ model_routes:
         - lang: multi
           model_key: multi_PP-OCRv6_det_medium
           supported_langs: *ppocrv6_langs
+      lite:
+        - lang: multi
+          model_key: lite_indra_det
+          supported_langs: [ch, chinese_cht, en, latin, cyrillic, eslav, el, devanagari]
 
     rec:
       tiny:
@@ -145,6 +149,10 @@ model_routes:
         - lang: multi
           model_key: multi_PP-OCRv6_rec_medium
           supported_langs: *ppocrv6_langs
+      lite:
+        - lang: multi
+          model_key: lite_indra_rec
+          supported_langs: [ch, chinese_cht, en, latin, cyrillic, eslav, el, devanagari]
 
   PP-OCRv5:
     det:
@@ -434,6 +442,16 @@ onnxruntime:
       multi_PP-OCRv6_det_medium:
         model_dir: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv6/det/PP-OCRv6_det_medium.onnx
         SHA256: 92078b7355007ccfffcd4c8cd441a3afd4538904d06881b29a155e1e679907c2
+      lite_indra_det:
+        bundled_dir: models/lite
+        license: models/lite/LICENSE
+        files:
+          det.onnx: 46b0050ce4c4692f887a1a9c038480223af1c7a91b3fcced2657d9cf00290dc4
+          rec.onnx: e243be069b357e56a0e867a21d7482e498df42fb19678bfb67a25f48b1f06151
+          rec_cjk.onnx: 4cec840b55e1bb7f375daf30a2975404a867a71ac1a5bc5b1629c4909ce16baa
+          script.onnx: 5ba37030e817affede0097a7503b6829624104166c6e0b6aacecacf919fc7d11
+          order.onnx: 23635dd2324b4ccc00c408af961273a2dedd2e4f0386bc54dba678c41bcf6b46
+          meta.json: ff6ec58f91c93a475ae9505ad21c73c3ecda0b378f1d889dd83408e10832d1bb
     rec:
       multi_PP-OCRv6_rec_tiny:
         model_dir: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_tiny.onnx
@@ -447,6 +465,16 @@ onnxruntime:
         model_dir: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/onnx/PP-OCRv6/rec/PP-OCRv6_rec_medium.onnx
         SHA256: eef444829dbbe18d7fea59a3f6eb75647518d2b3a9568d27c92e42940204894b
         dict_url: https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.10.0/paddle/PP-OCRv6/rec/PP-OCRv6_rec_medium/ppocrv6_dict.txt
+      lite_indra_rec:
+        bundled_dir: models/lite
+        license: models/lite/LICENSE
+        files:
+          det.onnx: 46b0050ce4c4692f887a1a9c038480223af1c7a91b3fcced2657d9cf00290dc4
+          rec.onnx: e243be069b357e56a0e867a21d7482e498df42fb19678bfb67a25f48b1f06151
+          rec_cjk.onnx: 4cec840b55e1bb7f375daf30a2975404a867a71ac1a5bc5b1629c4909ce16baa
+          script.onnx: 5ba37030e817affede0097a7503b6829624104166c6e0b6aacecacf919fc7d11
+          order.onnx: 23635dd2324b4ccc00c408af961273a2dedd2e4f0386bc54dba678c41bcf6b46
+          meta.json: ff6ec58f91c93a475ae9505ad21c73c3ecda0b378f1d889dd83408e10832d1bb
 openvino:
   PP-OCRv4:
     det:

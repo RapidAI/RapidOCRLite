@@ -147,7 +147,10 @@ class RapidOCR:
         original = self.load_img(img_content)
         # main pads short pages only in detect_and_crop, so use_det=False
         # gets the bounded resize alone.
-        prepared, ratio_w, ratio_h, pad_top = _prepare_image(self, original, pad=self.use_det)
+        if self._is_lite():  # Indra resizes internally (long side 1024, adaptive)
+            prepared, ratio_w, ratio_h, pad_top = original, 1.0, 1.0, 0
+        else:
+            prepared, ratio_w, ratio_h, pad_top = _prepare_image(self, original, pad=self.use_det)
         engine = self._ensure_engine()
         det_threshold = float(self.cfg.Det.get("thresh", 0.3))
         box_threshold = float(self.cfg.Det.get("box_thresh", 0.5))
@@ -201,12 +204,27 @@ class RapidOCR:
                     f"The native engine runs PP-OCRv6 ONNX models, not {version}."
                 )
 
+    def _is_lite(self) -> bool:
+        # Lite needs both sections (unchanged rule); a half-lite config keeps its previous behavior.
+        return all(str(_enum_value(self.cfg[s].get("model_type", ""))).lower() == "lite" for s in ("Det", "Rec"))
+
     def _ensure_engine(self) -> _native.NativeOCR:
         if self._engine is not None:
+            return self._engine
+        if self._is_lite():
+            # Det/Rec model_type="lite": bundled Indra OCR weights (models/lite), run by the
+            # native C++ engine with ppocr_options.model_type = PPOCR_MODEL_LITE.
+            from ._indra_lite import IndraLiteEngine, bundled_model_dir
+            th = int(self.cfg.EngineConfig.onnxruntime.get("intra_op_num_threads", -1) or -1)
+            if th <= 0:
+                import os
+                th = int(os.environ.get("PPOCR_BENCH_THREADS", 0)) or min(4, os.cpu_count() or 1)
+            self._engine = IndraLiteEngine(bundled_model_dir(self.cfg), threads=th)
             return self._engine
         det, rec, dictionary = _resolve_models(self.cfg)
         options = _native.default_options()
         options.backend = _native.PPOCR_BACKEND_CPU
+        options.model_type = _native.PPOCR_MODEL_PPOCR
         _apply_vulkan_options(self.cfg, options)
         options.det_threshold = float(self.cfg["Det"].get("thresh", options.det_threshold))
         options.det_box_threshold = float(self.cfg["Det"].get("box_thresh", options.det_box_threshold))

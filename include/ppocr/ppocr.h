@@ -74,7 +74,18 @@ typedef struct ppocr_options {
      overrides this field. Appended field: callers built against an older
      header pass a smaller struct_size and get 0. */
   int rec_fast_mode;
+  /* PPOCR_MODEL_*. AUTO (0, default): det_model naming a folder that holds
+     meta.json selects the lite (Indra) model, anything else the PP-OCR models
+     (previous behavior). PPOCR_MODEL_LITE: det_model must be a lite folder;
+     rec_model and dictionary may be NULL. PPOCR_MODEL_PPOCR: det_model and
+     rec_model must be ONNX files. Appended field: callers built against an
+     older header pass a smaller struct_size and get AUTO. */
+  int model_type;
 } ppocr_options;
+
+#define PPOCR_MODEL_AUTO 0
+#define PPOCR_MODEL_PPOCR 1
+#define PPOCR_MODEL_LITE 2
 
 typedef struct ppocr_image {
   int width;
@@ -128,8 +139,17 @@ typedef struct ppocr_cpu_info {
                           LoongArch LSX/LASX report through the neon_* fields */
 } ppocr_cpu_info;
 
-/* Fills options with the same defaults as ppocr::Options and sets struct_size. */
+/* Fills options with the same defaults as ppocr::Options and sets struct_size.
+   The exported ppocr_options_init symbol writes only the fields up to
+   rec_fast_mode (the layout binaries built against older headers have);
+   ppocr_options_init_ex writes min(size, sizeof(ppocr_options)) bytes. Code
+   built against this header calls _ex with its own struct size through the
+   macro below, so it gets every field, including model_type. */
 PPOCR_API void ppocr_options_init(ppocr_options* options);
+PPOCR_API void ppocr_options_init_ex(ppocr_options* options, size_t size);
+#ifndef PPOCR_NO_OPTIONS_INIT_MACRO
+#define ppocr_options_init(options) ppocr_options_init_ex((options), sizeof(*(options)))
+#endif
 
 /* Returns NULL on failure. ppocr_last_error() is set. options may be NULL. */
 PPOCR_API ppocr_ocr* ppocr_create(const char* det_model, const char* rec_model,

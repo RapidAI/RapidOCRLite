@@ -88,6 +88,10 @@ struct CpuInfo {
 
 [[nodiscard]] PPOCR_API CpuInfo QueryCpuInfo();
 
+// Which model family OCR() loads. auto_detect: det_model naming a folder with
+// meta.json selects the lite (Indra) model, anything else PP-OCR.
+enum class ModelType { auto_detect = 0, ppocr = 1, lite = 2 };
+
 struct Options {
   Backend backend = Backend::hybrid;
   float det_threshold = 0.20F;
@@ -169,6 +173,9 @@ struct Options {
   // Vulkan device. The choice is process-wide and is read on the first
   // Vulkan initialization.
   int vulkan_device_index = -1;
+  // Appended: model family (see ModelType). lite: det_model is the lite folder,
+  // rec_model / dictionary are ignored; rec_parallelism sets its thread count.
+  ModelType model_type = ModelType::auto_detect;
 };
 
 // PP-OCRv6 detector + recognizer with a deliberately narrow built-in ONNX

@@ -29,6 +29,10 @@ dependencies = [
     "tqdm",
 ]
 
+[project.optional-dependencies]
+# PPOCR_INDRA_BACKEND=ort test reference only (upstream indra-ocr); model_type="lite" itself runs in the C++ engine
+lite = ["onnxruntime>=1.17", "opencv-python-headless", "indra-ocr==0.3.2"]
+
 [project.urls]
 Documentation = "https://rapidai.github.io/RapidOCRDocs"
 Repository = "https://github.com/RapidAI/RapidOCRLite"

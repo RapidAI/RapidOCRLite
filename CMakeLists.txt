@@ -236,12 +236,49 @@ if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
   endif()
 endif()
 
+# Native Indra OCR ("lite" model): ONNX reader, recognizer, ISA kernels (runtime dispatch).
+target_sources(ppocr_objects PRIVATE src/indra/onnx_min.cpp src/indra/indra_rec.cpp src/indra/indra_det.cpp src/indra/indra_script.cpp src/indra/indra_order.cpp
+    src/indra/dispatch.cpp src/indra/indra_c_api.cpp src/indra/kern_scalar.cpp src/indra/imgproc.cpp src/indra/lite_pipeline.cpp src/indra/int8_gemm.cpp)
+# imgproc.cpp reproduces OpenCV's float rounding: every FMA is explicit, so no compiler contraction.
+if(NOT MSVC)
+  set_source_files_properties(src/indra/imgproc.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+  # lite_pipeline.cpp reproduces numpy / Python float semantics: IEEE arithmetic, no fast-math, no contraction.
+  set_source_files_properties(src/indra/lite_pipeline.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
+endif()
+if(NOT MSVC AND PPOCR_CPU MATCHES "x86_64|amd64|x64")
+  set_source_files_properties(src/indra/onnx_min.cpp src/indra/indra_rec.cpp src/indra/indra_det.cpp src/indra/indra_script.cpp src/indra/indra_order.cpp src/indra/dispatch.cpp
+      src/indra/indra_c_api.cpp src/indra/kern_scalar.cpp
+      PROPERTIES COMPILE_OPTIONS "-mno-avx;-mno-avx2;-mno-avx512f")
+  target_sources(ppocr_objects PRIVATE src/indra/kern_avx2.cpp src/indra/kern_avx512.cpp src/indra/imgproc_avx2.cpp)
+  set_source_files_properties(src/indra/imgproc_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-ffp-contract=off")
+  set_source_files_properties(src/indra/kern_avx2.cpp PROPERTIES COMPILE_OPTIONS
+      "-mavx2;-mfma;-mno-avx512f;-mno-avx512bw;-mno-avx512vl;-mno-avx512dq")
+  set_source_files_properties(src/indra/kern_avx512.cpp PROPERTIES COMPILE_OPTIONS
+      "-mavx512f;-mavx512dq;-mavx512bw;-mavx512vl;-mfma")
+elseif(PPOCR_CPU MATCHES "aarch64|arm64")
+  target_sources(ppocr_objects PRIVATE src/indra/kern_neon.cpp)
+if(APPLE)
+  target_compile_definitions(ppocr_objects PRIVATE PPOCR_INDRA_ACCELERATE)
+  option(PPOCR_INDRA_METAL "Indra lite recognizer: optional Metal GPU CTC head (runtime opt-in PPOCR_INDRA_METAL=1)" ON)
+  if(PPOCR_INDRA_METAL)
+    enable_language(OBJCXX)
+    target_sources(ppocr_objects PRIVATE src/indra/metal_head.mm src/indra/metal_rec.mm)
+    set_source_files_properties(src/indra/metal_head.mm src/indra/metal_rec.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fno-fast-math")
+    target_compile_definitions(ppocr_objects PRIVATE PPOCR_INDRA_METAL=1)
+    set(PPOCR_INDRA_METAL_LINK "-framework Metal" "-framework Foundation")
+  endif()
+endif()
+endif()
+
 # Apple Silicon matrix units (AMX/SME) are reachable from user code only via
 # Accelerate. Pointwise convolutions and the CTC head use cblas_sgemm there.
 option(PPOCR_USE_ACCELERATE "Use Apple Accelerate for CPU GEMM on Apple platforms" ON)
 if(APPLE AND PPOCR_USE_ACCELERATE)
   target_compile_definitions(ppocr_objects PRIVATE PPOCR_USE_ACCELERATE=1)
   list(APPEND PPOCR_METAL_LINK "-framework Accelerate")
+endif()
+if(PPOCR_INDRA_METAL_LINK)
+  list(APPEND PPOCR_METAL_LINK ${PPOCR_INDRA_METAL_LINK})
 endif()
 
 set(PPOCR_INSTALL_TARGETS "")
@@ -331,6 +368,17 @@ if(PPOCR_BUILD_EXAMPLES)
     set_target_properties(ppocr_c_api_demo PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:ppocr_shared>")
   endif()
 
+  # Lite (Indra) model through the public APIs only: C (50-page regression / timing) and C++.
+  add_executable(ppocr_lite_c_test examples/lite_c_test.c)
+  add_executable(ppocr_model_type_test tests/model_type_test.c)
+  target_link_libraries(ppocr_model_type_test PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
+  target_link_libraries(ppocr_lite_c_test PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
+  add_executable(ppocr_lite_cpp_check examples/lite_cpp_check.cpp)
+  target_link_libraries(ppocr_lite_cpp_check PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
+  if(PPOCR_BUILD_SHARED)
+    set_target_properties(ppocr_lite_c_test ppocr_lite_cpp_check ppocr_model_type_test PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:ppocr_shared>")
+  endif()
+
   add_executable(ppocr_replay examples/ppocr_replay.c)
   target_link_libraries(ppocr_replay PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
   if(PPOCR_BUILD_SHARED)
@@ -391,6 +439,33 @@ if(PPOCR_BUILD_TESTS)
   endif()
   enable_testing()
   add_test(NAME c_api_smoke COMMAND ppocr_c_api_smoke)
+  if(TARGET ppocr_model_type_test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
+    add_test(NAME model_type COMMAND ppocr_model_type_test
+      "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite"
+      "${CMAKE_CURRENT_SOURCE_DIR}/ci-models/PP-OCRv6_det_tiny.onnx"
+      "${CMAKE_CURRENT_SOURCE_DIR}/ci-models/PP-OCRv6_rec_tiny.onnx"
+      "${CMAKE_CURRENT_SOURCE_DIR}/ci-models/ppocrv6_tiny_dict.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/model_type.ppm")
+  endif()
+  if(TARGET ppocr_lite_c_test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
+    if(PPOCR_CPU MATCHES "x86_64|amd64|x64")
+      set(_lite_arch x86_64)
+    elseif(PPOCR_CPU MATCHES "arm64|aarch64")
+      set(_lite_arch arm64)
+    endif()
+    if(_lite_arch AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/lite_expected_${_lite_arch}.json")
+      foreach(_t 1 4)
+        add_test(NAME lite_regress_${_t}t COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ppocr_lite_c_test>
+          "-DMODELS=${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite" "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}"
+          -DARCH=${_lite_arch} -DTHREADS=${_t} "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/lite_regress_${_t}.json"
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/lite_regress.cmake)
+      endforeach()
+      add_test(NAME lite_regress_scalar COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ppocr_lite_c_test>
+        "-DMODELS=${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite" "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}"
+        -DARCH=${_lite_arch} -DTHREADS=4 -DSCALAR=1 "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/lite_regress_scalar.json"
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/lite_regress.cmake)
+    endif()
+  endif()
   if(NOT MSVC AND PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
     add_test(NAME isa_encoding
         COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_isa_encoding.sh
@@ -423,6 +498,7 @@ if(NOT SKBUILD)
       ${CMAKE_CURRENT_BINARY_DIR}/ppocrConfigVersion.cmake
       DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ppocr)
   install(FILES LICENSE DESTINATION .)
+  install(FILES src/indra/LICENSE-indra-ocr DESTINATION .)
   install(FILES cmake/SDK-README.md DESTINATION . RENAME README.md)
 else()
   # scikit-build-core stages the shared library next to the Python package.

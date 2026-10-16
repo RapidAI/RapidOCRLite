@@ -47,7 +47,13 @@ class Options(ctypes.Structure):
         ("det_max_candidates", ctypes.c_int),
         ("vulkan_device_index", ctypes.c_int),
         ("rec_fast_mode", ctypes.c_int),
+        ("model_type", ctypes.c_int),  # PPOCR_MODEL_*
     ]
+
+
+PPOCR_MODEL_AUTO = 0
+PPOCR_MODEL_PPOCR = 1
+PPOCR_MODEL_LITE = 2
 
 
 class Image(ctypes.Structure):
@@ -138,6 +144,8 @@ def load_library():
 def _bind(lib: ctypes.CDLL) -> None:
     lib.ppocr_options_init.argtypes = [ctypes.POINTER(Options)]
     lib.ppocr_options_init.restype = None
+    lib.ppocr_options_init_ex.argtypes = [ctypes.POINTER(Options), ctypes.c_size_t]
+    lib.ppocr_options_init_ex.restype = None
     lib.ppocr_create.argtypes = [
         ctypes.c_char_p,
         ctypes.c_char_p,
@@ -352,5 +360,5 @@ def request_vulkan_device(index: int) -> None:
 def default_options() -> Options:
     lib = load_library()
     options = Options()
-    lib.ppocr_options_init(ctypes.byref(options))
+    lib.ppocr_options_init_ex(ctypes.byref(options), ctypes.sizeof(Options))
     return options

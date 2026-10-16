@@ -1,3 +1,4 @@
+#include "indra/lite_pipeline.hpp"
 #include "ppocr/ppocr.hpp"
 
 #include "db_geometry.hpp"
@@ -1107,6 +1108,9 @@ struct OCR::Impl {
   // CPU recognizer for one page: rapidocr 3.10 crops, batching and resize.
   std::vector<Result> RecognizeCrops(const Image& image, const std::vector<Box>& boxes,
                                      bool use_det, bool profile_e2e);
+  // Indra lite pipeline (det_model is a lite folder); det / rec stay empty.
+  std::shared_ptr<indra::LiteEngine> lite;
+  Impl(std::shared_ptr<indra::LiteEngine> l, Options o) : opt(o), lite(std::move(l)) {}
   Impl(const std::string& d, const std::string& r, Options o)
       : det(d, o.backend), rec(r, o.backend), opt(o) {
     // Re-uploading both models' weights between every detector/recognizer
@@ -1666,6 +1670,19 @@ bool MetalAvailable() {
   return detail::MetalBackendBuilt() && detail::MetalDeviceAvailable();
 }
 OCR::OCR(const std::string& det_model,const std::string& rec_model,std::string dictionary_path,Options options) {
+  const bool lite_dir = indra::LiteEngine::IsLiteDir(det_model);
+  if (options.model_type == ModelType::lite && !lite_dir)
+    Fail("model_type=lite needs det_model to be a lite model folder containing meta.json");
+  if (options.model_type == ModelType::ppocr && lite_dir)
+    Fail("model_type=ppocr, but det_model is a lite model folder (meta.json)");
+  if (lite_dir) {  // model type "lite": rec_model / dictionary unused
+    const int hw = static_cast<int>(std::thread::hardware_concurrency());
+    const int threads = std::max(1, hw > 0 ? std::min(options.rec_parallelism, hw) : options.rec_parallelism);
+    options.backend = Backend::cpu_only;
+    impl_ = std::make_unique<Impl>(std::make_shared<indra::LiteEngine>(det_model, threads), options);
+    impl_->backend_note = impl_->lite->Note();
+    return;
+  }
   if (options.vulkan_device_index >= 0)
     detail::RequestVulkanDeviceIndex(options.vulkan_device_index);
   if (options.backend == Backend::metal) {
@@ -1724,6 +1741,7 @@ void OCR::SetDetectionThresholds(float det_threshold, float det_box_threshold,
       !(det_unclip_ratio > 0.F)) {
     Fail("detection thresholds out of range");
   }
+  if (impl_->lite) return;  // Indra's line decoder has fixed thresholds
   std::lock_guard lock(impl_->recognize_mutex);
   impl_->opt.det_threshold = det_threshold;
   impl_->opt.det_box_threshold = det_box_threshold;
@@ -1964,8 +1982,31 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
 
 std::vector<Result> OCR::Recognize(const Image& image) const { return Run(image, true, true); }
 
+namespace {
+std::vector<Result> LiteResults(const std::vector<indra::LiteLine>& lines) {
+  std::vector<Result> out;
+  out.reserve(lines.size());
+  for (const auto& l : lines) {
+    Result r;
+    r.text = l.text;
+    r.confidence = l.conf;
+    const int x0 = static_cast<int>(std::lround(l.x0)), y0 = static_cast<int>(std::lround(l.y0));
+    const int x1 = static_cast<int>(std::lround(l.x1)), y1 = static_cast<int>(std::lround(l.y1));
+    r.bbox = {x0, y0, x1 - x0, y1 - y0};
+    r.box = {{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}};
+    out.push_back(std::move(r));
+  }
+  return out;
+}
+}  // namespace
+
 std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) const {
   if (!use_det && !use_rec) Fail("use_det and use_rec cannot both be false");
+  if (impl_->lite) {
+    if (image.empty()) Fail("empty image");
+    return LiteResults(impl_->lite->Run(image.rgb.data(), image.width, image.height,
+                                        (use_det ? 1 : 0) | (use_rec ? 2 : 0)));
+  }
   const bool full = use_det && use_rec;
   // Metal runs the full det+rec pipeline on the GPU. Detection-only and
   // recognition-only requests use the CPU graph of the same models (same
@@ -2137,6 +2178,10 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
     const std::vector<Image>& images) const {
   std::vector<std::vector<Result>> output(images.size());
   if (images.empty()) return output;
+  if (impl_->lite) {
+    for (std::size_t i = 0; i < images.size(); ++i) output[i] = Run(images[i], true, true);
+    return output;
+  }
   std::lock_guard lock(impl_->recognize_mutex);
   detail::kernels::FloatModeGuard float_mode;
   std::unique_lock<std::recursive_mutex> gpu_lock(SharedGpuMutex(), std::defer_lock);

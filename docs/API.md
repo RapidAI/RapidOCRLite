@@ -210,3 +210,18 @@ rasterizer, not GPU performance. NVIDIA's driver faults if this process-wide
 device is destroyed from the static destructor that runs after the driver has
 already shut down, so that teardown is skipped at process exit and the OS
 reclaims the device.
+
+## Model type (`ppocr_options.model_type`, appended field)
+
+| value | behavior |
+|---|---|
+| `PPOCR_MODEL_AUTO` (0, default) | `det_model` naming a folder that contains `meta.json` loads the lite (Indra) model; anything else loads PP-OCR as before. |
+| `PPOCR_MODEL_PPOCR` (1) | PP-OCR ONNX files required; a lite folder is an error (`PPOCR_ERR_MODEL`). |
+| `PPOCR_MODEL_LITE` (2) | `det_model` must be a lite folder (else error); `rec_model` / `dictionary` may be NULL and are ignored. |
+
+Other values give `PPOCR_ERR_INVALID_ARGUMENT`. The field is read only when `struct_size` covers it, so
+binaries built against an older header (smaller `struct_size`) get AUTO. The exported
+`ppocr_options_init` symbol writes only the old layout (safe for old binaries); the header maps
+`ppocr_options_init(o)` to `ppocr_options_init_ex(o, sizeof *o)`. C++: `ppocr::Options::model_type`
+(`ppocr::ModelType::{auto_detect, ppocr, lite}`); mismatches throw. Python: `Det/Rec model_type: lite`
+sets `PPOCR_MODEL_LITE` (both sections must agree), other configs set `PPOCR_MODEL_PPOCR`.

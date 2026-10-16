@@ -71,6 +71,7 @@ class ModelType(Enum):
     TINY = "tiny"
     SMALL = "small"
     MEDIUM = "medium"
+    LITE = "lite"  # bundled Indra OCR models (models/lite, OpenRAIL-M weights)
 
 
 class TaskType(Enum):
