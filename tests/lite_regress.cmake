@@ -1,0 +1,21 @@
+# Runs the lite pipeline on tests/data/lite_crop.ppm and compares with the per-architecture expected output.
+# Usage: cmake -DEXE=... -DMODELS=... -DSRC=... -DARCH=x86_64|arm64 -DTHREADS=n -DOUT=... -P lite_regress.cmake
+file(WRITE "${OUT}.list" "crop ${SRC}/tests/data/lite_crop.ppm\n")
+set(ENV{LITE_NO_TIMING} 1)
+if(SCALAR)  # scalar-only fallback: no SIMD kernels, no AVX2 image ops, no Accelerate, no Metal
+  set(ENV{PPOCR_FORCE_ISA} scalar)
+  set(ENV{PPOCR_IMG_NO_AVX2} 1)
+  set(ENV{PPOCR_INDRA_NO_ACCEL} 1)
+  set(ENV{PPOCR_INDRA_METAL} 0)
+endif()
+execute_process(COMMAND "${EXE}" "${MODELS}" "${OUT}.list" "${THREADS}" "${OUT}" RESULT_VARIABLE rc OUTPUT_QUIET)
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "lite run failed: ${rc}")
+endif()
+file(READ "${OUT}" got)
+file(READ "${SRC}/tests/data/lite_expected_${ARCH}.json" want)
+string(REGEX REPLACE "\"threads\": [0-9]+" "" got "${got}")
+string(REGEX REPLACE "\"threads\": [0-9]+" "" want "${want}")
+if(NOT got STREQUAL want)
+  message(FATAL_ERROR "lite output differs from tests/data/lite_expected_${ARCH}.json (see ${OUT})")
+endif()
