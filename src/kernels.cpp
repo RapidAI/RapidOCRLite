@@ -69,6 +69,11 @@ void LasxDepthwisePointwiseConv3x3S1(
     float* dst, const float* src, const float* dw_weights, const float* dw_bias,
     const float* pw_weights, const float* pw_bias, int channels, int output_channels,
     int height, int width, int activation, int y0, int y1) noexcept;
+void LasxDepthwiseExpandGeluProjectAdd3x3S1(
+    float* dst, const float* src, const float* dw_weights, const float* dw_bias,
+    const float* expand_weights, const float* expand_bias,
+    const float* project_weights, const float* project_bias, int channels,
+    int hidden, int height, int width, int y0, int y1) noexcept;
 #endif
 
 
@@ -6057,6 +6062,25 @@ void DepthwiseExpandGeluProjectAdd(float* dst, const float* src,
       const float* batch_src = src + std::size_t(batch) * sample;
       const auto body = [&](int first, int last) {
         Avx512DepthwiseExpandGeluProjectAdd3x3S1(
+            batch_dst, batch_src, depthwise_weights, depthwise_bias,
+            expand_weights, expand_bias, project_weights, project_bias,
+            channels, hidden, height, width, first, last);
+      };
+      if (height >= 32) ParallelFor(height, body);
+      else body(0, height);
+    }
+    return;
+  }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx() && kernel_h == 3 && kernel_w == 3 && stride_h == 1 && stride_w == 1 &&
+      pad_top == 1 && pad_left == 1 && height >= 24 && width >= 48 &&
+      std::getenv("PPOCR_DISABLE_LASX_DW_EXPAND_GELU") == nullptr) {
+    for (int batch = 0; batch < batches; ++batch) {
+      float* batch_dst = dst + std::size_t(batch) * sample;
+      const float* batch_src = src + std::size_t(batch) * sample;
+      const auto body = [&](int first, int last) {
+        LasxDepthwiseExpandGeluProjectAdd3x3S1(
             batch_dst, batch_src, depthwise_weights, depthwise_bias,
             expand_weights, expand_bias, project_weights, project_bias,
             channels, hidden, height, width, first, last);

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace ppocr::detail::kernels {
@@ -777,6 +778,89 @@ void LasxDepthwisePointwiseConv3x3S1(
         for (int ic = 0; ic < channels; ++ic) sum += w[ic] * dw_row[std::size_t(ic) * width + x];
         d[x] = activate_scalar(sum);
       }
+    }
+  }
+}
+
+
+// 3x3 SAME depthwise → ExpandGeluProjectAdd without a full NCHW DW store.
+// One output row at a time; expand runs with plane == width.
+void LasxDepthwiseExpandGeluProjectAdd3x3S1(
+    float* dst, const float* src, const float* dw_weights, const float* dw_bias,
+    const float* expand_weights, const float* expand_bias,
+    const float* project_weights, const float* project_bias, int channels,
+    int hidden, int height, int width, int y0, int y1) noexcept {
+  if (!dst || !src || !dw_weights || !expand_weights || !project_weights ||
+      channels <= 0 || hidden <= 0 || height <= 0 || width <= 0) {
+    return;
+  }
+  if (y0 < 0) y0 = 0;
+  if (y1 < 0 || y1 > height) y1 = height;
+  if (y0 >= y1) return;
+  const std::size_t plane = std::size_t(height) * width;
+  const int first_y = 1, first_x = 1;
+  const int last_y = std::min(height, height - 1);
+  const int last_x = std::min(width, width - 1);
+  thread_local std::vector<float> dw_row;
+  thread_local std::vector<float> out_row;
+  dw_row.resize(std::size_t(channels) * width);
+  out_row.resize(std::size_t(channels) * width);
+  for (int y = y0; y < y1; ++y) {
+    const int iy0 = y - 1;
+    const int interior_begin = y >= first_y && y < last_y ? first_x : 0;
+    const int interior_end = y >= first_y && y < last_y ? last_x : 0;
+    for (int channel = 0; channel < channels; ++channel) {
+      const float* in = src + std::size_t(channel) * plane;
+      const float* filter = dw_weights + std::size_t(channel) * 9;
+      float* out = dw_row.data() + std::size_t(channel) * width;
+      const float base = dw_bias ? dw_bias[channel] : 0.F;
+      int x = 0;
+      for (; x < interior_begin; ++x) {
+        float sum = base;
+        const int ix0 = x - 1;
+        for (int ky = 0; ky < 3; ++ky) {
+          const int iy = iy0 + ky;
+          if (iy < 0 || iy >= height) continue;
+          for (int kx = 0; kx < 3; ++kx) {
+            const int ix = ix0 + kx;
+            if (ix >= 0 && ix < width) sum += in[std::size_t(iy) * width + ix] * filter[ky * 3 + kx];
+          }
+        }
+        out[x] = sum;
+      }
+      for (; x + 8 <= interior_end; x += 8) {
+        __m256 sum = Splat(base);
+        for (int ky = 0; ky < 3; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * width + x - 1;
+          const float* k = filter + ky * 3;
+          sum = Fma(sum, Load(row), Splat(k[0]));
+          sum = Fma(sum, Load(row + 1), Splat(k[1]));
+          sum = Fma(sum, Load(row + 2), Splat(k[2]));
+        }
+        Store(out + x, sum);
+      }
+      for (; x < width; ++x) {
+        float sum = base;
+        const int ix0 = x - 1;
+        for (int ky = 0; ky < 3; ++ky) {
+          const int iy = iy0 + ky;
+          if (iy < 0 || iy >= height) continue;
+          for (int kx = 0; kx < 3; ++kx) {
+            const int ix = ix0 + kx;
+            if (ix >= 0 && ix < width) sum += in[std::size_t(iy) * width + ix] * filter[ky * 3 + kx];
+          }
+        }
+        out[x] = sum;
+      }
+    }
+    LasxExpandGeluProjectAdd(out_row.data(), dw_row.data(), expand_weights, expand_bias,
+                             project_weights, project_bias, channels, hidden,
+                             std::size_t(width), 0, std::size_t(width));
+    const std::size_t row = std::size_t(y) * width;
+    for (int channel = 0; channel < channels; ++channel) {
+      std::memcpy(dst + std::size_t(channel) * plane + row,
+                  out_row.data() + std::size_t(channel) * width,
+                  std::size_t(width) * sizeof(float));
     }
   }
 }
