@@ -1446,12 +1446,18 @@ float LasxSoftmaxDenom(const float* logits, int vocab, float maximum) noexcept {
 
 void LasxIm2colCopyStride2(float* dst, const float* src, int len) noexcept {
   int i = 0;
+  // Contiguous xvld would touch src[2*i+15] while last sample is src[2*i+14].
+  // Gather even lanes so the read stops at the last sample; scalar stores keep
+  // dst alignment unconstrained.
   for (; i + 8 <= len; i += 8) {
-    alignas(32) float tmp[16];
-    Store(tmp, Load(src + 2 * i));
-    Store(tmp + 8, Load(src + 2 * i + 8));
-    dst[i] = tmp[0]; dst[i + 1] = tmp[2]; dst[i + 2] = tmp[4]; dst[i + 3] = tmp[6];
-    dst[i + 4] = tmp[8]; dst[i + 5] = tmp[10]; dst[i + 6] = tmp[12]; dst[i + 7] = tmp[14];
+    dst[i] = src[2 * i];
+    dst[i + 1] = src[2 * i + 2];
+    dst[i + 2] = src[2 * i + 4];
+    dst[i + 3] = src[2 * i + 6];
+    dst[i + 4] = src[2 * i + 8];
+    dst[i + 5] = src[2 * i + 10];
+    dst[i + 6] = src[2 * i + 12];
+    dst[i + 7] = src[2 * i + 14];
   }
   for (; i < len; ++i) dst[i] = src[2 * i];
 }

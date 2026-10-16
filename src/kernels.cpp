@@ -1377,9 +1377,13 @@ void Im2colCopyStride2(float* dst, const float* src, int len) noexcept {
   int i = 0;
 #if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
+    // Do not use vld2q_f32 here: it loads through src[2*i+7] while the last
+    // sample is src[2*i+6], a one-float over-read that segfaulted macOS arm64
+    // OCR (wheels + metal). Gather the four even lanes instead.
     for (; i + 4 <= len; i += 4) {
-      const float32x4x2_t v = vld2q_f32(src + 2 * i);
-      vst1q_f32(dst + i, v.val[0]);
+      const float tmp[4] = {src[2 * i], src[2 * i + 2], src[2 * i + 4],
+                            src[2 * i + 6]};
+      vst1q_f32(dst + i, vld1q_f32(tmp));
     }
   }
 #endif
