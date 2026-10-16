@@ -22,17 +22,91 @@ namespace {
 inline __m256 Load(const float* p) noexcept { return (__m256)__lasx_xvld(p, 0); }
 inline void Store(float* p, __m256 v) noexcept { __lasx_xvst((__m256i)v, p, 0); }
 inline __m256 Splat(float x) noexcept { return (__m256){x, x, x, x, x, x, x, x}; }
-// a + b * c, two roundings (matches vmlaq_f32 in the LSX shim).
-inline __m256 Mla(__m256 a, __m256 b, __m256 c) noexcept {
-  return __lasx_xvfadd_s(a, __lasx_xvfmul_s(b, c));
+// a + b * c as a single FMA (faster than the old mul+add Mla).
+inline __m256 Fma(__m256 a, __m256 b, __m256 c) noexcept {
+  return __lasx_xvfmadd_s(b, c, a);
+}
+inline __m256 Fms(__m256 a, __m256 b, __m256 c) noexcept {
+  return __lasx_xvfnmsub_s(b, c, a);
 }
 
 template <bool Accumulate>
 void GemmRowsImpl(float* dst, const float* a, const float* b, const float* bias,
                   int first_row, int last_row, int cols, int depth) noexcept {
-  // Columns the 4-lane path vectorizes: whole 16-column blocks.
-  const int vector_cols = cols / 16 * 16;
+  // Vectorize every full 8-column group (LASX lane width). Prefer FMA over
+  // separate mul+add: scores may differ by ~1 ulp from the older Mla path,
+  // text stays identical under the QEMU replay corpus.
+  const int vector_cols = cols / 8 * 8;
   int row = first_row;
+  for (; row + 3 < last_row; row += 4) {
+    float* out0 = dst + std::size_t(row) * cols;
+    float* out1 = out0 + cols;
+    float* out2 = out1 + cols;
+    float* out3 = out2 + cols;
+    const float* left0 = a + std::size_t(row) * depth;
+    const float* left1 = left0 + depth;
+    const float* left2 = left1 + depth;
+    const float* left3 = left2 + depth;
+    int col = 0;
+    for (; col + 16 <= vector_cols; col += 16) {
+      __m256 a0, a1, b0, b1, c0, c1, d0, d1;
+      if (Accumulate) {
+        a0 = Load(out0 + col); a1 = Load(out0 + col + 8);
+        b0 = Load(out1 + col); b1 = Load(out1 + col + 8);
+        c0 = Load(out2 + col); c1 = Load(out2 + col + 8);
+        d0 = Load(out3 + col); d1 = Load(out3 + col + 8);
+      } else {
+        a0 = bias ? Load(bias + col) : Splat(0.F);
+        a1 = bias ? Load(bias + col + 8) : Splat(0.F);
+        b0 = a0; b1 = a1; c0 = a0; c1 = a1; d0 = a0; d1 = a1;
+      }
+      for (int k = 0; k < depth; ++k) {
+        const __m256 l0 = Splat(left0[k]), l1 = Splat(left1[k]);
+        const __m256 l2 = Splat(left2[k]), l3 = Splat(left3[k]);
+        const float* right = b + std::size_t(k) * cols + col;
+        const __m256 r0 = Load(right), r1 = Load(right + 8);
+        a0 = Fma(a0, l0, r0); a1 = Fma(a1, l0, r1);
+        b0 = Fma(b0, l1, r0); b1 = Fma(b1, l1, r1);
+        c0 = Fma(c0, l2, r0); c1 = Fma(c1, l2, r1);
+        d0 = Fma(d0, l3, r0); d1 = Fma(d1, l3, r1);
+      }
+      Store(out0 + col, a0); Store(out0 + col + 8, a1);
+      Store(out1 + col, b0); Store(out1 + col + 8, b1);
+      Store(out2 + col, c0); Store(out2 + col + 8, c1);
+      Store(out3 + col, d0); Store(out3 + col + 8, d1);
+    }
+    for (; col + 8 <= vector_cols; col += 8) {
+      __m256 c0, c1, c2, c3;
+      if (Accumulate) {
+        c0 = Load(out0 + col); c1 = Load(out1 + col);
+        c2 = Load(out2 + col); c3 = Load(out3 + col);
+      } else {
+        c0 = bias ? Load(bias + col) : Splat(0.F);
+        c1 = c0; c2 = c0; c3 = c0;
+      }
+      for (int k = 0; k < depth; ++k) {
+        const __m256 r = Load(b + std::size_t(k) * cols + col);
+        c0 = Fma(c0, Splat(left0[k]), r);
+        c1 = Fma(c1, Splat(left1[k]), r);
+        c2 = Fma(c2, Splat(left2[k]), r);
+        c3 = Fma(c3, Splat(left3[k]), r);
+      }
+      Store(out0 + col, c0); Store(out1 + col, c1);
+      Store(out2 + col, c2); Store(out3 + col, c3);
+    }
+    for (; col < cols; ++col) {
+      float v0 = Accumulate ? out0[col] : (bias ? bias[col] : 0.F);
+      float v1 = Accumulate ? out1[col] : v0;
+      float v2 = Accumulate ? out2[col] : v0;
+      float v3 = Accumulate ? out3[col] : v0;
+      for (int k = 0; k < depth; ++k) {
+        const float weight = b[std::size_t(k) * cols + col];
+        v0 += left0[k] * weight; v1 += left1[k] * weight;
+        v2 += left2[k] * weight; v3 += left3[k] * weight;
+      }
+      out0[col] = v0; out1[col] = v1; out2[col] = v2; out3[col] = v3;
+    }
+  }
   for (; row + 1 < last_row; row += 2) {
     float* out0 = dst + std::size_t(row) * cols;
     float* out1 = out0 + cols;
@@ -59,10 +133,10 @@ void GemmRowsImpl(float* dst, const float* a, const float* b, const float* bias,
         const float* right = b + std::size_t(k) * cols + col;
         const __m256 r0 = Load(right), r1 = Load(right + 8);
         const __m256 r2 = Load(right + 16), r3 = Load(right + 24);
-        a0 = Mla(a0, l0, r0); b0 = Mla(b0, l1, r0);
-        a1 = Mla(a1, l0, r1); b1 = Mla(b1, l1, r1);
-        a2 = Mla(a2, l0, r2); b2 = Mla(b2, l1, r2);
-        a3 = Mla(a3, l0, r3); b3 = Mla(b3, l1, r3);
+        a0 = Fma(a0, l0, r0); b0 = Fma(b0, l1, r0);
+        a1 = Fma(a1, l0, r1); b1 = Fma(b1, l1, r1);
+        a2 = Fma(a2, l0, r2); b2 = Fma(b2, l1, r2);
+        a3 = Fma(a3, l0, r3); b3 = Fma(b3, l1, r3);
       }
       Store(out0 + col, a0); Store(out0 + col + 8, a1);
       Store(out0 + col + 16, a2); Store(out0 + col + 24, a3);
@@ -79,8 +153,8 @@ void GemmRowsImpl(float* dst, const float* a, const float* b, const float* bias,
       }
       for (int k = 0; k < depth; ++k) {
         const __m256 r = Load(b + std::size_t(k) * cols + col);
-        c0 = Mla(c0, Splat(left0[k]), r);
-        c1 = Mla(c1, Splat(left1[k]), r);
+        c0 = Fma(c0, Splat(left0[k]), r);
+        c1 = Fma(c1, Splat(left1[k]), r);
       }
       Store(out0 + col, c0); Store(out1 + col, c1);
     }
@@ -100,10 +174,26 @@ void GemmRowsImpl(float* dst, const float* a, const float* b, const float* bias,
     float* out = dst + std::size_t(row) * cols;
     const float* left = a + std::size_t(row) * depth;
     int col = 0;
+    for (; col + 32 <= vector_cols; col += 32) {
+      __m256 c0 = Accumulate ? Load(out + col) : (bias ? Load(bias + col) : Splat(0.F));
+      __m256 c1 = Accumulate ? Load(out + col + 8) : (bias ? Load(bias + col + 8) : Splat(0.F));
+      __m256 c2 = Accumulate ? Load(out + col + 16) : (bias ? Load(bias + col + 16) : Splat(0.F));
+      __m256 c3 = Accumulate ? Load(out + col + 24) : (bias ? Load(bias + col + 24) : Splat(0.F));
+      for (int k = 0; k < depth; ++k) {
+        const __m256 av = Splat(left[k]);
+        const float* right = b + std::size_t(k) * cols + col;
+        c0 = Fma(c0, av, Load(right));
+        c1 = Fma(c1, av, Load(right + 8));
+        c2 = Fma(c2, av, Load(right + 16));
+        c3 = Fma(c3, av, Load(right + 24));
+      }
+      Store(out + col, c0); Store(out + col + 8, c1);
+      Store(out + col + 16, c2); Store(out + col + 24, c3);
+    }
     for (; col + 8 <= vector_cols; col += 8) {
       __m256 c = Accumulate ? Load(out + col) : (bias ? Load(bias + col) : Splat(0.F));
       for (int k = 0; k < depth; ++k)
-        c = Mla(c, Splat(left[k]), Load(b + std::size_t(k) * cols + col));
+        c = Fma(c, Splat(left[k]), Load(b + std::size_t(k) * cols + col));
       Store(out + col, c);
     }
     for (; col < cols; ++col) {
@@ -128,14 +218,7 @@ void LasxGemmAccumulateRows(float* dst, const float* a, const float* b,
 
 namespace {
 
-// Lane-wise twins of NeonExpPs / NeonErfPs / NeonGeluPs (same operations in
-// the same order, fused where NEON fuses), so every lane is bit-identical.
-inline __m256 Fma(__m256 a, __m256 b, __m256 c) noexcept {  // a + b * c
-  return __lasx_xvfmadd_s(b, c, a);
-}
-inline __m256 Fms(__m256 a, __m256 b, __m256 c) noexcept {  // a - b * c
-  return __lasx_xvfnmsub_s(b, c, a);
-}
+// Lane-wise twins of NeonExpPs / NeonErfPs / NeonGeluPs (same ops/order).
 inline __m256 ExpPs(__m256 x) noexcept {
   x = __lasx_xvfmin_s(__lasx_xvfmax_s(x, Splat(-87.F)), Splat(87.F));
   const __m256 n = __lasx_xvfrintrne_s(__lasx_xvfmul_s(x, Splat(1.4426950408889634F)));
@@ -497,5 +580,205 @@ void LasxExpandGeluProjectAdd(float* dst, const float* src, const float* expand_
   for (; spatial < spatial_end; ++spatial) scalar_at(spatial);
 }
 
+
+void LasxBinary(float* dst, const float* a, const float* b, std::size_t n, int op) noexcept {
+  // op: 0 add, 1 sub, 2 mul (div stays scalar).
+  std::size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    const __m256 x = Load(a + i), y = Load(b + i);
+    __m256 z;
+    if (op == 0) z = __lasx_xvfadd_s(x, y);
+    else if (op == 1) z = __lasx_xvfsub_s(x, y);
+    else z = __lasx_xvfmul_s(x, y);
+    Store(dst + i, z);
+  }
+  for (; i < n; ++i) {
+    if (op == 0) dst[i] = a[i] + b[i];
+    else if (op == 1) dst[i] = a[i] - b[i];
+    else dst[i] = a[i] * b[i];
+  }
+}
+
+void LasxHardSwish(float* dst, const float* src, std::size_t n) noexcept {
+  const __m256 sixth = Splat(1.F / 6.F), half = Splat(.5F);
+  const __m256 zero = Splat(0.F), one = Splat(1.F);
+  std::size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    const __m256 x = Load(src + i);
+    const __m256 gate = __lasx_xvfmin_s(one, __lasx_xvfmax_s(zero, Fma(half, x, sixth)));
+    Store(dst + i, __lasx_xvfmul_s(x, gate));
+  }
+  for (; i < n; ++i) {
+    const float x = src[i];
+    dst[i] = x * std::clamp(x / 6.F + .5F, 0.F, 1.F);
+  }
+}
+
+void LasxScaleShift(float* dst, const float* src, std::size_t n, float scale, float shift) noexcept {
+  const __m256 s = Splat(scale), b = Splat(shift);
+  std::size_t i = 0;
+  for (; i + 8 <= n; i += 8) Store(dst + i, Fma(b, Load(src + i), s));
+  for (; i < n; ++i) dst[i] = src[i] * scale + shift;
+}
+
+void LasxHardSigmoid(float* dst, const float* src, std::size_t n, float alpha, float beta) noexcept {
+  const __m256 a = Splat(alpha), b = Splat(beta);
+  const __m256 zero = Splat(0.F), one = Splat(1.F);
+  std::size_t i = 0;
+  for (; i + 8 <= n; i += 8) {
+    Store(dst + i, __lasx_xvfmin_s(one, __lasx_xvfmax_s(zero, Fma(b, Load(src + i), a))));
+  }
+  for (; i < n; ++i) {
+    const float v = src[i] * alpha + beta;
+    dst[i] = v < 0.F ? 0.F : (v > 1.F ? 1.F : v);
+  }
+}
+
+
+// Fused 3x3 SAME depthwise → 1x1 pointwise (+ optional ReLU / HardSwish /
+// exact GELU). Keeps one DW output row in a scratch buffer so the pointwise
+// never rereads a full NCHW plane — same shape as the AVX-512/AVX2 fusions.
+void LasxDepthwisePointwiseConv3x3S1(
+    float* dst, const float* src, const float* dw_weights, const float* dw_bias,
+    const float* pw_weights, const float* pw_bias, int channels, int output_channels,
+    int height, int width, int activation, int y0, int y1) noexcept {
+  if (!dst || !src || !dw_weights || !pw_weights || channels <= 0 ||
+      output_channels <= 0 || height <= 0 || width <= 0) {
+    return;
+  }
+  if (y0 < 0) y0 = 0;
+  if (y1 < 0 || y1 > height) y1 = height;
+  if (y0 >= y1) return;
+  const std::size_t plane = std::size_t(height) * width;
+  const int first_y = 1, first_x = 1;
+  const int last_y = std::min(height, height - 1);
+  const int last_x = std::min(width, width - 1);
+  const __m256 zero = Splat(0.F), one = Splat(1.F), half = Splat(.5F);
+  const __m256 sixth = Splat(1.F / 6.F);
+  const auto activate = [&](__m256 x) noexcept {
+    if (activation == 1) return __lasx_xvfmax_s(x, zero);
+    if (activation == 2) {
+      const __m256 gate = __lasx_xvfmin_s(one, __lasx_xvfmax_s(zero, Fma(half, x, sixth)));
+      return __lasx_xvfmul_s(x, gate);
+    }
+    if (activation == 3) return GeluPs(x);
+    return x;
+  };
+  const auto activate_scalar = [&](float x) noexcept {
+    if (activation == 1) return std::max(x, 0.F);
+    if (activation == 2) return x * std::clamp(x / 6.F + .5F, 0.F, 1.F);
+    if (activation == 3) return x * .5F * (1.F + std::erf(x * 0.7071067811865475244F));
+    return x;
+  };
+  thread_local std::vector<float> dw_row;
+  dw_row.resize(std::size_t(channels) * width);
+  for (int y = y0; y < y1; ++y) {
+    const int iy0 = y - 1;
+    const int interior_begin = y >= first_y && y < last_y ? first_x : 0;
+    const int interior_end = y >= first_y && y < last_y ? last_x : 0;
+    for (int channel = 0; channel < channels; ++channel) {
+      const float* in = src + std::size_t(channel) * plane;
+      const float* filter = dw_weights + std::size_t(channel) * 9;
+      float* out = dw_row.data() + std::size_t(channel) * width;
+      const float base = dw_bias ? dw_bias[channel] : 0.F;
+      int x = 0;
+      for (; x < interior_begin; ++x) {
+        float sum = base;
+        const int ix0 = x - 1;
+        for (int ky = 0; ky < 3; ++ky) {
+          const int iy = iy0 + ky;
+          if (iy < 0 || iy >= height) continue;
+          for (int kx = 0; kx < 3; ++kx) {
+            const int ix = ix0 + kx;
+            if (ix >= 0 && ix < width) sum += in[std::size_t(iy) * width + ix] * filter[ky * 3 + kx];
+          }
+        }
+        out[x] = sum;
+      }
+      for (; x + 8 <= interior_end; x += 8) {
+        __m256 sum = Splat(base);
+        for (int ky = 0; ky < 3; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * width + x - 1;
+          const float* k = filter + ky * 3;
+          sum = Fma(sum, Load(row), Splat(k[0]));
+          sum = Fma(sum, Load(row + 1), Splat(k[1]));
+          sum = Fma(sum, Load(row + 2), Splat(k[2]));
+        }
+        Store(out + x, sum);
+      }
+      for (; x < width; ++x) {
+        float sum = base;
+        const int ix0 = x - 1;
+        for (int ky = 0; ky < 3; ++ky) {
+          const int iy = iy0 + ky;
+          if (iy < 0 || iy >= height) continue;
+          for (int kx = 0; kx < 3; ++kx) {
+            const int ix = ix0 + kx;
+            if (ix >= 0 && ix < width) sum += in[std::size_t(iy) * width + ix] * filter[ky * 3 + kx];
+          }
+        }
+        out[x] = sum;
+      }
+    }
+    int oc = 0;
+    for (; oc + 4 <= output_channels; oc += 4) {
+      const float* w0 = pw_weights + std::size_t(oc) * channels;
+      const float* w1 = w0 + channels;
+      const float* w2 = w1 + channels;
+      const float* w3 = w2 + channels;
+      float* d0 = dst + std::size_t(oc) * plane + std::size_t(y) * width;
+      float* d1 = dst + std::size_t(oc + 1) * plane + std::size_t(y) * width;
+      float* d2 = dst + std::size_t(oc + 2) * plane + std::size_t(y) * width;
+      float* d3 = dst + std::size_t(oc + 3) * plane + std::size_t(y) * width;
+      int x = 0;
+      for (; x + 8 <= width; x += 8) {
+        __m256 a0 = Splat(pw_bias ? pw_bias[oc] : 0.F);
+        __m256 a1 = Splat(pw_bias ? pw_bias[oc + 1] : 0.F);
+        __m256 a2 = Splat(pw_bias ? pw_bias[oc + 2] : 0.F);
+        __m256 a3 = Splat(pw_bias ? pw_bias[oc + 3] : 0.F);
+        for (int ic = 0; ic < channels; ++ic) {
+          const __m256 v = Load(dw_row.data() + std::size_t(ic) * width + x);
+          a0 = Fma(a0, v, Splat(w0[ic]));
+          a1 = Fma(a1, v, Splat(w1[ic]));
+          a2 = Fma(a2, v, Splat(w2[ic]));
+          a3 = Fma(a3, v, Splat(w3[ic]));
+        }
+        Store(d0 + x, activate(a0));
+        Store(d1 + x, activate(a1));
+        Store(d2 + x, activate(a2));
+        Store(d3 + x, activate(a3));
+      }
+      for (; x < width; ++x) {
+        float v0 = pw_bias ? pw_bias[oc] : 0.F;
+        float v1 = pw_bias ? pw_bias[oc + 1] : 0.F;
+        float v2 = pw_bias ? pw_bias[oc + 2] : 0.F;
+        float v3 = pw_bias ? pw_bias[oc + 3] : 0.F;
+        for (int ic = 0; ic < channels; ++ic) {
+          const float v = dw_row[std::size_t(ic) * width + x];
+          v0 += w0[ic] * v; v1 += w1[ic] * v; v2 += w2[ic] * v; v3 += w3[ic] * v;
+        }
+        d0[x] = activate_scalar(v0); d1[x] = activate_scalar(v1);
+        d2[x] = activate_scalar(v2); d3[x] = activate_scalar(v3);
+      }
+    }
+    for (; oc < output_channels; ++oc) {
+      const float* w = pw_weights + std::size_t(oc) * channels;
+      float* d = dst + std::size_t(oc) * plane + std::size_t(y) * width;
+      int x = 0;
+      for (; x + 8 <= width; x += 8) {
+        __m256 acc = Splat(pw_bias ? pw_bias[oc] : 0.F);
+        for (int ic = 0; ic < channels; ++ic) {
+          acc = Fma(acc, Load(dw_row.data() + std::size_t(ic) * width + x), Splat(w[ic]));
+        }
+        Store(d + x, activate(acc));
+      }
+      for (; x < width; ++x) {
+        float sum = pw_bias ? pw_bias[oc] : 0.F;
+        for (int ic = 0; ic < channels; ++ic) sum += w[ic] * dw_row[std::size_t(ic) * width + x];
+        d[x] = activate_scalar(sum);
+      }
+    }
+  }
+}
 
 }  // namespace ppocr::detail::kernels

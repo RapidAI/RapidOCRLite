@@ -61,6 +61,14 @@ void LasxExpandGeluProjectAdd(float* dst, const float* src, const float* expand_
                               const float* project_bias, int channels, int hidden,
                               std::size_t plane, std::size_t spatial_begin,
                               std::size_t spatial_end) noexcept;
+void LasxBinary(float* dst, const float* a, const float* b, std::size_t n, int op) noexcept;
+void LasxHardSwish(float* dst, const float* src, std::size_t n) noexcept;
+void LasxScaleShift(float* dst, const float* src, std::size_t n, float scale, float shift) noexcept;
+void LasxHardSigmoid(float* dst, const float* src, std::size_t n, float alpha, float beta) noexcept;
+void LasxDepthwisePointwiseConv3x3S1(
+    float* dst, const float* src, const float* dw_weights, const float* dw_bias,
+    const float* pw_weights, const float* pw_bias, int channels, int output_channels,
+    int height, int width, int activation, int y0, int y1) noexcept;
 #endif
 
 
@@ -1501,6 +1509,13 @@ void Binary(float* dst, const float* a, const float* b, std::size_t n,
   if (HasAvx2()) { Avx2Binary(dst, a, b, n, op); return; }
 #endif
   std::size_t i = 0;
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx() && op != BinaryOp::div) {
+    const int code = op == BinaryOp::add ? 0 : (op == BinaryOp::sub ? 1 : 2);
+    LasxBinary(dst, a, b, n, code);
+    return;
+  }
+#endif
 #if defined(PPOCR_NEON_LIKE)
   if (HasNeon() && op != BinaryOp::div) for (; i + 4 <= n; i += 4) {
     const float32x4_t x = vld1q_f32(a + i), y = vld1q_f32(b + i);
@@ -2115,6 +2130,9 @@ void HardSwish(float* dst, const float* src, std::size_t n) noexcept {
   if (HasAvx2()) { Avx2HardSwish(dst, src, n); return; }
 #endif
   std::size_t i = 0;
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx()) { LasxHardSwish(dst, src, n); return; }
+#endif
 #if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const auto sixth = vdupq_n_f32(1.F / 6.F), half = vdupq_n_f32(.5F);
@@ -2140,6 +2158,9 @@ void ScaleShift(float* dst, const float* src, std::size_t n, float scale, float 
   if (HasAvx2()) { Avx2ScaleShift(dst, src, n, scale, shift); return; }
 #endif
   std::size_t i = 0;
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx()) { LasxScaleShift(dst, src, n, scale, shift); return; }
+#endif
 #if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const auto s = vdupq_n_f32(scale), b = vdupq_n_f32(shift);
@@ -2196,6 +2217,9 @@ void HardSigmoid(float* dst, const float* src, std::size_t n, float alpha,
   if (HasAvx2()) { Avx2HardSigmoid(dst, src, n, alpha, beta); return; }
 #endif
   std::size_t i = 0;
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  if (HasLasx()) { LasxHardSigmoid(dst, src, n, alpha, beta); return; }
+#endif
 #if defined(PPOCR_NEON_LIKE)
   if (HasNeon()) {
     const float32x4_t a = vdupq_n_f32(alpha), b = vdupq_n_f32(beta);
@@ -5907,6 +5931,28 @@ bool DepthwisePointwiseConvFused(float* dst, const float* src,
           dst + std::size_t(batch) * out_batch, src + std::size_t(batch) * in_batch,
           depthwise_weights, depthwise_bias, pointwise_weights, pointwise_bias,
           channels, output_channels, height, width, activation, approx_gelu);
+    }
+    return true;
+  }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+  // Tiny rec maps (H≈6/12) keep the two-pass DW+PW path; the row scratch
+  // fusion pays off once the plane is large enough to miss L1 twice.
+  if (HasLasx() && height >= 24 && width >= 48 &&
+      std::getenv("PPOCR_DISABLE_LASX_DWPW_FUSED") == nullptr) {
+    const std::size_t in_batch = std::size_t(channels) * height * width;
+    const std::size_t out_batch = std::size_t(output_channels) * height * width;
+    for (int batch = 0; batch < batches; ++batch) {
+      float* batch_dst = dst + std::size_t(batch) * out_batch;
+      const float* batch_src = src + std::size_t(batch) * in_batch;
+      const auto body = [&](int first, int last) {
+        LasxDepthwisePointwiseConv3x3S1(
+            batch_dst, batch_src, depthwise_weights, depthwise_bias,
+            pointwise_weights, pointwise_bias, channels, output_channels, height,
+            width, activation, first, last);
+      };
+      if (height >= 16) ParallelFor(height, body);
+      else body(0, height);
     }
     return true;
   }
