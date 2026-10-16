@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v5*"
   pull_request:
     branches:
       - main
@@ -93,11 +95,46 @@ jobs:
       - name: Package the loongarch64 SDK tarball
         if: matrix.isa == 'lasx'
         run: |
-          cmake --install build-la --prefix sdk/ppocr-linux-loongarch64
-          tar -C sdk -czf ppocr-linux-loongarch64.tar.gz ppocr-linux-loongarch64
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake --install build-la --prefix "sdk/RapidOCRLite-SDK-linux_loongarch64-${VER}"
+          mkdir -p dist
+          tar -C sdk -czf "dist/RapidOCRLite-SDK-linux_loongarch64-${VER}.tar.gz" \
+            "RapidOCRLite-SDK-linux_loongarch64-${VER}"
+          ls -la dist
 
       - uses: actions/upload-artifact@v4
         if: matrix.isa == 'lasx'
         with:
-          name: sdk-linux-loongarch64
-          path: ppocr-linux-loongarch64.tar.gz
+          name: rapidocrlite-sdk-linux_loongarch64
+          path: dist/RapidOCRLite-SDK-linux_loongarch64-*.tar.gz
+          if-no-files-found: error
+
+  attach-release:
+    name: Attach loongarch64 SDK to GitHub Release
+    needs: qemu
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v5')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rapidocrlite-sdk-linux_loongarch64
+          path: dist
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          ls -la dist
+          test "$(ls dist/RapidOCRLite-SDK-linux_loongarch64-*.tar.gz | wc -l)" -eq 1
+          case "$TAG" in *a*|*b*|*rc*) pre=--prerelease ;; *) pre= ;; esac
+          for attempt in 1 2 3; do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then break; fi
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
+              --title "$TAG" --generate-notes && break
+            sleep 20
+          done
+          gh release upload "$TAG" dist/RapidOCRLite-SDK-linux_loongarch64-*.tar.gz \
+            --repo "$GITHUB_REPOSITORY" --clobber
