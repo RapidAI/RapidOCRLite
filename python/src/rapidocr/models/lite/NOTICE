@@ -1,0 +1,23 @@
+Indra OCR model weights (bundled for RapidOCR model_type="lite")
+================================================================
+Files: det.onnx, rec.onnx, rec_cjk.onnx, script.onnx, order.onnx, meta.json
+Source: https://huggingface.co/datalab-to/indra-ocr  (revision ed345c7f158eddbc7dee0c6a7269afb75a94f7e8)
+Licensor: Datalab (https://www.datalab.to). Copyright (c) Datalab.
+
+These files are NOT covered by RapidOCR's Apache-2.0 license. They are licensed under the
+AI PUBS OPEN RAIL-M LICENSE (MODIFIED), Version 0.1, March 2, 2023 (Modified) - see ./LICENSE.
+
+The Model is subject to the use-based restrictions of paragraph 5 / Attachment A of ./LICENSE,
+which you must comply with and must pass on to anyone you distribute the Model to. In particular
+you may NOT use the Model (except for personal use or research purposes, for 2(a)/2(b)) if you,
+your employer or affiliated entity:
+  (a) generated more than USD 20,000,000 gross revenue in the prior year;
+  (b) raised more than USD 20,000,000 in total equity or debt funding; or
+  (c) provides any product or service that competes with any product or service of the Licensor
+      or its affiliates (this clause has no personal/research exception).
+Paragraph 8 (Share-a-Like) applies this License to copies of the Model, its Derivatives and to the
+Output and derivatives of the Output.
+
+Changes: none. The files are byte-identical to the upstream revision above (SHA256 listed in
+default_models.yaml). They are only copied into this directory.
+Broader / commercial licenses: https://www.datalab.to/

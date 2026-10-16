@@ -12,6 +12,7 @@ __pycache__/
 /dist/
 /python/src/rapidocr/models/*
 !/python/src/rapidocr/models/.gitkeep
+!/python/src/rapidocr/models/lite/
 /**/graphify-out/
 /build-msvc-env.txt
 
