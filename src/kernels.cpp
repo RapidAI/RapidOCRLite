@@ -81,6 +81,9 @@ void LasxDepthwiseExpandGeluProjectAdd3x3S1(
 void LasxPointwiseConv(float* dst, const float* src, const float* weights,
                        const float* bias, int first_output, int last_output,
                        int input_channels, std::size_t plane) noexcept;
+void LasxGemmPacked32(float* dst, const float* a, const float* packed_b,
+                      const float* bias, int rows, int cols, int depth,
+                      int* ctc_arg, float* ctc_max, float* ctc_sum) noexcept;
 #endif
 
 
@@ -1082,6 +1085,67 @@ bool NeonGemmBlocked() noexcept {
 void NeonGemmRows(float* dst, const float* a, const float* b, const float* bias,
                   int first_row, int last_row, int cols, int depth) noexcept {
   int row = first_row;
+#if defined(PPOCR_NEON_IS_LSX)
+  // LoongArch LSX-only: 4-row blocking hides mul+add latency better under the
+  // 128-bit shim (same vmla order per output as the 2-row path).
+  for (; row + 3 < last_row; row += 4) {
+    float* out0 = dst + std::size_t(row) * cols;
+    float* out1 = out0 + cols;
+    float* out2 = out1 + cols;
+    float* out3 = out2 + cols;
+    const float* left0 = a + std::size_t(row) * depth;
+    const float* left1 = left0 + depth;
+    const float* left2 = left1 + depth;
+    const float* left3 = left2 + depth;
+    int col = 0;
+    for (; col + 16 <= cols; col += 16) {
+      float32x4_t a0 = bias ? vld1q_f32(bias + col) : vdupq_n_f32(0);
+      float32x4_t a1 = bias ? vld1q_f32(bias + col + 4) : vdupq_n_f32(0);
+      float32x4_t a2 = bias ? vld1q_f32(bias + col + 8) : vdupq_n_f32(0);
+      float32x4_t a3 = bias ? vld1q_f32(bias + col + 12) : vdupq_n_f32(0);
+      float32x4_t b0 = a0, b1 = a1, b2 = a2, b3 = a3;
+      float32x4_t c0 = a0, c1 = a1, c2 = a2, c3 = a3;
+      float32x4_t d0 = a0, d1 = a1, d2 = a2, d3 = a3;
+      for (int k = 0; k < depth; ++k) {
+        const float32x4_t l0 = vdupq_n_f32(left0[k]);
+        const float32x4_t l1 = vdupq_n_f32(left1[k]);
+        const float32x4_t l2 = vdupq_n_f32(left2[k]);
+        const float32x4_t l3 = vdupq_n_f32(left3[k]);
+        const float* right = b + std::size_t(k) * cols + col;
+        const float32x4_t r0 = vld1q_f32(right);
+        const float32x4_t r1 = vld1q_f32(right + 4);
+        const float32x4_t r2 = vld1q_f32(right + 8);
+        const float32x4_t r3 = vld1q_f32(right + 12);
+        a0 = vmlaq_f32(a0, l0, r0); b0 = vmlaq_f32(b0, l1, r0);
+        c0 = vmlaq_f32(c0, l2, r0); d0 = vmlaq_f32(d0, l3, r0);
+        a1 = vmlaq_f32(a1, l0, r1); b1 = vmlaq_f32(b1, l1, r1);
+        c1 = vmlaq_f32(c1, l2, r1); d1 = vmlaq_f32(d1, l3, r1);
+        a2 = vmlaq_f32(a2, l0, r2); b2 = vmlaq_f32(b2, l1, r2);
+        c2 = vmlaq_f32(c2, l2, r2); d2 = vmlaq_f32(d2, l3, r2);
+        a3 = vmlaq_f32(a3, l0, r3); b3 = vmlaq_f32(b3, l1, r3);
+        c3 = vmlaq_f32(c3, l2, r3); d3 = vmlaq_f32(d3, l3, r3);
+      }
+      vst1q_f32(out0 + col, a0); vst1q_f32(out0 + col + 4, a1);
+      vst1q_f32(out0 + col + 8, a2); vst1q_f32(out0 + col + 12, a3);
+      vst1q_f32(out1 + col, b0); vst1q_f32(out1 + col + 4, b1);
+      vst1q_f32(out1 + col + 8, b2); vst1q_f32(out1 + col + 12, b3);
+      vst1q_f32(out2 + col, c0); vst1q_f32(out2 + col + 4, c1);
+      vst1q_f32(out2 + col + 8, c2); vst1q_f32(out2 + col + 12, c3);
+      vst1q_f32(out3 + col, d0); vst1q_f32(out3 + col + 4, d1);
+      vst1q_f32(out3 + col + 8, d2); vst1q_f32(out3 + col + 12, d3);
+    }
+    for (; col < cols; ++col) {
+      float v0 = bias ? bias[col] : 0.F;
+      float v1 = v0, v2 = v0, v3 = v0;
+      for (int k = 0; k < depth; ++k) {
+        const float weight = b[std::size_t(k) * cols + col];
+        v0 += left0[k] * weight; v1 += left1[k] * weight;
+        v2 += left2[k] * weight; v3 += left3[k] * weight;
+      }
+      out0[col] = v0; out1[col] = v1; out2[col] = v2; out3[col] = v3;
+    }
+  }
+#endif
   for (; row + 1 < last_row; row += 2) {
     float* out0 = dst + std::size_t(row) * cols;
     float* out1 = out0 + cols;
@@ -6905,6 +6969,31 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
           for (int step = 0; step < steps; ++step) {
             previous = emit_row(sequence * steps + step, previous,
                                 logits.data() + std::size_t(step) * vocab);
+          }
+        }
+        return;
+      }
+#endif
+#if defined(PPOCR_HAS_LASX_KERNELS)
+      if (HasLasx() && std::getenv("PPOCR_DISABLE_LASX_CTC_ONLINE") == nullptr) {
+        const auto packed = PackedCtcB32(right, depth, vocab);
+        std::vector<int> args(static_cast<std::size_t>(steps));
+        std::vector<float> maxima(static_cast<std::size_t>(steps));
+        std::vector<float> sums(static_cast<std::size_t>(steps));
+        for (int sequence = first; sequence < last; ++sequence) {
+          LasxGemmPacked32(nullptr,
+                           left + std::size_t(sequence) * steps * depth,
+                           packed->data(), bias, steps, vocab, depth,
+                           args.data(), maxima.data(), sums.data());
+          int previous = -1;
+          for (int step = 0; step < steps; ++step) {
+            const int row = sequence * steps + step;
+            const int best = args[static_cast<std::size_t>(step)];
+            indices[row] = best;
+            const float denom = sums[static_cast<std::size_t>(step)];
+            probabilities[row] = (best != 0 && best != previous && denom > 0.F)
+                ? 1.F / denom : 0.F;
+            previous = best;
           }
         }
         return;

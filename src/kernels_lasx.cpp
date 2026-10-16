@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -1265,6 +1266,164 @@ void LasxDepthwisePointwiseConv5x5S1(
         for (int input = 0; input < channels; ++input)
           sum += filter[input] * dw_row[std::size_t(input) * width + x];
         out[x] = activate_scalar(sum);
+      }
+    }
+  }
+}
+
+
+inline float HMax(__m256 v) noexcept {
+  alignas(32) float t[8];
+  Store(t, v);
+  float m = t[0];
+  for (int i = 1; i < 8; ++i) m = std::max(m, t[i]);
+  return m;
+}
+inline float HSum(__m256 v) noexcept {
+  alignas(32) float t[8];
+  Store(t, v);
+  return t[0] + t[1] + t[2] + t[3] + t[4] + t[5] + t[6] + t[7];
+}
+
+// K-contiguous 32-col panels (same layout as PackedCtcB32 / Avx2GemmPacked32).
+// Online CTC mode never stores the full logits matrix.
+void LasxGemmPacked32(float* dst, const float* a, const float* packed_b,
+                      const float* bias, int rows, int cols, int depth,
+                      int* ctc_arg, float* ctc_max, float* ctc_sum) noexcept {
+  const bool fuse_ctc = ctc_arg && ctc_max && ctc_sum;
+  if ((!dst && !fuse_ctc) || !a || !packed_b || rows <= 0 || cols <= 0 || depth <= 0) return;
+  if (fuse_ctc) {
+    const float ninf_s = std::numeric_limits<float>::lowest();
+    for (int row = 0; row < rows; ++row) {
+      ctc_arg[row] = 0;
+      ctc_max[row] = ninf_s;
+      ctc_sum[row] = 0.F;
+    }
+    const int panels = (cols + 31) / 32;
+    const auto update_row = [&](__m256 v, int n0, int n_len, int row) noexcept {
+      alignas(32) float tmp[8];
+      Store(tmp, v);
+      for (int lane = n_len; lane < 8; ++lane) tmp[lane] = ninf_s;
+      v = Load(tmp);
+      const float pmax = HMax(v);
+      int best_lane = 0;
+      for (int lane = 0; lane < n_len; ++lane) {
+        if (tmp[lane] == pmax) { best_lane = lane; break; }
+      }
+      float& mx = ctc_max[row];
+      float& sm = ctc_sum[row];
+      if (pmax > mx) {
+        if (std::isfinite(mx)) sm *= std::exp(mx - pmax);
+        else sm = 0.F;
+        mx = pmax;
+        ctc_arg[row] = n0 + best_lane;
+      }
+      __m256 e = ExpPs(__lasx_xvfsub_s(v, Splat(mx)));
+      Store(tmp, e);
+      for (int i = n_len; i < 8; ++i) tmp[i] = 0.F;
+      sm += HSum(Load(tmp));
+    };
+    for (int panel = 0; panel < panels; ++panel) {
+      const float* pb = packed_b + std::size_t(panel) * depth * 32;
+      for (int half = 0; half < 4; ++half) {
+        const int n0 = panel * 32 + half * 8;
+        if (n0 >= cols) break;
+        const int n_len = std::min(8, cols - n0);
+        alignas(32) float btmp[8] = {};
+        if (bias) std::memcpy(btmp, bias + n0, std::size_t(n_len) * sizeof(float));
+        const __m256 bias_v = Load(btmp);
+        int row = 0;
+        for (; row + 4 <= rows; row += 4) {
+          const float* left0 = a + std::size_t(row) * depth;
+          __m256 a0 = bias_v, b0 = bias_v, c0 = bias_v, d0 = bias_v;
+          for (int k = 0; k < depth; ++k) {
+            const __m256 r = Load(pb + std::size_t(k) * 32 + half * 8);
+            a0 = Fma(a0, Splat(left0[k]), r);
+            b0 = Fma(b0, Splat(left0[depth + k]), r);
+            c0 = Fma(c0, Splat(left0[2 * depth + k]), r);
+            d0 = Fma(d0, Splat(left0[3 * depth + k]), r);
+          }
+          update_row(a0, n0, n_len, row);
+          update_row(b0, n0, n_len, row + 1);
+          update_row(c0, n0, n_len, row + 2);
+          update_row(d0, n0, n_len, row + 3);
+        }
+        for (; row < rows; ++row) {
+          const float* left = a + std::size_t(row) * depth;
+          __m256 acc = bias_v;
+          for (int k = 0; k < depth; ++k)
+            acc = Fma(acc, Splat(left[k]), Load(pb + std::size_t(k) * 32 + half * 8));
+          update_row(acc, n0, n_len, row);
+        }
+      }
+    }
+    return;
+  }
+  if (!dst) return;
+  const int panels = (cols + 31) / 32;
+  int row = 0;
+  for (; row + 1 < rows; row += 2) {
+    const float* left0 = a + std::size_t(row) * depth;
+    const float* left1 = left0 + depth;
+    float* out0 = dst + std::size_t(row) * cols;
+    float* out1 = out0 + cols;
+    for (int panel = 0; panel < panels; ++panel) {
+      const int n0 = panel * 32;
+      const int n_len = std::min(32, cols - n0);
+      const float* pb = packed_b + std::size_t(panel) * depth * 32;
+      alignas(32) float btmp[32] = {};
+      if (bias) std::memcpy(btmp, bias + n0, std::size_t(n_len) * sizeof(float));
+      __m256 a0 = Load(btmp), a1 = Load(btmp + 8), a2 = Load(btmp + 16), a3 = Load(btmp + 24);
+      __m256 b0 = a0, b1 = a1, b2 = a2, b3 = a3;
+      for (int k = 0; k < depth; ++k) {
+        const float* right = pb + std::size_t(k) * 32;
+        const __m256 r0 = Load(right), r1 = Load(right + 8);
+        const __m256 r2 = Load(right + 16), r3 = Load(right + 24);
+        const __m256 s0 = Splat(left0[k]), s1 = Splat(left1[k]);
+        a0 = Fma(a0, s0, r0); a1 = Fma(a1, s0, r1);
+        a2 = Fma(a2, s0, r2); a3 = Fma(a3, s0, r3);
+        b0 = Fma(b0, s1, r0); b1 = Fma(b1, s1, r1);
+        b2 = Fma(b2, s1, r2); b3 = Fma(b3, s1, r3);
+      }
+      auto store = [&](float* out, __m256 c0, __m256 c1, __m256 c2, __m256 c3) {
+        if (n_len == 32) {
+          Store(out + n0, c0); Store(out + n0 + 8, c1);
+          Store(out + n0 + 16, c2); Store(out + n0 + 24, c3);
+          return;
+        }
+        alignas(32) float tmp[32];
+        Store(tmp, c0); Store(tmp + 8, c1); Store(tmp + 16, c2); Store(tmp + 24, c3);
+        std::memcpy(out + n0, tmp, std::size_t(n_len) * sizeof(float));
+      };
+      store(out0, a0, a1, a2, a3);
+      store(out1, b0, b1, b2, b3);
+    }
+  }
+  if (row < rows) {
+    const float* left = a + std::size_t(row) * depth;
+    float* out = dst + std::size_t(row) * cols;
+    for (int panel = 0; panel < panels; ++panel) {
+      const int n0 = panel * 32;
+      const int n_len = std::min(32, cols - n0);
+      const float* pb = packed_b + std::size_t(panel) * depth * 32;
+      alignas(32) float btmp[32] = {};
+      if (bias) std::memcpy(btmp, bias + n0, std::size_t(n_len) * sizeof(float));
+      __m256 c0 = Load(btmp), c1 = Load(btmp + 8), c2 = Load(btmp + 16), c3 = Load(btmp + 24);
+      for (int k = 0; k < depth; ++k) {
+        const float* right = pb + std::size_t(k) * 32;
+        const __m256 s = Splat(left[k]);
+        c0 = Fma(c0, s, Load(right));
+        c1 = Fma(c1, s, Load(right + 8));
+        c2 = Fma(c2, s, Load(right + 16));
+        c3 = Fma(c3, s, Load(right + 24));
+      }
+      if (n_len == 32) {
+        Store(out + n0, c0); Store(out + n0 + 8, c1);
+        Store(out + n0 + 16, c2); Store(out + n0 + 24, c3);
+      } else {
+        alignas(32) float tmp[32];
+        Store(tmp, c0); Store(tmp + 8, c1); Store(tmp + 16, c2); Store(tmp + 24, c3);
+        std::memcpy(out + n0, tmp, std::size_t(n_len) * sizeof(float));
       }
     }
   }
