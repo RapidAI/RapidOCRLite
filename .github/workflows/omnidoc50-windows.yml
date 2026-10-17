@@ -1,0 +1,77 @@
+name: omnidoc50 windows
+
+# Full 50-page lite regression on Windows (MSVC), run by hand only.
+# The pages are OmniDocBench (research use only): they are downloaded at run time from the original
+# source (Hugging Face, pinned revision) into the runner's temp directory, verified by SHA256 and
+# never cached, committed or uploaded. Only the comparison report is uploaded.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  omnidoc50:
+    name: omnidoc50 ${{ matrix.arch }} ${{ matrix.isa }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, x86]
+        isa: [auto, avx2, scalar]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch }}
+
+      - name: Install Ninja
+        shell: bash
+        run: choco install ninja -y
+
+      - name: Build lite test (MSVC ${{ matrix.arch }})
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_EXAMPLES=ON -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build -j4 --target ppocr_lite_c_test
+
+      - name: Fetch and verify the 50 pages (not uploaded)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -q huggingface_hub opencv-python-headless==5.0.0.93 numpy==2.5.4 pillow==12.3.0
+          python tools/omnidoc50/fetch.py "$RUNNER_TEMP/o50"
+
+      - name: Run and compare (1 and 4 threads)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$PWD/build:$PATH" LITE_SCORES=1 LITE_STREAM=1 PYTHONIOENCODING=utf-8
+          if [ "${{ matrix.isa }}" != auto ]; then export PPOCR_FORCE_ISA=${{ matrix.isa }}; fi
+          LABEL="windows-${{ matrix.arch }}-${{ matrix.isa }}"
+          REPORT="$PWD/omnidoc50-report-${{ matrix.arch }}-${{ matrix.isa }}.md"
+          echo "# omnidoc50 $LABEL ($(git rev-parse --short HEAD))" > "$REPORT"
+          rc=0
+          for t in 1 4; do
+            ./build/ppocr_lite_c_test python/src/rapidocr/models/lite "$RUNNER_TEMP/o50/list.txt" $t "$RUNNER_TEMP/run_$t.json" 2>&1 | tee -a "$REPORT"
+            python tools/omnidoc50/compare.py "$RUNNER_TEMP/run_$t.json" "$LABEL-${t}t" "$REPORT" || rc=1
+          done
+          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+
+      - name: Upload the comparison report only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: omnidoc50-report-${{ matrix.arch }}-${{ matrix.isa }}
+          path: omnidoc50-report-*.md
+          if-no-files-found: warn

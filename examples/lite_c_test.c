@@ -45,7 +45,12 @@ int main(int argc, char** argv) {
   fclose(lf);
   int warm = argc > 5 ? atoi(argv[5]) : 1;
   rpocr_image_buffer* imgs = calloc((size_t)n, sizeof *imgs);
-  for (int i = 0; i < n; i++) if (rpocr_load_ppm(paths[i], &imgs[i]) != RPOCR_OK) { fprintf(stderr, "load %s: %s\n", paths[i], rpocr_last_error()); return 1; }
+  /* LITE_STREAM=1: load each page just before it runs and free it after (32-bit address space) */
+  const int stream = getenv("LITE_STREAM") != NULL;
+  for (int i = 0; i < n; i++) {
+    if (stream && i > 0) break;
+    if (rpocr_load_ppm(paths[i], &imgs[i]) != RPOCR_OK) { fprintf(stderr, "load %s: %s\n", paths[i], rpocr_last_error()); return 1; }
+  }
   if (warm && n) {
     rpocr_image im = {imgs[0].width, imgs[0].height, imgs[0].rgb}; rpocr_result r;
     if (rpocr_recognize(ocr, &im, &r) != RPOCR_OK) { fprintf(stderr, "warmup: %s\n", rpocr_last_error()); return 1; }
@@ -56,7 +61,7 @@ int main(int argc, char** argv) {
   fprintf(f, "{\"threads\": %s, \"pages\": [", argv[3]);
   /* LITE_BATCH=1: one rpocr_recognize_batch call over all pages (per-page ms = batch wall time / n). */
   rpocr_result* br = NULL;
-  if (getenv("LITE_BATCH") && n) {
+  if (getenv("LITE_BATCH") && n && !stream) {
     rpocr_image* ims = calloc((size_t)n, sizeof *ims); br = calloc((size_t)n, sizeof *br);
     for (int i = 0; i < n; i++) { ims[i].width = imgs[i].width; ims[i].height = imgs[i].height; ims[i].rgb = imgs[i].rgb; }
     double t0 = now_ms();
@@ -65,6 +70,7 @@ int main(int argc, char** argv) {
     for (int i = 0; i < n; i++) ts[i] = getenv("LITE_NO_TIMING") ? 0 : per;
   }
   for (int i = 0; i < n; i++) {
+    if (stream && i > 0 && rpocr_load_ppm(paths[i], &imgs[i]) != RPOCR_OK) { fprintf(stderr, "load %s: %s\n", paths[i], rpocr_last_error()); return 1; }
     rpocr_image im = {imgs[i].width, imgs[i].height, imgs[i].rgb}; rpocr_result r;
     int st = RPOCR_OK;
     if (br) r = br[i];
@@ -83,15 +89,20 @@ int main(int argc, char** argv) {
       for (int q = 0; q < 4; q++) fprintf(f, "%s[%.9g, %.9g]", q ? ", " : "", r.items[k].box[q].x, r.items[k].box[q].y);
       fputc(']', f);
     }
+    if (getenv("LITE_SCORES")) {  /* LITE_SCORES=1: also write the line confidences (float, round-trip precision) */
+      fprintf(f, "], \"scores\": [");
+      for (size_t k = 0; k < r.count; k++) fprintf(f, "%s%.9g", k ? ", " : "", r.items[k].confidence);
+    }
     fprintf(f, "], \"ms\": %.3f}", ts[i]);
     rpocr_result_free(&r);
+    if (stream) rpocr_image_free(&imgs[i]);
   }
   qsort(ts, (size_t)n, sizeof(double), cmpd);
   double med = n ? (n % 2 ? ts[n / 2] : (ts[n / 2 - 1] + ts[n / 2]) / 2) : 0;
   fprintf(f, "], \"n\": %d, \"mean_ms\": %.3f, \"median_ms\": %.3f}\n", n, n ? tot / n : 0, med);
   fclose(f);
   printf("lite_c_test threads=%s n=%d mean_ms=%.1f median_ms=%.1f\n", argv[3], n, n ? tot / n : 0, med);
-  for (int i = 0; i < n; i++) rpocr_image_free(&imgs[i]);
+  if (!stream) for (int i = 0; i < n; i++) rpocr_image_free(&imgs[i]);
   rpocr_destroy(ocr);
   return 0;
 }

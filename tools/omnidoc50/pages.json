@@ -1,0 +1,302 @@
+[
+ {
+  "id": "00",
+  "src": "newspaper_d1716a12000a38e1e4c0bf66309558db_1.jpg",
+  "src_sha256": "643f1b7e4c0f1db2890f0f452cea6ce7fc8fb81abd3e2ea45e94c41d3de0b16e",
+  "ppm_sha256": "fd7d57ea31c444f6f176812b37074755edaed7a97683114e749f6b64f86bf185"
+ },
+ {
+  "id": "01",
+  "src": "yanbaor2_0ef01b835238626f3589faa671abdfb832f2b98987eadad53cb2e35699dcc039.pdf_13.jpg",
+  "src_sha256": "93b5f1572df18f48125561548ce31dc8b7b235681410e1f036001bf428ba99eb",
+  "ppm_sha256": "3bc0d4d8ef50b76be63860afb11675146b01655de9128e1941caa7f8b366db81"
+ },
+ {
+  "id": "02",
+  "src": "newspaper_74fc3b01b2cc4a7e6ca0f1af2b998187_1.jpg",
+  "src_sha256": "8eb3ffd5102f055e8b40192563e2fdb9206489d333d158833a026af9ba3e538a",
+  "ppm_sha256": "b4b97a6c6793a56bc109d8793737aa9263197fcb3c91225c77219af1badaa87c"
+ },
+ {
+  "id": "03",
+  "src": "newspaper_eb569707cf5621d4c71d5898216cdb17_1.jpg",
+  "src_sha256": "28582172db96587966199297bd09cbadcaefea329f585df873e21676062c6e0f",
+  "ppm_sha256": "84e34b295dedc37f4c1b84f25bf510137315561f48b1cb85b0245eca25a8eb72"
+ },
+ {
+  "id": "04",
+  "src": "yanbaor2_f285730f47c99283aba722e704b936c4362d8c175463dc13de640fc54e8887ac.pdf_75.jpg",
+  "src_sha256": "cba807a549e12b46b3fd5dd8b97e1beac1326716d14cb226647ddcc9c7a029b2",
+  "ppm_sha256": "2284b9c6fee17fa8d12420e7888fa7eae73dbd207c829de5abcc231a51620f59"
+ },
+ {
+  "id": "05",
+  "src": "page-9bcba6da-bdb0-4403-97cb-8874898ac8ab.png",
+  "src_sha256": "b5e4af2572323d5174d7e4ff33ae010d6e6929cd7c1a3c48b4f85a4d1330dd79",
+  "ppm_sha256": "51e38b8c2014f7ec682f85b3ff81e7142ec485b021b90b668e5c5a2dd1bf0caf"
+ },
+ {
+  "id": "06",
+  "src": "page-74961b9a-ef4c-42d8-a95f-406e6b84cf63.png",
+  "src_sha256": "a630f63711f4f752f6a2931df2adc67fdba590b9e9e021cfff272efbfa365512",
+  "ppm_sha256": "81295f02e87e0c1dfa82a6ac2796eeb38a5afd3b50ddc6b9f44770395a00388d"
+ },
+ {
+  "id": "07",
+  "src": "jiaocaineedrop_jiaocai_needrop_en_2412.jpg",
+  "src_sha256": "5582324aab4c19eaa8637954e38cd4a0415c087f057575d2e7ecdfc91ba5cabb",
+  "ppm_sha256": "c8275161042379a0e678fdbb924fc185887431c90670457966d3a3ff80d88563"
+ },
+ {
+  "id": "08",
+  "src": "jiaocaineedrop_jiaocai_needrop_en_1253.jpg",
+  "src_sha256": "18987647593df257ce568911ead941fae3532f82baf450754a29ed3fb60848f6",
+  "ppm_sha256": "10d8d74ce9c55afab0be5a385848268b9e3e677e50cfce987ad0e96aed8cd152"
+ },
+ {
+  "id": "09",
+  "src": "yanbaor2_b2f600a88fc341bdd0b2b58b8bd4b0ab448277b06e167aa879b838e8139db19d.pdf_17.jpg",
+  "src_sha256": "5631b4d2a791ec2c8f4ce8eed866e19af2dceb48f7019d78213fc012448f982d",
+  "ppm_sha256": "116dbda4172a8fea077d3738ccc4151470fb0917c5dbaa5cebf72432fc9a2f09"
+ },
+ {
+  "id": "10",
+  "src": "yanbaor2_yanbaoPPT_1332.jpg",
+  "src_sha256": "184ae7b69876ca670186286f0d0fa030b6b48a1e47e7691cc003fbd05150a183",
+  "ppm_sha256": "3b2fe6ee2f9e7c65c67d5efcceb4a7cce4aa2ffe32130ebdf7fe03b49650d830"
+ },
+ {
+  "id": "11",
+  "src": "newspaper_9729b78cbf9f2820b9f257fff7e3171b_1.jpg",
+  "src_sha256": "724065cce30367b343548449cabd62098142c630a173a03853d903293b190adc",
+  "ppm_sha256": "662ca63d0f37069963f14ff578cf1f93cd69f3f09dc6e9cbecb54d2a56dd9419"
+ },
+ {
+  "id": "12",
+  "src": "newspaper_c79c0c10a5df54b21bccad8f64063ffa_1.jpg",
+  "src_sha256": "28e4e6000bcab6e75e0d300c2014acc564edaca0868b5dc4fdffd8f3e4b3c424",
+  "ppm_sha256": "dd26cdecfb1a108ee8ebbc6375f5e93089ede87770ef7c7f52308e73bcf1875c"
+ },
+ {
+  "id": "13",
+  "src": "page-d8376ede-3935-4a80-8acb-525b14796774.png",
+  "src_sha256": "3106a2c888e072bdabe658d04dcd3e3aa4fe123b65da8c6e8779642f96887acc",
+  "ppm_sha256": "3f98619bf28c7af928d12c26bcbdbb9e811b6d1342fa33c17c15eca58eaa0a99"
+ },
+ {
+  "id": "14",
+  "src": "docstructbench_dianzishu_zhongwenzaixian-o.O-63710614.pdf_149.jpg",
+  "src_sha256": "9ac1a0fcd4929593d911731d45098444f905d97da9ed16ec2f8718c36f052ff1",
+  "ppm_sha256": "8f8687946697a3c7eeca6d4a06c64199ee9b0907566543d6b29905171bb92670"
+ },
+ {
+  "id": "15",
+  "src": "page-f5b824d0-be81-48a9-aae6-3060d11a6503.png",
+  "src_sha256": "27829b18028439b9245ed5001bf5a1c73280c19770ec1c2af8a7f39be99a279a",
+  "ppm_sha256": "f872071b3b10329e917d7d87bbc4361f3058f9ca100e20ebe2c510bc382e0180"
+ },
+ {
+  "id": "16",
+  "src": "yanbaor2_bedda45af71c9703274cf8b2c62a772e6be615c355d2b255d9408b1b40b606de.pdf_3.jpg",
+  "src_sha256": "09c44bc3d7cd90e1fe552402f20ef13fc6a40079b0cb18a60859120c1fd1c21c",
+  "ppm_sha256": "d550bd44333154b266e6bacd5b35b7c308d16449298ccb54b7f3f4e1f5c2f324"
+ },
+ {
+  "id": "17",
+  "src": "newspaper_ef5c785d9cc21ccf6b73d143f231b5c5_1.jpg",
+  "src_sha256": "db951fb0bb4291a9bb7d837465793ecf2c1c651c15d21d8bb9ebad2628f78f1b",
+  "ppm_sha256": "56b54770d01f8ee539803234dc74e98ccbf4256b95bb40fd7c4aa92317c5353d"
+ },
+ {
+  "id": "18",
+  "src": "page-3bed7e71-905d-4f69-aabe-dbff56d7ac4c.png",
+  "src_sha256": "f428a5a7385371bc62cb2c75fb8597d189f5a85f8dd90645194d91362d86953c",
+  "ppm_sha256": "16d169959566f6a12a338a239cbe51f9669691dc99e26552c3f3ce749e4c412c"
+ },
+ {
+  "id": "19",
+  "src": "jiaocaineedrop_jiaocai_needrop_en_2031.jpg",
+  "src_sha256": "d10614aea060317527041c4947b5ac382db1036d496d5a3b827c4ec9ef779cbc",
+  "ppm_sha256": "56322c23b0155eda4516de437340bdcd175998c690ef732fb0a2a60b8504d9c9"
+ },
+ {
+  "id": "20",
+  "src": "page-c32797b5-0a58-40da-82b4-b35dded00f25.png",
+  "src_sha256": "c53f4e83600eb9db20b9e37a6ee598969b8dbfeb6af4fa1e2cdd4710c8840cd4",
+  "ppm_sha256": "a5eab21c43eeadf36a6a584be3f2d153cfe54e9872deefe1a6859a3154017d6f"
+ },
+ {
+  "id": "21",
+  "src": "page-91460e0a-922c-4f9b-9d11-d1a7981c3a05.png",
+  "src_sha256": "1c39bb6f46a32b0e990fbfcb851e688e3475571f2b53ebe4097fce51911901ed",
+  "ppm_sha256": "51ef63dcbd50ee1cddb84bdc45eca2101551c2e5e99fa378bc61d86a5cd0ce73"
+ },
+ {
+  "id": "22",
+  "src": "book_zh_GB14930.21994_extracted_page_4.png",
+  "src_sha256": "c05b4848fc3249139c17badcae8bed4a69d5c917f11ed2d62ceb626a0befa7b0",
+  "ppm_sha256": "ff4ce83aef9ed57fc6a5b96290f22d8342172565c6cb23429e856ecdfdc944b7"
+ },
+ {
+  "id": "23",
+  "src": "newspaper_73fc8720a9b2798307ba43a8b8e47b5e_1.jpg",
+  "src_sha256": "adf28177aa2e35c26b6ad0c704b1d39b4178d38d0f2100704ec7c3166a3aeb0a",
+  "ppm_sha256": "8d400098fc0eff6f43260ddd9bfb4f5b4f29bd3642c0cdfbbc39b60e3627d103"
+ },
+ {
+  "id": "24",
+  "src": "page-7e4386d0-51fa-49cc-ad79-dc011a0772d9.png",
+  "src_sha256": "0ed7d656aa70c3f77034f70dfacb56fe93e7ba9a2c704ecb27657f1239a6b80d",
+  "ppm_sha256": "4ff1ee3c78b7a0c02496e439a4d54f550398377227fd4f94297b020f43381104"
+ },
+ {
+  "id": "25",
+  "src": "newspaper_019d4d5296ba8f1c21277d72fb0cf0db_1.jpg",
+  "src_sha256": "7b21b85039e423054e70048d2a7837d10c3a97fffc88dab30a3ff57307babcaf",
+  "ppm_sha256": "2785a9ae23f432c3dcddd5f97ad3d6e2ba331ba7cbca63270525436432caf034"
+ },
+ {
+  "id": "26",
+  "src": "newspaper_a15057349a86850e55b084c235fa2f22_1.jpg",
+  "src_sha256": "21da004dac819440e567c5a215a4af97fb58620e8703659944e61ee3241fe827",
+  "ppm_sha256": "574a685d95ed2c842e4a12cf4d1756b8b9108882b864188f2d91cd47d0c0517e"
+ },
+ {
+  "id": "27",
+  "src": "page-d29fe4d2-832a-4ad6-ac80-dc01cf8b0e16.png",
+  "src_sha256": "85dc881cc847b5f95255d816b606c9db4e308acc67c41057e0d3b97b4920aec8",
+  "ppm_sha256": "b25cc46c5ef748ce0c9bc660460642b1c80f7234b4d6417dee050f1be0706438"
+ },
+ {
+  "id": "28",
+  "src": "jiaocaineedrop_jiaocai_needrop_en_3685.jpg",
+  "src_sha256": "f1110266dad362f62b0da26ae9dd5ab1bb19599e7147e5060a39f19a0c803893",
+  "ppm_sha256": "9bd563b298ac7c70d141468d5e8da840d9d87d7f0ea69df3c184dd33bff361f5"
+ },
+ {
+  "id": "29",
+  "src": "newspaper_4790b51e8fa793743699647c09a93ccb_1.jpg",
+  "src_sha256": "187a4fff504e52ccf3f5bb68fb6af962b2a6911014290eb81312bb61eaf1f3d1",
+  "ppm_sha256": "9b298315fc418f05f36c75c99f4c776252d0857fa7741e43bc2f16b13ce97666"
+ },
+ {
+  "id": "30",
+  "src": "newspaper_b615618f3cdb0f2c13ffb5865dea799c_1.jpg",
+  "src_sha256": "96ec5aede0a3fa79e536144611d57e5adb2b7ad71c03119325d24227eb5617ed",
+  "ppm_sha256": "f467be108ae4c9920360057b775904e06df745492a5374f9aa95ab52ba32ec85"
+ },
+ {
+  "id": "31",
+  "src": "yanbaor2_ec10ef335b55af1612e6ab51b5ebdff506d496da9eb8c17c74fe2751661c22f7.pdf_1.jpg",
+  "src_sha256": "1d83116a6f047cd11c7f9fda019a4f3bbca5a0181330d915edd4354d36d9aa28",
+  "ppm_sha256": "358a6f701a2c9b095247cf6713dfc4ac885bd3a62df7a4c7cc90ed43b03f7fdb"
+ },
+ {
+  "id": "32",
+  "src": "page-d5f79be0-5d57-4849-9897-6106dd32117a.png",
+  "src_sha256": "dc35626bf3405e7829e35c36265b06be82c95d5d03318a6eab17662afc4f6601",
+  "ppm_sha256": "a1de8972fe4b5aa220e2a1fb1dca8481d9522fe585b637f4e5849eea14dc805c"
+ },
+ {
+  "id": "33",
+  "src": "page-94600a77-35db-4549-b505-3dadc092b3f4.png",
+  "src_sha256": "1429366a685cd51f32cc5d2eb37854b4349805ad37066e68dcf0b2962c2a9537",
+  "ppm_sha256": "f4f47e75022c25b7df495b74545335ed32fac2b8e5fecf9ffe08891039d90ae4"
+ },
+ {
+  "id": "34",
+  "src": "page-ad96cd76-ac99-45cc-94d1-f9c0451fbc6c.png",
+  "src_sha256": "76918f67f982e0aebee7af206e54e7d12bc17e743bb61e03824bba3c92670195",
+  "ppm_sha256": "2770d36593c07dd4b5dfd8d08337097c22fb5899287d6ac0b5b6c45ccca71db2"
+ },
+ {
+  "id": "35",
+  "src": "newspaper_5bba361b0a5ca11745edbef140e2a431_1.jpg",
+  "src_sha256": "54f5badd60764a7737d685e26930b2b5ae94184b04e7fa1601be6f365c84fa53",
+  "ppm_sha256": "213b7e378ce9b0e4b621f6861871c4ecb9a9b1d995b7a6efd6b8e02a32116fe0"
+ },
+ {
+  "id": "36",
+  "src": "page-b2349b51-01db-4dc1-9e4a-58e52f5e4362.png",
+  "src_sha256": "d52f93b74e0eede84192412bd3f15dc21adae5cdc235cecada1d662f4c8e6e9f",
+  "ppm_sha256": "cf9a2ad26c6b263c6d1920b276b27e0dcc7895eea3d79a2205e97dbc10f8cd22"
+ },
+ {
+  "id": "37",
+  "src": "newspaper_35352f94db65d19e097395380498ec15_1.jpg",
+  "src_sha256": "612d2ce288c9297293fab253f212959644b1728f1ae0555aedddbbc10bc86b16",
+  "ppm_sha256": "fd309da6fc82e5280345f6bef92274feba51010cfabe1027a6793028ac2729fe"
+ },
+ {
+  "id": "38",
+  "src": "page-1f03d0f2-1166-4b9b-9609-94bf8bfd29b2.png",
+  "src_sha256": "84935f2747c3aae7c7b78d147a902003b52f4865818063875aabdba7de290d9f",
+  "ppm_sha256": "4f09cc94ca429ec6b7280a6d531717b1ca35c0d7495f8f82c52393843c58e488"
+ },
+ {
+  "id": "39",
+  "src": "docstructbench_dianzishu_zhongwenzaixian-o.O-63686103.pdf_55.jpg",
+  "src_sha256": "99f7bd3b0d4f564c473503de8169a1c13cec16320a73ee30275d445121e401fb",
+  "ppm_sha256": "374d8c5c196712931613f7018b6ec958614e01f2f472d78875d9077db7a1c1dc"
+ },
+ {
+  "id": "40",
+  "src": "docstructbench_dianzishu_zhongwenzaixian-o.O-63685157.pdf_105.jpg",
+  "src_sha256": "dc261f9987f5404d369f1f293de53f2f0bea6ad566a4b37c73d54affce39e5e0",
+  "ppm_sha256": "4b6c8486b03c185f5f64c43d8f529b0d60b1bc7d1793f98023c07326496ec175"
+ },
+ {
+  "id": "41",
+  "src": "newspaper_c8e8e00e1b1a70aa44afd1fbdaf59430_1.jpg",
+  "src_sha256": "8b96c50882a717f15746d4c710cda96f8f00b24174d123e8eed9d5957c48e419",
+  "ppm_sha256": "d3d7b7427db4beb0c118c879f993025acb86d931a160868032e2fe954d602e7b"
+ },
+ {
+  "id": "42",
+  "src": "page-68e347d8-6f34-431b-a2a2-549b3634dabc.png",
+  "src_sha256": "ec9931a3c9f8bbba10b028f14af2d6f7656c03338704a521bdfcaf9d04a971b0",
+  "ppm_sha256": "e67bf16c5ee4171c56f754c4367a99101cfa5439830db6fdd34969f773a0d143"
+ },
+ {
+  "id": "43",
+  "src": "yanbaor2_yanbaoPPT_5.jpg",
+  "src_sha256": "1d60b8c0cd37fb1df55b2e49a1aeb386fd1c743d09af70ea2535731ec3b718c2",
+  "ppm_sha256": "859e99e4e3b1a6a2b2c07ee595df29ec1de9aafc776ecd373d9113b66702cac3"
+ },
+ {
+  "id": "44",
+  "src": "page-e7681b54-2c4a-40a2-9abe-caebba01cefb.png",
+  "src_sha256": "e1acb6ebe468f599a31f8e6ac41d0d16a62fe47c09fa1185c6a7fe7eec07994a",
+  "ppm_sha256": "6624aea0d4641058c34a18ee6b7154f53ed59c7ca182129cb22bded6dbe76d20"
+ },
+ {
+  "id": "45",
+  "src": "yanbaor2_yanbaoPPT_3604.jpg",
+  "src_sha256": "d5ecd115e6787d6e53234711e485b4ce128e7ec541e915ca1395eb545db096b8",
+  "ppm_sha256": "492eac75dcd961614975549bdfce13b4f99d618b4d10e4d9027038c6737955b8"
+ },
+ {
+  "id": "46",
+  "src": "newspaper_0b1bb8d03b4287eb95f67b68c2cf9f92_1.jpg",
+  "src_sha256": "377f369216cb5dda578961d368a5021d488105fb8ecb22b1d9d9f498f1b948c3",
+  "ppm_sha256": "f88d3684e766da422a61bc0e6d7d46b91d5507b7c44f596f30602409b92de38b"
+ },
+ {
+  "id": "47",
+  "src": "page-74749e1d-5239-4d8e-b89c-6d83f5e59374.png",
+  "src_sha256": "a2e4041923904d70f826b8aacfeb805bc74871c83552476793222f41dcc1bff7",
+  "ppm_sha256": "43c3e6aa11133632d7a9e25f12b673d1369ea85bbfc768bcb295bd51796a2a76"
+ },
+ {
+  "id": "48",
+  "src": "jiaocaineedrop_jiaocai_needrop_en_782.jpg",
+  "src_sha256": "3fcb3ecfc851bec49eb32141729cb4159f3062410efe6d1748221860411e330d",
+  "ppm_sha256": "298d3b0478c4f9a918b18d865fd1a13786e096fe9f674dff6e57fbd17413afd7"
+ },
+ {
+  "id": "49",
+  "src": "yanbaor2_9be04f6bcbe2c6afc83f0751eb05e361872f9673ccd4bec49cf844c66f34bff0.pdf_19.jpg",
+  "src_sha256": "f7257ef0e07abc48ea0aaca2c24a1df2dbd61c1daafa3b74e86cd1baf97eb5ba",
+  "ppm_sha256": "dd2ec7e2aae1496cc84d3f5b7c1f5219912811fc8d3820f24477cdc8686a8534"
+ }
+]
