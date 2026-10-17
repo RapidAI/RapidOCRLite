@@ -61,6 +61,7 @@ def run(threads):
                 e = exp[i] if i < len(exp) else None
                 if g != e:
                     print(f"  line {i + 1}: got={g} want={e}")
+        if not ok:
             bad.append(fn)
     print(f"lite_examples identical={same}/{len(NAMES)} isa={os.environ.get('PPOCR_FORCE_ISA', 'auto')} threads={threads}",
           flush=True)
