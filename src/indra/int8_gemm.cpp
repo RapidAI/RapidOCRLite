@@ -8,9 +8,18 @@
 #include <cstdlib>
 #include <cstring>
 
-#if defined(__x86_64__) && !defined(_MSC_VER)
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_IX86)
 #include <immintrin.h>
+#include "cpu_x86.hpp"
 #define I8_X86 1
+#if defined(_MSC_VER) && !defined(__clang__)
+#define I8_TARGET(x)  // MSVC accepts any ISA's intrinsics; callers check the CPU first
+#else
+#define I8_TARGET(x) __attribute__((target(x)))
+#endif
+#if defined(__x86_64__) || defined(_M_X64)
+#define I8_VNNI 1  // 32-bit builds keep AVX2 + scalar (no AVX-512)
+#endif
 #endif
 #if defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>
@@ -44,8 +53,8 @@ void BlockScalar(const int8_t* a, const uint8_t*, int R, const int8_t* wp, int K
   }
 }
 
-#ifdef I8_X86
-__attribute__((target("avx512f,avx512bw,avx512vnni")))
+#ifdef I8_VNNI
+I8_TARGET("avx512f,avx512bw,avx512vnni")
 void BlockVnni(const int8_t*, const uint8_t* au, int R, const int8_t* wp, int Kp, const int32_t* rowsum, int32_t* out) {
   __m512i acc[4] = {_mm512_setzero_si512(), _mm512_setzero_si512(), _mm512_setzero_si512(), _mm512_setzero_si512()};
   for (int kg = 0; kg < Kp / 4; kg++) {
@@ -58,7 +67,9 @@ void BlockVnni(const int8_t*, const uint8_t* au, int R, const int8_t* wp, int Kp
   __m512i corr = _mm512_slli_epi32(_mm512_loadu_si512(rowsum), 7);  // 128 * rowsum
   for (int r = 0; r < R; r++) _mm512_storeu_si512(out + r * 16, _mm512_sub_epi32(acc[r], corr));
 }
-__attribute__((target("avx2,fma")))
+#endif
+#ifdef I8_X86
+I8_TARGET("avx2,fma")
 void BlockAvx2(const int8_t* a, const uint8_t*, int R, const int8_t* wp, int Kp, const int32_t*, int32_t* out) {
   // 16 outputs as two 8-lane s32 halves; each k pair (2 activations as s16) x weights widened to s16 via vpmaddwd
   for (int r = 0; r < R; r++) {
@@ -122,11 +133,14 @@ struct Impl { Block16 blk; bool offset; const char* name; };
 Impl Select() {
   if (const char* e = std::getenv("PPOCR_INDRA_INT8_ISA"); e && std::strcmp(e, "scalar") == 0) return {BlockScalar, false, "int8-scalar"};
 #ifdef I8_X86
-  __builtin_cpu_init();
   const char* e = std::getenv("PPOCR_INDRA_INT8_ISA");
   bool no512 = e && std::strcmp(e, "avx2") == 0;
-  if (!no512 && __builtin_cpu_supports("avx512vnni") && __builtin_cpu_supports("avx512bw")) return {BlockVnni, true, "int8-avx512vnni"};
-  if (__builtin_cpu_supports("avx2")) return {BlockAvx2, false, "int8-avx2"};
+#ifdef I8_VNNI
+  if (!no512 && cpu::Avx512Vnni()) return {BlockVnni, true, "int8-avx512vnni"};
+#else
+  (void)no512;
+#endif
+  if (cpu::Avx2Fma()) return {BlockAvx2, false, "int8-avx2"};
 #endif
 #ifdef I8_NEON
 #if defined(__ARM_FEATURE_DOTPROD)

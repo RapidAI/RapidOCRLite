@@ -1,4 +1,5 @@
 #include "indra_rec.hpp"
+#include "fmath.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -155,7 +156,7 @@ void RecNet::Line(const float* x, int H, int W, int L, int64_t* ids, float* conf
     for (int o = 0; o < E_; ++o) {
       float a = b.f2b[o];
       for (int c = 0; c < S_; ++c) a += b.f2[size_t(o) * S_ + c] * s1[c];
-      gate[o] = 1.f / (1.f + std::exp(-a));
+      gate[o] = 1.f / (1.f + fm::Exp(-a));
     }
     for (int l = 0; l < L; ++l) for (int c = 0; c < E_; ++c) e[size_t(l) * Ep_ + c] *= gate[c];
     if (!b.qpr.empty()) GemmQ(e.data(), L, E_, Ep_, b.qpr, b.prb.data(), t.data(), Cp_, 0);

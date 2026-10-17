@@ -1,4 +1,5 @@
 #include "indra_script.hpp"
+#include "fmath.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -199,7 +200,7 @@ float ScriptNet::Item(const float* x, int H, int W, int64_t width) const {
   }
   float z = fcb_;
   for (int ch = 0; ch < C; ++ch) z += fc_[ch] * float(acc[ch] / std::max(1, cnt));
-  return 1.f / (1.f + std::exp(-z));
+  return 1.f / (1.f + fm::Exp(-z));
 }
 
 void ScriptNet::Run(const float* x, int B, int H, int W, const int64_t* widths, float* p) const {

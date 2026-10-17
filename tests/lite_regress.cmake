@@ -1,5 +1,5 @@
 # Runs the lite pipeline on tests/data/lite_crop.ppm and compares with the per-architecture expected output.
-# Usage: cmake -DEXE=... -DMODELS=... -DSRC=... -DARCH=x86_64|arm64 -DTHREADS=n -DOUT=... -P lite_regress.cmake
+# Usage: cmake -DEXE=... -DMODELS=... -DSRC=... -DARCH=x86_64|arm64 -DTHREADS=n -DOUT=... [-DISA=avx2] [-DSCALAR=1] -P lite_regress.cmake
 file(WRITE "${OUT}.list" "crop ${SRC}/tests/data/lite_crop.ppm\n")
 set(ENV{LITE_NO_TIMING} 1)
 if(SCALAR)  # scalar-only fallback: no SIMD kernels, no AVX2 image ops, no Accelerate, no Metal
@@ -7,6 +7,9 @@ if(SCALAR)  # scalar-only fallback: no SIMD kernels, no AVX2 image ops, no Accel
   set(ENV{PPOCR_IMG_NO_AVX2} 1)
   set(ENV{PPOCR_INDRA_NO_ACCEL} 1)
   set(ENV{PPOCR_INDRA_METAL} 0)
+endif()
+if(ISA)  # force one float-kernel ISA (avx2 / avx512 / scalar)
+  set(ENV{PPOCR_FORCE_ISA} ${ISA})
 endif()
 execute_process(COMMAND "${EXE}" "${MODELS}" "${OUT}.list" "${THREADS}" "${OUT}" RESULT_VARIABLE rc OUTPUT_QUIET)
 if(NOT rc EQUAL 0)

@@ -1,4 +1,5 @@
 #include "indra_det.hpp"
+#include "fmath.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -270,7 +271,7 @@ void DetNet::Run(const float* x, int H, int W, std::vector<float>& out, int& OC,
       r.isf = true; r.f = F(n.in[0]);
       for (float& z : r.f.d)
         z = op == "HardSwish" ? z * std::min(1.f, std::max(0.f, z / 6.f + 0.5f))
-                              : (z > 20.f ? z : std::log1p(std::exp(z)));
+                              : (z > 20.f ? z : fm::Log1p(fm::Exp(z)));
       if (op == "Softplus") {  // keep padded channels at 0 (softplus(0) != 0)
         FT& t = r.f;
         for (size_t p = 0; p < size_t(t.H) * t.W; ++p) std::fill(t.d.begin() + p * t.Cs + t.C, t.d.begin() + (p + 1) * t.Cs, 0.f);

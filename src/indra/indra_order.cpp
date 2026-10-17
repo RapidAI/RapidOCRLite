@@ -1,4 +1,5 @@
 #include "indra_order.hpp"
+#include "fmath.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +14,7 @@
 namespace rpocr::indra {
 namespace {
 int RoundUp(int n, int m) { return (n + m - 1) / m * m; }
-inline float Gelu(float x) { return (std::erf(x / 1.41421354f) + 1.f) * x * 0.5f; }
+inline float Gelu(float x) { return (fm::Erf(x / 1.41421354f) + 1.f) * x * 0.5f; }
 }  // namespace
 
 OrderNet::OrderNet(const std::string& path, int threads) : k_(SelectKern()), pool_(new Pool(threads)) {
@@ -140,8 +141,8 @@ void OrderNet::Run(const float* feats, const uint8_t* mask, int N, float* a, flo
     for (int c = 0; c < npos_; ++c)
       for (int q = 0; q < nfreq_; ++q) {
         float v = f[c] * freq_[q];
-        d[F_ + c * 2 * nfreq_ + q] = std::sin(v);
-        d[F_ + c * 2 * nfreq_ + nfreq_ + q] = std::cos(v);
+        d[F_ + c * 2 * nfreq_ + q] = fm::Sin(v);
+        d[F_ + c * 2 * nfreq_ + nfreq_ + q] = fm::Cos(v);
       }
   }
   std::vector<float> t1(size_t(N) * RoundUp(std::max({e1_.N, 3 * D, 2 * D, layers_[0].ff1.N}), k_->nb));

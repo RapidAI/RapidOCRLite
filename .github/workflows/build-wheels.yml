@@ -261,6 +261,10 @@ jobs:
           python -m pip install wheelhouse/*cp312-cp312-win_amd64.whl
           PPOCR_CHECK_ISAS=avx512 PPOCR_CHECK_TEXTS_ONLY=1 PPOCR_CHECK_REPS=0 PYTHONIOENCODING=utf-8 \
             ./sde/sde.exe -spr -- python python/tests/ci_wheel_check.py
+          # MSVC AVX-512 float kernels + VNNI int8 on the README samples, same references as Linux
+          python -m pip install pillow
+          PPOCR_FORCE_ISA=avx512 LITE_REPS=0 PYTHONIOENCODING=utf-8 \
+            ./sde/sde.exe -spr -- python python/tests/ci_lite_examples_check.py
 
       - uses: actions/upload-artifact@v4
         with:

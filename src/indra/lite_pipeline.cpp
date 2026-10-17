@@ -4,6 +4,7 @@
 // x86 SIMD exp/log, Python banker's rounding) so pages come out identical. Built with
 // -ffp-contract=off: every fused multiply-add below is explicit.
 #include "lite_pipeline.hpp"
+#include "fmath.hpp"
 #include <chrono>
 #include <thread>
 #include <atomic>
@@ -32,6 +33,7 @@
 #define S_ISDIR(m) (((m) & _S_IFMT) == _S_IFDIR)
 #endif
 
+#include "cpu_x86.hpp"
 #include "indra_det.hpp"
 #include "indra_order.hpp"
 #include "indra_rec.hpp"
@@ -184,24 +186,14 @@ double PyRound(double x, int nd) {  // round(x, nd): correctly rounded, ties to 
 long PyRoundInt(double x) { return (long)std::nearbyint(x); }
 
 bool NumpySimdExpLog() {
-#if (defined(__x86_64__) || defined(__i386__)) && !defined(_MSC_VER)
-  static const bool v = __builtin_cpu_supports("avx512f") ||
-                        (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"));
-  return v;
-#elif defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
-  static const bool v = [] {  // AVX2 + FMA with OS support for the YMM state
-    int r[4]; __cpuid(r, 1);
-    const bool fma = (r[2] >> 12) & 1, osx = (r[2] >> 27) & 1;
-    if (!fma || !osx || (_xgetbv(0) & 6) != 6) return false;
-    __cpuidex(r, 7, 0);
-    return ((r[1] >> 5) & 1) != 0;
-  }();
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+  static const bool v = cpu::Avx512F() || cpu::Avx2Fma();
   return v;
 #else
   return false;  // numpy calls libm expf / logf here
 #endif
 }
-#if (defined(__x86_64__) || defined(__i386__)) && !defined(_MSC_VER)
+#if (defined(__x86_64__) || defined(__i386__)) && !(defined(_MSC_VER) && !defined(__clang__))
 #define NP_FMA_TARGET __attribute__((target("fma")))
 #else
 #define NP_FMA_TARGET
@@ -246,13 +238,13 @@ NP_FMA_TARGET float NpLogSimd(float x) {
   den = std::fma(den, m, 1.0f);
   return std::fma(ef, 0.693147180559945309417232121458176568F, num / den);
 }
-float NpExp(float x) { return NumpySimdExpLog() ? NpExpSimd(x) : std::exp(x); }
-float NpLog(float x) { return NumpySimdExpLog() ? NpLogSimd(x) : std::log(x); }
+float NpExp(float x) { return NumpySimdExpLog() ? NpExpSimd(x) : fm::Exp(x); }
+float NpLog(float x) { return NumpySimdExpLog() ? NpLogSimd(x) : fm::Log(x); }
 float NpLogAddExp(float x, float y) {  // npy_logaddexpf (libm expf / log1pf)
   if (x == y) return x + 0.693147180559945309417232121458176568F;
   float t = x - y;
-  if (t > 0) return x + std::log1p(std::exp(-t));
-  if (t <= 0) return y + std::log1p(std::exp(t));
+  if (t > 0) return x + fm::Log1p(fm::Exp(-t));
+  if (t <= 0) return y + fm::Log1p(fm::Exp(t));
   return t;
 }
 // numpy.arange(start, stop, step) for float64

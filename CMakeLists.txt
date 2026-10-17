@@ -237,34 +237,51 @@ if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
 endif()
 
 # Native Indra OCR ("lite" model): ONNX reader, recognizer, ISA kernels (runtime dispatch).
-# The lite sources use GCC/Clang vector extensions and builtins; MSVC (cl.exe) builds get a stub
-# that rejects lite model folders with a clear error (PP-OCR models are unaffected).
-if((MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR PPOCR_FORCE_LITE_STUB)
-  set(PPOCR_LITE_STUB ON)
-else()
-  set(PPOCR_LITE_STUB OFF)
+# Builds with GCC, Clang and MSVC (x86 / x64: AVX2 and AVX-512 kernels with runtime dispatch).
+set(PPOCR_INDRA_BASE_SOURCES src/indra/onnx_min.cpp src/indra/indra_rec.cpp src/indra/indra_det.cpp src/indra/indra_script.cpp
+    src/indra/indra_order.cpp src/indra/dispatch.cpp src/indra/indra_c_api.cpp src/indra/kern_scalar.cpp src/indra/cpu_x86.cpp)
+target_sources(ppocr_objects PRIVATE ${PPOCR_INDRA_BASE_SOURCES} src/indra/imgproc.cpp src/indra/lite_pipeline.cpp src/indra/int8_gemm.cpp)
+set(PPOCR_INDRA_X86 OFF)
+if(MSVC)
+  if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID MATCHES "^(x64|X86|x86)$")
+    set(PPOCR_INDRA_X86 ON)
+  endif()
+elseif(PPOCR_CPU MATCHES "x86_64|amd64|x64")
+  set(PPOCR_INDRA_X86 ON)
 endif()
-if(PPOCR_LITE_STUB)
-  target_sources(ppocr_objects PRIVATE src/indra/lite_stub.cpp)
+if(MSVC)
+  # IEEE arithmetic everywhere in the lite engine: /fp:precise without /fp:contract never fuses a * b + c
+  # (the FMA kernels issue explicit fused intrinsics instead), so results match the GCC/Clang builds.
+  set_source_files_properties(${PPOCR_INDRA_BASE_SOURCES} src/indra/imgproc.cpp src/indra/lite_pipeline.cpp
+      src/indra/int8_gemm.cpp PROPERTIES COMPILE_OPTIONS "/fp:precise")
+  if(PPOCR_INDRA_X86)
+    target_sources(ppocr_objects PRIVATE src/indra/kern_avx2.cpp src/indra/imgproc_avx2.cpp)
+    set_source_files_properties(src/indra/kern_avx2.cpp src/indra/imgproc_avx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/fp:precise")
+    target_compile_definitions(ppocr_objects PRIVATE PPOCR_INDRA_AVX2=1)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+      target_sources(ppocr_objects PRIVATE src/indra/kern_avx512.cpp)
+      set_source_files_properties(src/indra/kern_avx512.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX512;/fp:precise")
+      target_compile_definitions(ppocr_objects PRIVATE PPOCR_INDRA_AVX512=1)
+    else()
+      message(STATUS "lite engine: 32-bit build keeps AVX2 + scalar kernels (no AVX-512)")
+    endif()
+  endif()
 else()
-target_sources(ppocr_objects PRIVATE src/indra/onnx_min.cpp src/indra/indra_rec.cpp src/indra/indra_det.cpp src/indra/indra_script.cpp src/indra/indra_order.cpp
-    src/indra/dispatch.cpp src/indra/indra_c_api.cpp src/indra/kern_scalar.cpp src/indra/imgproc.cpp src/indra/lite_pipeline.cpp src/indra/int8_gemm.cpp)
 # imgproc.cpp reproduces OpenCV's float rounding: every FMA is explicit, so no compiler contraction.
-if(NOT MSVC)
   set_source_files_properties(src/indra/imgproc.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
   # lite_pipeline.cpp reproduces numpy / Python float semantics: IEEE arithmetic, no fast-math, no contraction.
   set_source_files_properties(src/indra/lite_pipeline.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
 if(NOT MSVC AND PPOCR_CPU MATCHES "x86_64|amd64|x64")
-  set_source_files_properties(src/indra/onnx_min.cpp src/indra/indra_rec.cpp src/indra/indra_det.cpp src/indra/indra_script.cpp src/indra/indra_order.cpp src/indra/dispatch.cpp
-      src/indra/indra_c_api.cpp src/indra/kern_scalar.cpp
-      PROPERTIES COMPILE_OPTIONS "-mno-avx;-mno-avx2;-mno-avx512f")
+  set_source_files_properties(${PPOCR_INDRA_BASE_SOURCES}
+      PROPERTIES COMPILE_OPTIONS "-mno-avx;-mno-avx2;-mno-avx512f;-ffp-contract=off")
   target_sources(ppocr_objects PRIVATE src/indra/kern_avx2.cpp src/indra/kern_avx512.cpp src/indra/imgproc_avx2.cpp)
+  target_compile_definitions(ppocr_objects PRIVATE PPOCR_INDRA_AVX2=1 PPOCR_INDRA_AVX512=1)
   set_source_files_properties(src/indra/imgproc_avx2.cpp PROPERTIES COMPILE_OPTIONS "-mavx2;-mfma;-ffp-contract=off")
   set_source_files_properties(src/indra/kern_avx2.cpp PROPERTIES COMPILE_OPTIONS
-      "-mavx2;-mfma;-mno-avx512f;-mno-avx512bw;-mno-avx512vl;-mno-avx512dq")
+      "-mavx2;-mfma;-mno-avx512f;-mno-avx512bw;-mno-avx512vl;-mno-avx512dq;-ffp-contract=off")
   set_source_files_properties(src/indra/kern_avx512.cpp PROPERTIES COMPILE_OPTIONS
-      "-mavx512f;-mavx512dq;-mavx512bw;-mavx512vl;-mfma")
+      "-mavx512f;-mavx512dq;-mavx512bw;-mavx512vl;-mfma;-ffp-contract=off")
 elseif(PPOCR_CPU MATCHES "aarch64|arm64")
   target_sources(ppocr_objects PRIVATE src/indra/kern_neon.cpp)
 if(APPLE)
@@ -280,7 +297,6 @@ if(APPLE)
 endif()
 endif()
 
-endif()  # PPOCR_LITE_STUB
 
 # Apple Silicon matrix units (AMX/SME) are reachable from user code only via
 # Accelerate. Pointwise convolutions and the CTC head use cblas_sgemm there.
@@ -383,7 +399,6 @@ if(PPOCR_BUILD_EXAMPLES)
   endif()
 
   # Lite (Indra) model through the public APIs only: C (50-page regression / timing) and C++.
-  if(NOT PPOCR_LITE_STUB)
   add_executable(ppocr_lite_c_test examples/lite_c_test.c)
   add_executable(ppocr_model_type_test tests/model_type_test.c)
   target_link_libraries(ppocr_model_type_test PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
@@ -392,7 +407,6 @@ if(PPOCR_BUILD_EXAMPLES)
   target_link_libraries(ppocr_lite_cpp_check PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
   if(PPOCR_BUILD_SHARED)
     set_target_properties(ppocr_lite_c_test ppocr_lite_cpp_check ppocr_model_type_test PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:ppocr_shared>")
-  endif()
   endif()
 
   add_executable(ppocr_replay examples/ppocr_replay.c)
@@ -455,7 +469,7 @@ if(PPOCR_BUILD_TESTS)
   endif()
   enable_testing()
   add_test(NAME c_api_smoke COMMAND ppocr_c_api_smoke)
-  if(TARGET ppocr_model_type_test AND NOT PPOCR_LITE_STUB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
+  if(TARGET ppocr_model_type_test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
     add_test(NAME model_type COMMAND ppocr_model_type_test
       "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite"
       "${CMAKE_CURRENT_SOURCE_DIR}/ci-models/PP-OCRv6_det_tiny.onnx"
@@ -463,9 +477,9 @@ if(PPOCR_BUILD_TESTS)
       "${CMAKE_CURRENT_SOURCE_DIR}/ci-models/ppocrv6_tiny_dict.txt"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/model_type.ppm")
   endif()
-  if(TARGET ppocr_lite_c_test AND NOT PPOCR_LITE_STUB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
-    if(PPOCR_CPU MATCHES "x86_64|amd64|x64")
-      set(_lite_arch x86_64)
+  if(TARGET ppocr_lite_c_test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
+    if(PPOCR_INDRA_X86 OR PPOCR_CPU MATCHES "x86_64|amd64|x64")
+      set(_lite_arch x86_64)  # 32-bit MSVC builds must reproduce the x86_64 output too
     elseif(PPOCR_CPU MATCHES "arm64|aarch64")
       set(_lite_arch arm64)
     endif()
@@ -476,6 +490,12 @@ if(PPOCR_BUILD_TESTS)
           -DARCH=${_lite_arch} -DTHREADS=${_t} "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/lite_regress_${_t}.json"
           -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/lite_regress.cmake)
       endforeach()
+      if(_lite_arch STREQUAL "x86_64")
+        add_test(NAME lite_regress_avx2 COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ppocr_lite_c_test>
+          "-DMODELS=${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite" "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}"
+          -DARCH=${_lite_arch} -DTHREADS=4 -DISA=avx2 "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/lite_regress_avx2.json"
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/lite_regress.cmake)
+      endif()
       add_test(NAME lite_regress_scalar COMMAND ${CMAKE_COMMAND} -DEXE=$<TARGET_FILE:ppocr_lite_c_test>
         "-DMODELS=${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite" "-DSRC=${CMAKE_CURRENT_SOURCE_DIR}"
         -DARCH=${_lite_arch} -DTHREADS=4 -DSCALAR=1 "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/lite_regress_scalar.json"

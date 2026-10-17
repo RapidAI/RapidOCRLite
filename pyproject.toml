@@ -83,7 +83,8 @@ environment = { CMAKE_ARGS = "-DPPOCR_BUILD_EXAMPLES=OFF -DPPOCR_BUILD_TESTS=OFF
 [tool.cibuildwheel.windows]
 archs = ["AMD64", "x86"]
 environment = { CMAKE_ARGS = "-DPPOCR_BUILD_EXAMPLES=OFF -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON -DPPOCR_ENABLE_VULKAN=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded", CMAKE_BUILD_PARALLEL_LEVEL = "4", SKBUILD_BUILD_VERBOSE = "true", PPOCR_CHECK_SCALAR = "1" }
-test-command = "python {project}/python/tests/ci_wheel_check.py"
+test-requires = ["pytest", "pillow"]
+test-command = "python {project}/python/tests/ci_wheel_check.py && python {project}/python/tests/ci_lite_examples_check.py --matrix"
 
 [tool.cibuildwheel.macos]
 archs = ["arm64"]

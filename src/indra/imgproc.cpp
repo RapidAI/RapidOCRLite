@@ -17,6 +17,9 @@
 #include <thread>
 #include <vector>
 
+#include "cpu_x86.hpp"
+namespace cpu = rpocr::indra::cpu;
+
 #if defined(_WIN32)
 #define IMG_API extern "C" __declspec(dllexport)
 #else
@@ -414,7 +417,7 @@ void resize_linear_carotene(const uint8_t* src, int sw, int sh, uint8_t* dst, in
 #define IMG_NS img_base
 #include "imgproc_warp.inc"
 #undef IMG_NS
-#if defined(__x86_64__) && !defined(_MSC_VER)
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_IX86)
 namespace img_avx2 {
 void warp_f32(const float*, int, int, float*, int, int, int, int, const double*, bool, float, int, int);
 void warp_u8(const uint8_t*, int, int, uint8_t*, int, int, int, int, const double*, bool, float, int, int);
@@ -500,9 +503,9 @@ IMG_API int rpocr_img_warp_affine(const void* src, int sw, int sh, void* dst, in
   if (uf <= 0) {
 #if defined(__aarch64__) || defined(_M_ARM64)
     uf = 8;  // NEON: 2 x 4 floats per block
-#elif defined(__x86_64__) || defined(__i386__)
+#elif defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
     // OpenCV dispatches the warp kernels to AVX2 (16 floats per block) when the CPU has it, else SSE4.1 (8)
-    uf = (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) ? 16 : 8;
+    uf = cpu::Avx2Fma() ? 16 : 8;
 #else
     uf = 8;
 #endif
@@ -518,8 +521,8 @@ IMG_API int rpocr_img_warp_affine(const void* src, int sw, int sh, void* dst, in
   bool rep = border == 1;
   float bv = is_float ? (float)bval : (float)sat_u8f((float)bval);
   auto wf = img_base::warp_f32; auto wu = img_base::warp_u8;
-#if defined(__x86_64__) && !defined(_MSC_VER)
-  if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && !std::getenv("PPOCR_IMG_NO_AVX2"))
+#if defined(__x86_64__) || defined(_M_X64) || defined(_M_IX86)
+  if (cpu::Avx2Fma() && !std::getenv("PPOCR_IMG_NO_AVX2"))
     wf = img_avx2::warp_f32, wu = img_avx2::warp_u8;
 #endif
   for_rows(dh, (size_t)dw * dh, [&](int y0, int y1) {

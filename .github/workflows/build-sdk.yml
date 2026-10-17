@@ -61,6 +61,28 @@ jobs:
           ls -la dist
           test -f "dist/${NAME}.zip"
 
+      - name: Lite engine regression (MSVC x64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python python/tests/fetch_ci_models.py
+          cmake -S . -B build-test -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=OFF \
+            -DPPOCR_BUILD_EXAMPLES=ON \
+            -DPPOCR_BUILD_TESTS=ON \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build-test -j"$(nproc 2>/dev/null || echo 4)" --target ppocr_lite_c_test ppocr_model_type_test ppocr_c_api_smoke
+          export PATH="$PWD/build-test:$PATH"
+          (cd build-test && ctest -R "lite_regress|model_type|c_api_smoke" --output-on-failure)
+          # timing on the regression crop (not compared)
+          printf 'crop %s\n' "$(cygpath -m "$PWD")/tests/data/lite_crop.ppm" > crop.list
+          for t in 1 4; do ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list $t lite_t$t.json | tail -1; done
+          PPOCR_FORCE_ISA=scalar ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list 4 lite_scalar.json | tail -1
+
       - uses: actions/upload-artifact@v4
         with:
           name: rapidocrlite-sdk-win_amd64
@@ -106,6 +128,28 @@ jobs:
           python tools/zip_dir.py "$NAME" "dist/${NAME}.zip"
           ls -la dist
           test -f "dist/${NAME}.zip"
+
+      - name: Lite engine regression (MSVC x86)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python python/tests/fetch_ci_models.py
+          cmake -S . -B build-test -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=OFF \
+            -DPPOCR_BUILD_EXAMPLES=ON \
+            -DPPOCR_BUILD_TESTS=ON \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build-test -j"$(nproc 2>/dev/null || echo 4)" --target ppocr_lite_c_test ppocr_model_type_test ppocr_c_api_smoke
+          export PATH="$PWD/build-test:$PATH"
+          (cd build-test && ctest -R "lite_regress|model_type|c_api_smoke" --output-on-failure)
+          # timing on the regression crop (not compared)
+          printf 'crop %s\n' "$(cygpath -m "$PWD")/tests/data/lite_crop.ppm" > crop.list
+          for t in 1 4; do ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list $t lite_t$t.json | tail -1; done
+          PPOCR_FORCE_ISA=scalar ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list 4 lite_scalar.json | tail -1
 
       - uses: actions/upload-artifact@v4
         with:

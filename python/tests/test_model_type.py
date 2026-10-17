@@ -11,20 +11,6 @@ LITE = ROOT / "python/src/rapidocr/models/lite"
 DET, REC, DICT = (ROOT / "ci-models" / n for n in ("PP-OCRv6_det_tiny.onnx", "PP-OCRv6_rec_tiny.onnx", "ppocrv6_tiny_dict.txt"))
 
 
-def _lite_built():
-    o = _native.default_options()
-    o.backend = _native.RPOCR_BACKEND_CPU
-    try:
-        _native.NativeOCR(str(LITE), "", "", o)
-    except Exception as exc:  # MSVC builds ship a stub that rejects lite folders
-        return "not available in this build" not in str(exc)
-    return True
-
-
-LITE_BUILT = _lite_built()
-needs_lite = pytest.mark.skipif(not LITE_BUILT, reason="lite pipeline not built (MSVC stub)")
-
-
 def opts(mt=None):
     o = _native.default_options()
     o.backend = _native.RPOCR_BACKEND_CPU
@@ -38,13 +24,11 @@ def test_defaults():
     assert o.struct_size == ctypes.sizeof(_native.Options) and o.model_type == _native.RPOCR_MODEL_AUTO
 
 
-@needs_lite
 @pytest.mark.parametrize("mt", [None, _native.RPOCR_MODEL_AUTO, _native.RPOCR_MODEL_LITE])
 def test_lite_ok(mt):
     assert "lite" in _native.NativeOCR(str(LITE), "", "", opts(mt)).backend_note().lower()
 
 
-@needs_lite
 def test_old_struct_size_is_auto():
     o = opts(99)  # garbage beyond the old layout must be ignored
     o.struct_size = _native.Options.model_type.offset

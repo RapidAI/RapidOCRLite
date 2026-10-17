@@ -3,33 +3,34 @@
 #include <cstring>
 #include <algorithm>
 #include "kern.hpp"
+#include "kern_vec.hpp"
 namespace rpocr::indra {
 namespace {
-typedef float vf __attribute__((vector_size(VW * 4)));
-typedef int32_t vi __attribute__((vector_size(VW * 4)));
+typedef kv::T<VW>::vf vf;
+typedef kv::T<VW>::vi vi;
 constexpr int NB = 2 * VW;
 static inline vf ld(const float* p) { vf v; std::memcpy(&v, p, sizeof v); return v; }
 static inline void st(float* p, vf v) { std::memcpy(p, &v, sizeof v); }
 static inline vf bc(float s) { vf v = {}; return v + s; }
-static inline vf vmax(vf a, vf b) { return a > b ? a : b; }
-static inline vf vmin(vf a, vf b) { return a < b ? a : b; }
+static inline vf vmax(vf a, vf b) { return KV_SEL(a > b, a, b); }
+static inline vf vmin(vf a, vf b) { return KV_SEL(a < b, a, b); }
 static inline vf act_v(vf x, int act) {
-  if (act == 1) return x * vmax(bc(0.f), vmin(bc(1.f), x * (1.f / 6.f) + 0.5f));
+  if (act == 1) return x * vmax(bc(0.f), vmin(bc(1.f), KV_FMA(x, (1.f / 6.f), 0.5f)));
   if (act == 2) return vmax(x, bc(0.f));
   return x;
 }
 static inline vf vexp(vf x) {  // Cephes-style expf, x <= 0 expected
   x = vmax(x, bc(-87.3f));
-  vf fx = x * 1.44269504088896341f + 0.5f;
-  vi ti = __builtin_convertvector(fx, vi);
-  vf tf = __builtin_convertvector(ti, vf);
-  tf = tf + __builtin_convertvector(tf > fx, vf);  // floor
-  x = x - tf * 0.693359375f + tf * 2.12194440e-4f;
+  vf fx = KV_FMA(x, 1.44269504088896341f, 0.5f);
+  vi ti = KV_CVTI(fx, vi);
+  vf tf = KV_CVTF(ti, vf);
+  tf = tf + KV_MASKF(tf > fx, vf);  // floor
+  x = KV_FMA(tf, 2.12194440e-4f, KV_FMA(tf, -0.693359375f, x));
   vf y = bc(1.9875691500E-4f);
-  y = y * x + 1.3981999507E-3f; y = y * x + 8.3334519073E-3f; y = y * x + 4.1665795894E-2f;
-  y = y * x + 1.6666665459E-1f; y = y * x + 5.0000001201E-1f;
-  y = y * x * x + x + 1.f;
-  vi e = (__builtin_convertvector(tf, vi) + 127) << 23;
+  y = KV_FMA(y, x, 1.3981999507E-3f); y = KV_FMA(y, x, 8.3334519073E-3f); y = KV_FMA(y, x, 4.1665795894E-2f);
+  y = KV_FMA(y, x, 1.6666665459E-1f); y = KV_FMA(y, x, 5.0000001201E-1f);
+  y = KV_FMA(y * x, x, x) + 1.f;
+  vi e = (KV_CVTI(tf, vi) + 127) << 23;
   vf s; std::memcpy(&s, &e, sizeof s);
   return y * s;
 }
@@ -39,19 +40,19 @@ static inline vf vlog(vf x) {  // Cephes logf, x > 0
   vi ei = ((bits >> 23) & 0xff) - 126;
   vi mb = (bits & 0x7fffff) | 0x3f000000;
   vf m; std::memcpy(&m, &mb, sizeof m);
-  vf e = __builtin_convertvector(ei, vf);
+  vf e = KV_CVTF(ei, vf);
   auto small = m < 0.707106781186547524f;
-  e = small ? e - 1.f : e;
-  m = small ? m + m - 1.f : m - 1.f;
+  e = KV_SEL(small, e - 1.f, e);
+  m = KV_SEL(small, m + m - 1.f, m - 1.f);
   vf z = m * m;
   vf y = bc(7.0376836292E-2f);
-  y = y * m - 1.1514610310E-1f; y = y * m + 1.1676998740E-1f; y = y * m - 1.2420140846E-1f;
-  y = y * m + 1.4249322787E-1f; y = y * m - 1.6668057665E-1f; y = y * m + 2.0000714765E-1f;
-  y = y * m - 2.4999993993E-1f; y = y * m + 3.3333331174E-1f;
+  y = KV_FMA(y, m, -1.1514610310E-1f); y = KV_FMA(y, m, 1.1676998740E-1f); y = KV_FMA(y, m, -1.2420140846E-1f);
+  y = KV_FMA(y, m, 1.4249322787E-1f); y = KV_FMA(y, m, -1.6668057665E-1f); y = KV_FMA(y, m, 2.0000714765E-1f);
+  y = KV_FMA(y, m, -2.4999993993E-1f); y = KV_FMA(y, m, 3.3333331174E-1f);
   y = y * m * z;
-  y += e * -2.12194440e-4f;
-  y += z * -0.5f;
-  return m + y + e * 0.693359375f;
+  y = KV_FMA(e, -2.12194440e-4f, y);
+  y = KV_FMA(z, -0.5f, y);
+  return KV_FMA(e, 0.693359375f, m + y);
 }
 
 // x[i] = softplus(x[i]) * mul, softplus(z) = max(z, 0) + log1p(exp(-|z|))
@@ -92,8 +93,8 @@ static inline void tile(const float* A, int lda, int K, const float* wp, const f
     vf w0 = ld(wp + size_t(k) * NB), w1 = ld(wp + size_t(k) * NB + VW);
     for (int r = 0; r < R; ++r) {
       vf a = bc(A[size_t(r) * lda + k]);
-      acc0[r] += a * w0;
-      acc1[r] += a * w1;
+      acc0[r] = KV_FMA(a, w0, acc0[r]);
+      acc1[r] = KV_FMA(a, w1, acc1[r]);
     }
   }
   for (int r = 0; r < R; ++r) {
@@ -154,7 +155,7 @@ void dw9(const float* in, int L, int C, const float* wT, const float* b, float* 
       for (int j = 0; j < 9; ++j) {
         int t = l + j - 4;
         if (t < 0 || t >= L) continue;
-        acc += ld(wT + size_t(j) * C + c) * ld(in + size_t(t) * C + c);
+        acc = KV_FMA(ld(wT + size_t(j) * C + c), ld(in + size_t(t) * C + c), acc);
       }
       st(out + size_t(l) * C + c, acc);
     }
@@ -162,7 +163,7 @@ void dw9(const float* in, int L, int C, const float* wT, const float* b, float* 
       float acc = b[c];
       for (int j = 0; j < 9; ++j) {
         int t = l + j - 4;
-        if (t >= 0 && t < L) acc += wT[size_t(j) * C + c] * in[size_t(t) * C + c];
+        if (t >= 0 && t < L) acc = KV_SFMA(wT[size_t(j) * C + c], in[size_t(t) * C + c], acc);
       }
       out[size_t(l) * C + c] = acc;
     }
@@ -171,13 +172,13 @@ void dw9(const float* in, int L, int C, const float* wT, const float* b, float* 
 
 void rowmax(const float* x, int n, int* arg, float* conf) {
   // n is a multiple of NB (padded columns hold -1e30)
-  vf m = bc(-3.0e38f), idx = {}, cur = {};
-  for (int j = 0; j < VW; ++j) cur[j] = float(j);
+  vf m = bc(-3.0e38f), idx = {}, cur;
+  { float c0[VW]; for (int j = 0; j < VW; ++j) c0[j] = float(j); cur = ld(c0); }
   for (int i = 0; i < n; i += VW) {
     vf v = ld(x + i);
     auto gt = v > m;
-    m = gt ? v : m;
-    idx = gt ? cur : idx;
+    m = KV_SEL(gt, v, m);
+    idx = KV_SEL(gt, cur, idx);
     cur += float(VW);
   }
   float best = m[0]; float bi = idx[0];
@@ -210,7 +211,7 @@ static void dw2d_k(const float* x, int H, int W, int Cs, const float* wT, const 
             const float* xr = x + (size_t(iy0 + ky) * W + ix0) * Cs + c;
             const float* wr = wT + size_t(ky * KS) * Cs + c;
 #pragma GCC unroll 5
-            for (int kx = 0; kx < KS; ++kx) acc += ld(wr + size_t(kx) * Cs) * ld(xr + size_t(kx) * Cs);
+            for (int kx = 0; kx < KS; ++kx) acc = KV_FMA(ld(wr + size_t(kx) * Cs), ld(xr + size_t(kx) * Cs), acc);
           }
           st(out + c, act_v(acc, act));
         }
@@ -222,7 +223,7 @@ static void dw2d_k(const float* x, int H, int W, int Cs, const float* wT, const 
         for (int ky = ky0; ky < ky1; ++ky) {
           const float* xr = x + (size_t(iy0 + ky) * W + ix0) * Cs + c;
           const float* wr = wT + size_t(ky * KS) * Cs + c;
-          for (int kx = kx0; kx < kx1; ++kx) acc += ld(wr + size_t(kx) * Cs) * ld(xr + size_t(kx) * Cs);
+          for (int kx = kx0; kx < kx1; ++kx) acc = KV_FMA(ld(wr + size_t(kx) * Cs), ld(xr + size_t(kx) * Cs), acc);
         }
         st(out + c, act_v(acc, act));
       }
@@ -246,7 +247,7 @@ void dw2d(const float* x, int H, int W, int Cs, const float* wT, const float* b,
         for (int ky = ky0; ky < ky1; ++ky) {
           const float* xr = x + (size_t(iy0 + ky) * W + ix0) * Cs + c;
           const float* wr = wT + size_t(ky * k) * Cs + c;
-          for (int kx = kx0; kx < kx1; ++kx) acc += ld(wr + size_t(kx) * Cs) * ld(xr + size_t(kx) * Cs);
+          for (int kx = kx0; kx < kx1; ++kx) acc = KV_FMA(ld(wr + size_t(kx) * Cs), ld(xr + size_t(kx) * Cs), acc);
         }
         st(out + c, act_v(acc, act));
       }
@@ -275,7 +276,7 @@ static void c1conv3(const float* x, int H, int W, const float* wT, const float* 
         for (int t = 0; t < 9; ++t)
           for (int q = 0; q < P; ++q) {
             vf xv = bc(r[(t / 3) * W + t % 3 + q]);
-            for (int v = 0; v < NV; ++v) acc[q][v] += xv * wv[t][v];
+            for (int v = 0; v < NV; ++v) acc[q][v] = KV_FMA(xv, wv[t][v], acc[q][v]);
           }
         for (int q = 0; q < P; ++q)
           for (int v = 0; v < NV; ++v) st(y + (size_t(oy) * Wo + ox + q) * Cs + v * VW, act_v(acc[q][v], act));
@@ -290,14 +291,14 @@ static void c1conv3(const float* x, int H, int W, const float* wT, const float* 
 #pragma GCC unroll 9
         for (int t = 0; t < 9; ++t) {
           vf xv = bc(r[(t / 3) * W + t % 3]);
-          for (int v = 0; v < NV; ++v) acc[v] += xv * wv[t][v];
+          for (int v = 0; v < NV; ++v) acc[v] = KV_FMA(xv, wv[t][v], acc[v]);
         }
       } else {
         for (int ky = 0; ky < 3; ++ky) for (int kx = 0; kx < 3; ++kx) {
           int iy = iy0 + ky, ix = ix0 + kx;
           if (iy >= 0 && iy < H && ix >= 0 && ix < W) {
             vf xv = bc(x[size_t(iy) * W + ix]);
-            for (int v = 0; v < NV; ++v) acc[v] += xv * wv[ky * 3 + kx][v];
+            for (int v = 0; v < NV; ++v) acc[v] = KV_FMA(xv, wv[ky * 3 + kx][v], acc[v]);
           }
         }
       }
@@ -323,7 +324,7 @@ void c1conv(const float* x, int H, int W, int Cs, const float* wT, const float* 
       float* out = y + (size_t(oy) * Wo + ox) * Cs;
       for (int c = 0; c < Cs; c += VW) {
         vf acc = ld(b + c);
-        for (int t = 0; t < nt; ++t) acc += bc(xv[t]) * ld(wT + size_t(t) * Cs + c);
+        for (int t = 0; t < nt; ++t) acc = KV_FMA(bc(xv[t]), ld(wT + size_t(t) * Cs + c), acc);
         st(out + c, act_v(acc, act));
       }
     }
@@ -342,8 +343,8 @@ static inline void tile3(const float* const* A, int lda, int K, const float* con
       vf w0 = ld(w_ + size_t(k) * NB), w1 = HALF ? w0 : ld(w_ + size_t(k) * NB + VW);
       for (int r = 0; r < R; ++r) {
         vf a = bc(a_[size_t(r) * lda + k]);
-        acc0[r] += a * w0;
-        if (!HALF) acc1[r] += a * w1;
+        acc0[r] = KV_FMA(a, w0, acc0[r]);
+        if (!HALF) acc1[r] = KV_FMA(a, w1, acc1[r]);
       }
     }
   }
@@ -412,7 +413,13 @@ void softmax_row(float* x, int n) {
   for (; i < n; ++i) mx = std::max(mx, x[i]);
   vf sv = bc(0.f); float sum = 0.f;
   for (i = 0; i + VW <= n; i += VW) { vf e = vexp(ld(x + i) - mx); st(x + i, e); sv += e; }
-  for (; i < n; ++i) { x[i] = std::exp(x[i] - mx); sum += x[i]; }
+  if (i < n) {  // tail through the same vector exp (not the C runtime's expf, which differs between libms)
+    float t[VW];
+    for (int j = 0; j < VW; ++j) t[j] = i + j < n ? x[i + j] : mx;
+    st(t, vexp(ld(t) - mx));
+    for (int j = 0; i + j < n; ++j) { x[i + j] = t[j]; sum += t[j]; }
+    i = n;
+  }
   for (int j = 0; j < VW; ++j) sum += sv[j];
   float inv = 1.f / sum;
   for (i = 0; i + VW <= n; i += VW) st(x + i, ld(x + i) * inv);
@@ -423,31 +430,32 @@ void gelu_row(float* x, int n) {
   int i = 0;
   for (; i + VW <= n; i += VW) {
     vf v = ld(x + i), z = v * 0.70710678118654752f, az = vmax(z, -z);
-    vf t = 1.f / (az * 0.5f + 1.f);
+    vf t = 1.f / KV_FMA(az, 0.5f, 1.f);
     vf p = bc(0.17087277f);
-    p = p * t - 0.82215223f; p = p * t + 1.48851587f; p = p * t - 1.13520398f; p = p * t + 0.27886807f;
-    p = p * t - 0.18628806f; p = p * t + 0.09678418f; p = p * t + 0.37409196f; p = p * t + 1.00002368f;
-    p = p * t - 1.26551223f;
-    vf erfc = t * vexp(vmin(p - az * az, bc(0.f)));
+    p = KV_FMA(p, t, -0.82215223f); p = KV_FMA(p, t, 1.48851587f); p = KV_FMA(p, t, -1.13520398f); p = KV_FMA(p, t, 0.27886807f);
+    p = KV_FMA(p, t, -0.18628806f); p = KV_FMA(p, t, 0.09678418f); p = KV_FMA(p, t, 0.37409196f); p = KV_FMA(p, t, 1.00002368f);
+    p = KV_FMA(p, t, -1.26551223f);
+    vf erfc = t * vexp(vmin(KV_FMA(-az, az, p), bc(0.f)));
     vf erf = 1.f - erfc;
-    erf = z < 0.f ? -erf : erf;
+    erf = KV_SEL(z < 0.f, -erf, erf);
     st(x + i, (erf + 1.f) * v * 0.5f);
   }
   for (; i < n; ++i) x[i] = (std::erf(x[i] * 0.70710678118654752f) + 1.f) * x[i] * 0.5f;
 }
-typedef float v4 __attribute__((vector_size(16)));
+typedef kv::T<4>::vf v4;
 template <int R>
 static inline void tile4(const float* A, int lda, int K, const float* W4, v4 b, float* C, int ldc, int N, int act) {
   v4 acc[R];
   for (int r = 0; r < R; ++r) acc[r] = b;
   for (int k = 0; k < K; ++k) {
     v4 w; std::memcpy(&w, W4 + size_t(k) * 4, 16);
-    for (int r = 0; r < R; ++r) acc[r] += A[size_t(r) * lda + k] * w;
+    for (int r = 0; r < R; ++r) acc[r] = KV_FMA(w, A[size_t(r) * lda + k], acc[r]);
   }
   for (int r = 0; r < R; ++r) {
     v4 x = acc[r];
-    if (act == 1) { v4 t = x * (1.f / 6.f) + 0.5f; t = t < 1.f ? t : 1.f; t = t > 0.f ? t : 0.f; x = x * t; }
-    else if (act == 2) x = x > 0.f ? x : 0.f;
+    v4 one = {}, zero4 = {}; one += 1.f;
+    if (act == 1) { v4 t = KV_FMA(x, (1.f / 6.f), 0.5f); t = KV_SEL(t < 1.f, t, one); t = KV_SEL(t > 0.f, t, zero4); x = x * t; }
+    else if (act == 2) x = KV_SEL(x > 0.f, x, zero4);
     if (N == 4) std::memcpy(C + size_t(r) * ldc, &x, 16);
     else for (int n = 0; n < N; ++n) C[size_t(r) * ldc + n] = x[n];
   }
