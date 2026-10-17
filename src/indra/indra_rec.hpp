@@ -4,7 +4,7 @@
 #include <vector>
 #include "int8_gemm.hpp"
 #include "kern.hpp"
-namespace ppocr::indra {
+namespace rpocr::indra {
 // Native CTC recognizer for Indra rec.onnx / rec_cjk.onnx (patch-embed stem + 1D
 // depthwise/SE blocks + 1x1 head with in-graph argmax/softmax-max).
 class RecNet {
@@ -37,4 +37,4 @@ class RecNet {
   QMat qhead_;                  // PPOCR_INDRA_INT8=head|all (CPU only; not bit-exact)
   std::string isa_;
 };
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

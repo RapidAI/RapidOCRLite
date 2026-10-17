@@ -1,4 +1,4 @@
-"""ctypes binding over the stable C ABI in ``include/ppocr/ppocr.h``."""
+"""ctypes binding over the stable C ABI in ``include/rapidocrlite/rapidocrlite.h``."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from typing import Optional
 
 import numpy as np
 
-PPOCR_OK = 0
-PPOCR_BACKEND_CPU = 0
-PPOCR_BACKEND_GPU = 1
-PPOCR_BACKEND_HYBRID = 2
-PPOCR_BACKEND_METAL = 3
+RPOCR_OK = 0
+RPOCR_BACKEND_CPU = 0
+RPOCR_BACKEND_GPU = 1
+RPOCR_BACKEND_HYBRID = 2
+RPOCR_BACKEND_METAL = 3
 
 
-PPOCR_TASK_DET = 1
-PPOCR_TASK_REC = 2
+RPOCR_TASK_DET = 1
+RPOCR_TASK_REC = 2
 
 
 class Options(ctypes.Structure):
@@ -47,13 +47,13 @@ class Options(ctypes.Structure):
         ("det_max_candidates", ctypes.c_int),
         ("vulkan_device_index", ctypes.c_int),
         ("rec_fast_mode", ctypes.c_int),
-        ("model_type", ctypes.c_int),  # PPOCR_MODEL_*
+        ("model_type", ctypes.c_int),  # RPOCR_MODEL_*
     ]
 
 
-PPOCR_MODEL_AUTO = 0
-PPOCR_MODEL_PPOCR = 1
-PPOCR_MODEL_LITE = 2
+RPOCR_MODEL_AUTO = 0
+RPOCR_MODEL_PPOCR = 1
+RPOCR_MODEL_LITE = 2
 
 
 class Image(ctypes.Structure):
@@ -142,59 +142,59 @@ def load_library():
 
 
 def _bind(lib: ctypes.CDLL) -> None:
-    lib.ppocr_options_init.argtypes = [ctypes.POINTER(Options)]
-    lib.ppocr_options_init.restype = None
-    lib.ppocr_options_init_ex.argtypes = [ctypes.POINTER(Options), ctypes.c_size_t]
-    lib.ppocr_options_init_ex.restype = None
-    lib.ppocr_create.argtypes = [
+    lib.rpocr_options_init.argtypes = [ctypes.POINTER(Options)]
+    lib.rpocr_options_init.restype = None
+    lib.rpocr_options_init_ex.argtypes = [ctypes.POINTER(Options), ctypes.c_size_t]
+    lib.rpocr_options_init_ex.restype = None
+    lib.rpocr_create.argtypes = [
         ctypes.c_char_p,
         ctypes.c_char_p,
         ctypes.c_char_p,
         ctypes.POINTER(Options),
     ]
-    lib.ppocr_create.restype = ctypes.c_void_p
-    lib.ppocr_destroy.argtypes = [ctypes.c_void_p]
-    lib.ppocr_destroy.restype = None
-    lib.ppocr_set_det_thresholds.argtypes = [
+    lib.rpocr_create.restype = ctypes.c_void_p
+    lib.rpocr_destroy.argtypes = [ctypes.c_void_p]
+    lib.rpocr_destroy.restype = None
+    lib.rpocr_set_det_thresholds.argtypes = [
         ctypes.c_void_p,
         ctypes.c_float,
         ctypes.c_float,
         ctypes.c_float,
     ]
-    lib.ppocr_set_det_thresholds.restype = ctypes.c_int
-    lib.ppocr_recognize.argtypes = [
+    lib.rpocr_set_det_thresholds.restype = ctypes.c_int
+    lib.rpocr_recognize.argtypes = [
         ctypes.c_void_p,
         ctypes.POINTER(Image),
         ctypes.POINTER(Result),
     ]
-    lib.ppocr_recognize.restype = ctypes.c_int
-    run = getattr(lib, "ppocr_run", None)
+    lib.rpocr_recognize.restype = ctypes.c_int
+    run = getattr(lib, "rpocr_run", None)
     if run is not None:
         run.argtypes = [ctypes.c_void_p, ctypes.POINTER(Image), ctypes.c_int, ctypes.POINTER(Result)]
         run.restype = ctypes.c_int
-    lib.ppocr_result_free.argtypes = [ctypes.POINTER(Result)]
-    lib.ppocr_result_free.restype = None
-    lib.ppocr_last_error.argtypes = []
-    lib.ppocr_last_error.restype = ctypes.c_char_p
-    lib.ppocr_query_cpu_info.argtypes = [ctypes.POINTER(CpuInfo)]
-    lib.ppocr_query_cpu_info.restype = None
-    query_backend = getattr(lib, "ppocr_query_backend_info", None)
+    lib.rpocr_result_free.argtypes = [ctypes.POINTER(Result)]
+    lib.rpocr_result_free.restype = None
+    lib.rpocr_last_error.argtypes = []
+    lib.rpocr_last_error.restype = ctypes.c_char_p
+    lib.rpocr_query_cpu_info.argtypes = [ctypes.POINTER(CpuInfo)]
+    lib.rpocr_query_cpu_info.restype = None
+    query_backend = getattr(lib, "rpocr_query_backend_info", None)
     if query_backend is not None:
         query_backend.argtypes = [ctypes.POINTER(BackendInfo)]
         query_backend.restype = None
-    active = getattr(lib, "ppocr_active_backend", None)
+    active = getattr(lib, "rpocr_active_backend", None)
     if active is not None:
         active.argtypes = [ctypes.c_void_p]
         active.restype = ctypes.c_int
-    note = getattr(lib, "ppocr_backend_note", None)
+    note = getattr(lib, "rpocr_backend_note", None)
     if note is not None:
         note.argtypes = [ctypes.c_void_p]
         note.restype = ctypes.c_char_p
-    request_device = getattr(lib, "ppocr_request_vulkan_device", None)
+    request_device = getattr(lib, "rpocr_request_vulkan_device", None)
     if request_device is not None:
         request_device.argtypes = [ctypes.c_int]
         request_device.restype = None
-    resize = getattr(lib, "ppocr_resize_linear_rgb", None)
+    resize = getattr(lib, "rpocr_resize_linear_rgb", None)
     if resize is not None:
         resize.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
                            ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
@@ -204,27 +204,27 @@ def _bind(lib: ctypes.CDLL) -> None:
 class NativeOCR:
     def __init__(self, det: str, rec: str, dictionary: str, options: Options):
         self.lib = load_library()
-        handle = self.lib.ppocr_create(
+        handle = self.lib.rpocr_create(
             det.encode(), rec.encode(), dictionary.encode(), ctypes.byref(options)
         )
         if not handle:
-            raise RuntimeError(self._error() or "ppocr_create failed")
+            raise RuntimeError(self._error() or "rpocr_create failed")
         self.handle = handle
 
     def active_backend(self) -> Optional[int]:
-        """PPOCR_BACKEND_* that runs the full pipeline, or None on an old build."""
-        query = getattr(self.lib, "ppocr_active_backend", None)
+        """RPOCR_BACKEND_* that runs the full pipeline, or None on an old build."""
+        query = getattr(self.lib, "rpocr_active_backend", None)
         return None if query is None else int(query(self.handle))
 
     def backend_note(self) -> str:
         """Why a requested Metal backend fell back to CPU ("" otherwise)."""
-        query = getattr(self.lib, "ppocr_backend_note", None)
+        query = getattr(self.lib, "rpocr_backend_note", None)
         raw = query(self.handle) if query is not None else None
         return raw.decode("utf-8", errors="replace") if raw else ""
 
     def close(self) -> None:
         if getattr(self, "handle", None):
-            self.lib.ppocr_destroy(self.handle)
+            self.lib.rpocr_destroy(self.handle)
             self.handle = None
 
     def __del__(self) -> None:
@@ -234,14 +234,14 @@ class NativeOCR:
             pass
 
     def set_det_thresholds(self, det_threshold: float, box_threshold: float, unclip_ratio: float) -> None:
-        status = self.lib.ppocr_set_det_thresholds(
+        status = self.lib.rpocr_set_det_thresholds(
             self.handle, float(det_threshold), float(box_threshold), float(unclip_ratio)
         )
-        if status != PPOCR_OK:
-            raise RuntimeError(self._error() or "ppocr_set_det_thresholds failed")
+        if status != RPOCR_OK:
+            raise RuntimeError(self._error() or "rpocr_set_det_thresholds failed")
 
     def recognize(self, rgb: np.ndarray):
-        return self.run(rgb, PPOCR_TASK_DET | PPOCR_TASK_REC)
+        return self.run(rgb, RPOCR_TASK_DET | RPOCR_TASK_REC)
 
     def run(self, rgb: np.ndarray, tasks: int):
         array = np.ascontiguousarray(rgb, dtype=np.uint8)
@@ -250,15 +250,15 @@ class NativeOCR:
         height, width = array.shape[:2]
         image = Image(width, height, array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)))
         result = Result()
-        if tasks == PPOCR_TASK_DET | PPOCR_TASK_REC:
-            status = self.lib.ppocr_recognize(self.handle, ctypes.byref(image), ctypes.byref(result))
+        if tasks == RPOCR_TASK_DET | RPOCR_TASK_REC:
+            status = self.lib.rpocr_recognize(self.handle, ctypes.byref(image), ctypes.byref(result))
         else:
-            if getattr(self.lib, "ppocr_run", None) is None:
-                raise RuntimeError("this librapidocrlite has no ppocr_run; use_det/use_rec need a newer build")
-            status = self.lib.ppocr_run(self.handle, ctypes.byref(image), int(tasks), ctypes.byref(result))
+            if getattr(self.lib, "rpocr_run", None) is None:
+                raise RuntimeError("this librapidocrlite has no rpocr_run; use_det/use_rec need a newer build")
+            status = self.lib.rpocr_run(self.handle, ctypes.byref(image), int(tasks), ctypes.byref(result))
         try:
-            if status != PPOCR_OK:
-                raise RuntimeError(self._error() or "ppocr_run failed")
+            if status != RPOCR_OK:
+                raise RuntimeError(self._error() or "rpocr_run failed")
             boxes = []
             txts = []
             scores = []
@@ -269,17 +269,17 @@ class NativeOCR:
                 boxes.append([[item.box[k].x, item.box[k].y] for k in range(4)])
             return boxes, txts, scores
         finally:
-            self.lib.ppocr_result_free(ctypes.byref(result))
+            self.lib.rpocr_result_free(ctypes.byref(result))
 
     def _error(self) -> str:
-        raw = self.lib.ppocr_last_error()
+        raw = self.lib.rpocr_last_error()
         return raw.decode() if raw else ""
 
 
 def cpu_info() -> dict:
     lib = load_library()
     info = CpuInfo()
-    lib.ppocr_query_cpu_info(ctypes.byref(info))
+    lib.rpocr_query_cpu_info(ctypes.byref(info))
     return {
         "active_isa": info.active_isa.decode(),
         "avx2": bool(info.avx2),
@@ -294,7 +294,7 @@ def cpu_info() -> dict:
 
 def backend_info() -> dict:
     lib = load_library()
-    query = getattr(lib, "ppocr_query_backend_info", None)
+    query = getattr(lib, "rpocr_query_backend_info", None)
     if query is None:
         return {
             "vulkan_loader_available": False,
@@ -319,7 +319,7 @@ def resize_linear_rgb(img: np.ndarray, width: int, height: int) -> Optional[np.n
     with OpenCV 5.0. None when the loaded library predates the export."""
 
     lib = load_library()
-    resize = getattr(lib, "ppocr_resize_linear_rgb", None)
+    resize = getattr(lib, "rpocr_resize_linear_rgb", None)
     if resize is None or img.dtype != np.uint8 or img.ndim != 3 or img.shape[2] != 3:
         return None
     src = np.ascontiguousarray(img)
@@ -337,7 +337,7 @@ def metal_available() -> bool:
     """
 
     lib = load_library()
-    probe = getattr(lib, "ppocr_metal_available", None)
+    probe = getattr(lib, "rpocr_metal_available", None)
     if probe is None:
         return False
     probe.argtypes = []
@@ -351,7 +351,7 @@ def request_vulkan_device(index: int) -> None:
     if index < 0:
         return
     lib = load_library()
-    request = getattr(lib, "ppocr_request_vulkan_device", None)
+    request = getattr(lib, "rpocr_request_vulkan_device", None)
     if request is None:
         return
     request(int(index))
@@ -360,5 +360,5 @@ def request_vulkan_device(index: int) -> None:
 def default_options() -> Options:
     lib = load_library()
     options = Options()
-    lib.ppocr_options_init_ex(ctypes.byref(options), ctypes.sizeof(Options))
+    lib.rpocr_options_init_ex(ctypes.byref(options), ctypes.sizeof(Options))
     return options

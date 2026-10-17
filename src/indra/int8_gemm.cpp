@@ -17,7 +17,7 @@
 #define I8_NEON 1
 #endif
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 constexpr int kAlign = 64;
 
@@ -193,4 +193,4 @@ void GemmQ(const float* A, int L, int K, int lda, const QMat& W, const float* bi
   }
 }
 
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

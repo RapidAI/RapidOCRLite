@@ -18,7 +18,7 @@
 #include <cstring>
 #include <vector>
 
-namespace ppocr::detail::kernels {
+namespace rpocr::detail::kernels {
 namespace {
 
 inline __m256 Load(const float* p) noexcept { return (__m256)__lasx_xvld(p, 0); }
@@ -1462,4 +1462,4 @@ void LasxIm2colCopyStride2(float* dst, const float* src, int len) noexcept {
   for (; i < len; ++i) dst[i] = src[2 * i];
 }
 
-}  // namespace ppocr::detail::kernels
+}  // namespace rpocr::detail::kernels

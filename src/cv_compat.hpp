@@ -9,7 +9,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace ppocr::detail::cvc {
+namespace rpocr::detail::cvc {
 
 // cv::resize(src, dst, Size(dw, dh), 0, 0, INTER_LINEAR) for interleaved
 // 8-bit images with `cn` channels. Includes OpenCV's identity copy and its
@@ -48,4 +48,4 @@ void BicubicRowAvx2(const CubicRow& s, const float* xs, const float* ys, int len
                     std::uint8_t* dst);
 #endif
 
-}  // namespace ppocr::detail::cvc
+}  // namespace rpocr::detail::cvc

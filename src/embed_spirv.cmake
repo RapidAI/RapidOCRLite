@@ -17,9 +17,9 @@ string(REGEX REPLACE "((0x[0-9A-Fa-f][0-9A-Fa-f],){16})" "\\1\n" byte_lines "${b
 # single custom command and must never stage through the same filename.
 set(output_tmp "${OUTPUT}.embed_tmp")
 file(REMOVE "${output_tmp}")
-file(WRITE "${output_tmp}" "#pragma once\n#include <array>\n#include <cstdint>\nnamespace ppocr::detail {\nalignas(4) inline constexpr std::array<std::uint8_t, ${byte_count}> ${NAME} = {\n")
+file(WRITE "${output_tmp}" "#pragma once\n#include <array>\n#include <cstdint>\nnamespace rpocr::detail {\nalignas(4) inline constexpr std::array<std::uint8_t, ${byte_count}> ${NAME} = {\n")
 file(APPEND "${output_tmp}" "${byte_lines}\n")
-file(APPEND "${output_tmp}" "\n};\n}  // namespace ppocr::detail\n")
+file(APPEND "${output_tmp}" "\n};\n}  // namespace rpocr::detail\n")
 # CMake's file(RENAME) does not replace an existing destination on every
 # Windows/CMake combination.  The old header could therefore be removed while
 # a concurrent compile sees a half-generated body.  Move the previous file

@@ -21,9 +21,9 @@ int Positive(const char* text, const char* name) {
 
 struct Shape { int n, c, h, w; };
 
-ppocr::detail::Tensor Input(const Shape& shape, std::uint32_t seed) {
+rpocr::detail::Tensor Input(const Shape& shape, std::uint32_t seed) {
   const std::size_t elements = std::size_t(shape.n) * shape.c * shape.h * shape.w;
-  ppocr::detail::Tensor input{{shape.n, shape.c, shape.h, shape.w}, std::vector<float>(elements)};
+  rpocr::detail::Tensor input{{shape.n, shape.c, shape.h, shape.w}, std::vector<float>(elements)};
   for (std::size_t index = 0; index < elements; ++index) {
     // Reproducible sign-changing inputs keep every activation/gate path live
     // without retaining an additional image buffer between measurements.
@@ -49,7 +49,7 @@ void PrintSample(const char* phase, const Shape& shape, std::size_t capacity, st
 // pins all recorded intermediate activations.  Releasing the model cache must
 // return that *complete* ownership set, rather than only the public graph
 // input/output slots.
-bool RunFromDevice(ppocr::detail::OnnxLite& graph, const Shape& shape,
+bool RunFromDevice(rpocr::detail::OnnxLite& graph, const Shape& shape,
                    std::uint32_t seed) {
   auto input = Input(shape, seed);
   auto& arena = graph.gpu_arena();
@@ -58,9 +58,9 @@ bool RunFromDevice(ppocr::detail::OnnxLite& graph, const Shape& shape,
     arena.Release(slot);
     return false;
   }
-  std::unordered_map<std::string, ppocr::detail::OnnxLite::GpuTensor> outputs;
-  std::unordered_map<std::string, ppocr::detail::OnnxLite::GpuTensor> inputs;
-  inputs.emplace("x", ppocr::detail::OnnxLite::GpuTensor{std::move(input.shape), slot});
+  std::unordered_map<std::string, rpocr::detail::OnnxLite::GpuTensor> outputs;
+  std::unordered_map<std::string, rpocr::detail::OnnxLite::GpuTensor> inputs;
+  inputs.emplace("x", rpocr::detail::OnnxLite::GpuTensor{std::move(input.shape), slot});
   if (!graph.RunGpuOnlyDevice(std::move(inputs), outputs)) return false;
   // A replayed public output is cache-owned and release is intentionally a
   // no-op while pinned.  The post-run ReleaseGpuConstants() below is the
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
       shapes.push_back({Positive(argv[index], "N"), Positive(argv[index + 1], "C"),
                         Positive(argv[index + 2], "H"), Positive(argv[index + 3], "W")});
     }
-    ppocr::detail::OnnxLite graph(argv[1], ppocr::Backend::gpu_only);
+    rpocr::detail::OnnxLite graph(argv[1], rpocr::Backend::gpu_only);
     if (!graph.SupportsGpuOnly()) throw std::runtime_error("model graph is not GPU-only compatible");
     // Upload immutable weights and create every persistent descriptor/cache
     // before defining the constants-only live baseline.

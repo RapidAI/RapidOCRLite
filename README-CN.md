@@ -172,7 +172,7 @@
 
 #### ② 密集小字：中英文混排技术说明
 
-**图片内容**：自行生成的部署说明：7 段 17 px 小字，中文夹杂命令、环境变量、代码片段（如 <code>PPOCR_INDRA_METAL=2</code>、<code>ppocr_options_init(&amp;o)</code>）和全角标点。难点：字小行密、中英文和符号混排、长行自动换行。
+**图片内容**：自行生成的部署说明：7 段 17 px 小字，中文夹杂命令、环境变量、代码片段（如 <code>PPOCR_INDRA_METAL=2</code>、<code>rpocr_options_init(&amp;o)</code>）和全角标点。难点：字小行密、中英文和符号混排、长行自动换行。
 
 <table>
 <tr><td colspan="2" align="center"><img src="docs/lite_examples/images/synthetic_dense_mixed.png" alt="原图：密集小字：中英文混排技术说明" width="400"><br><sub>原图（<code>synthetic_dense_mixed.png</code>）</sub></td></tr>
@@ -193,7 +193,7 @@
 4. U。
 5. 3. 模型选择:Det.model_type 与 Rec.model_type设为"lite"即使用内置 lite 模型，权重许可证见 models/lite/LICENSE(OpenRAIL-
 6. M)。
-7. 4. C API 示例: ppocr_options o; ppocr_options_init(&o); o.model_type = PPOCR_MODEL_LITE; ppocr_create(dir, NULL, NULL, &o)
+7. 4. C API 示例: rpocr_options o; rpocr_options_init(&o); o.model_type = RPOCR_MODEL_LITE; rpocr_create(dir, NULL, NULL, &o)
 8. 5. 常见问题(FAQ)：Q:为什么第一次运行较慢？A:首次调用会分配线程池和工作缓冲区(约30-80ms)，之后的调用不再重复分配。
 9. 6. 性能参考：x86 AVX-512单页约 0.27 s(4 线程)，M4 Metal约 0.09 s；内存峰值约 0.8-1.2 GB，取决于页面尺寸与文字行数。
 10. 7.已知限制：不支持竖排文字与手写体；对旋转超过±10°的页面需先做方向校正(deskew仅覆盖小角度)。
@@ -210,7 +210,7 @@
 4. Ue
 5. 3. 模型选择：Det.model_type 与 Rec.model_type 设为 "lite” 即使用内置 lite 模型，权重许可证见 models/lite/LICENSE（OpenRAIL-
 6. M) o
-7. 4. C API ]: ppocr_options o; ppocr_options_init(&o); o.model_type = PPOCR_MODEL_LITE; ppocr_create(dir, NULL, NULL, &o)
+7. 4. C API ]: rpocr_options o; rpocr_options_init(&o); o.model_type = RPOCR_MODEL_LITE; rpocr_create(dir, NULL, NULL, &o)
 8. 5. 常见问题（FAQ）：Q: 为什么第一次运行较慢？A: 首次调用会分配线程池和工作缓冲区（约 30-80 ms），之后的调用不再重复分配。
 9. 6. 性能参考：x86 AVX-512 单页约 0.27 s（4 线程），M4 Metal 约 0.09 s；内存峰值约 0.8-1.2 GB，取决于页面尺寸与文字行数。
 10. 7. 已知限制：不支持竖排文字与手写体；对旋转超过 士10° 的页面需先做方向校正（deskew 仅覆盖小角度）。
@@ -462,7 +462,7 @@ RapidOCR 是面向小模型、离线部署的开源 OCR。5.x 保留 3.x 应用�
 - 同一个二进制在运行时分派到 AVX-512、AVX2+FMA 或 AArch64 NEON。`PPOCR_FORCE_ISA=scalar|avx2|avx512|neon` 只选择当前 CPU 合法的路径。只有 AVX2 的机器不会执行 AVX-512 目标文件。
 - LoongArch（loongarch64，Linux）：LSX（la64v1.0 基线）通过 `src/neon_lsx_shim.hpp` 复用 NEON 代码路径；仅当 `getauxval(AT_HWCAP)` 报告 LASX 时才进入 LASX GEMM（FMA、4 行分块）、深度卷积、GELU、CTC argmax、逐元素、融合 ExpandGeluProjectAdd，门控的融合 depthwise+pointwise 3x3/5x5，以及门控的融合 depthwise+ExpandGelu 3x3 内核（`PPOCR_FORCE_ISA=lasx|lsx|scalar`）。用 `cmake/toolchains/loongarch64-linux-gnu.cmake` 交叉编译，只在 QEMU 用户模式下验证（CI 任务 `loongarch64 qemu`：文本与 `expected_cpu_texts.json` 一致，原始分数与 x86 相差约 4e-5 以内；LASX 内核的运算顺序与 LSX 不同，分数与 LSX 可能相差约 1e-6，文本不变）。没有真机性能数据；CI 只产出 C/C++ SDK 压缩包，不出 wheel（manylinux 尚无 loongarch64 镜像）。
 - 可选 Vulkan 计算。源码构建在存在 `third_party/Vulkan-Headers` 和 `glslangValidator` 时嵌入 SPIR-V（`PPOCR_ENABLE_VULKAN` 默认 `ON`）。加载器通过 `dlopen` / `LoadLibrary` 打开 `libvulkan.so.1` 或 `vulkan-1.dll`，因此 Vulkan 不是 `DT_NEEDED` 依赖。发布的 wheel 传入 `-DPPOCR_ENABLE_VULKAN=OFF`。
-- C ABI（`include/ppocr/ppocr.h`）、C++ API（`include/ppocr/ppocr.hpp`）和 Python 包 `rapidocr`。Python 用 ctypes 调用 C ABI。
+- C ABI（`include/rapidocrlite/rapidocrlite.h`）、C++ API（`include/rapidocrlite/rapidocrlite.hpp`）和 Python 包 `rapidocr`。Python 用 ctypes 调用 C ABI。
 - Python 调用形式跟随 3.x：`RapidOCR(params={"Section.key": value})`，然后使用 `result.txts`、`result.scores`、`result.boxes`、`result.elapse`、`to_json()`、`to_markdown()` 和 `vis()`。
 - 缺少的模型会按 `default_models.yaml` 里的 ModelScope 地址下载（文件名与 3.x 相同；PP-OCRv6 文件取自标签 `v3.10.0`），保存到 `Global.model_root_dir`，并校验 SHA256。
 
@@ -558,7 +558,7 @@ RapidOCRLite 现在在这两个数据集上与 3.10 逐位一致：除检测后�
 默认情况下识别与 3.10 逐位一致：按宽高比排序，每批 `rec_batch_num`（6）行，填充到最宽行，最小宽度 320。快速模式保留相同的裁剪、缩放和归一化，但每行按接近自身的宽度运行（x86 把宽度向上取整到 32 的倍数，让相近的行合批；AArch64 保持原宽度）。单行识别（`use_det=False`）仍保留 320 最小宽度，因为去掉它会让 Exact Match 下降约 2 个点（`PPOCR_REC_FAST_NO_MIN=1` 可强制去掉）。此时文本可能与 3.10 略有不同。
 
 - Python：`RapidOCR(params={"Rec.fast_mode": True})`，或在 `config.yaml` 的 `Rec:` 下写 `fast_mode: true`。其他参数不变。
-- C API：`ppocr_options.rec_fast_mode = 1`（字段追加在结构体末尾；按旧头文件编译的调用方传入较小的 `struct_size`，得到 0）。C++：`ppocr::Options::rec_fast_mode`。
+- C API：`rpocr_options.rec_fast_mode = 1`（字段追加在结构体末尾；按旧头文件编译的调用方传入较小的 `struct_size`，得到 0）。C++：`rpocr::Options::rec_fast_mode`。
 - 环境变量：`PPOCR_REC_FAST=1`（或 `0`）覆盖该选项。
 
 快速模式的精度（数据集同上；检测不受影响）：
@@ -631,7 +631,7 @@ add_executable(ocr_app main.c)
 target_link_libraries(ocr_app PRIVATE RapidOCRLite::rapidocrlite)
 ```
 
-安装前缀里有 `librapidocrlite.so`（SONAME `librapidocrlite.so.5`）、`include/ppocr/` 下的头文件，以及 `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`。静态库目标是 `RapidOCRLite::static`（`librapidocrlite.a`）。旧的 `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` 仍可用（兼容包装）。运行时动态加载器必须能找到 `librapidocrlite.so.5`（`LD_LIBRARY_PATH` 或 rpath）。
+安装前缀里有 `librapidocrlite.so`（SONAME `librapidocrlite.so.5`）、`include/rapidocrlite/` 下的头文件，以及 `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`。静态库目标是 `RapidOCRLite::static`（`librapidocrlite.a`）。旧的 `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` 仍可用（兼容包装）。运行时动态加载器必须能找到 `librapidocrlite.so.5`（`LD_LIBRARY_PATH` 或 rpath）。
 
 ### 📋 使用
 
@@ -686,15 +686,15 @@ python -m rapidocr hello.png \
 #### C++
 
 ```cpp
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <iostream>
 
 int main(int argc, char** argv) {
-  ppocr::Options options;
-  options.backend = ppocr::Backend::cpu_only;
-  ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
-  for (const ppocr::Result& result : ocr.Recognize(ppocr::LoadPPM(argv[4]))) {
+  rpocr::Options options;
+  options.backend = rpocr::Backend::cpu_only;
+  rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
+  for (const rpocr::Result& result : ocr.Recognize(rpocr::LoadPPM(argv[4]))) {
     std::cout << result.text << '\t' << result.confidence << '\n';
   }
 }
@@ -709,36 +709,36 @@ int main(int argc, char** argv) {
 #### C
 
 ```c
-#include "ppocr/ppocr.h"
+#include "rapidocrlite/rapidocrlite.h"
 
 #include <stdio.h>
 
 int main(int argc, char** argv) {
-  ppocr_options options;
-  ppocr_options_init(&options);
-  options.backend = PPOCR_BACKEND_CPU;
+  rpocr_options options;
+  rpocr_options_init(&options);
+  options.backend = RPOCR_BACKEND_CPU;
 
-  ppocr_ocr* ocr = ppocr_create(argv[1], argv[2], argv[3], &options);
-  ppocr_image_buffer loaded = {0};
-  if (ppocr_load_ppm(argv[4], &loaded) != PPOCR_OK) return 1;
+  rpocr_ocr* ocr = rpocr_create(argv[1], argv[2], argv[3], &options);
+  rpocr_image_buffer loaded = {0};
+  if (rpocr_load_ppm(argv[4], &loaded) != RPOCR_OK) return 1;
 
-  ppocr_image image = {loaded.width, loaded.height, loaded.rgb};
-  ppocr_result result = {0};
-  if (ppocr_recognize(ocr, &image, &result) != PPOCR_OK) {
-    fprintf(stderr, "%s\n", ppocr_last_error());
+  rpocr_image image = {loaded.width, loaded.height, loaded.rgb};
+  rpocr_result result = {0};
+  if (rpocr_recognize(ocr, &image, &result) != RPOCR_OK) {
+    fprintf(stderr, "%s\n", rpocr_last_error());
     return 1;
   }
   for (size_t i = 0; i < result.count; ++i) {
     printf("%s\t%.4f\n", result.items[i].text, result.items[i].confidence);
   }
-  ppocr_result_free(&result);
-  ppocr_image_free(&loaded);
-  ppocr_destroy(ocr);
+  rpocr_result_free(&result);
+  rpocr_image_free(&loaded);
+  rpocr_destroy(ocr);
   return 0;
 }
 ```
 
-同一个句柄上的 `ppocr_recognize` 是串行的。多页同时跑时，每个线程各自创建一个句柄。`ppocr_options_init` 会填好 `ppocr_options.struct_size`，以便以后在结构体末尾追加字段。
+同一个句柄上的 `rpocr_recognize` 是串行的。多页同时跑时，每个线程各自创建一个句柄。`rpocr_options_init` 会填好 `rpocr_options.struct_size`，以便以后在结构体末尾追加字段。
 
 #### Vulkan
 
@@ -759,13 +759,13 @@ print(result.txts)
 
 `device_index` 为 `-1` 时会跳过 lavapipe 这类 CPU Vulkan 设备。要用 lavapipe 时设置索引（或 `PPOCR_VULKAN_DEVICE_INDEX`），并把 `VK_ICD_FILENAMES` 指到它的 ICD。没有可用计算设备时，Python 打一条警告并留在 CPU。`backend` 接受 `cpu`、`hybrid` 或 `vulkan`。
 
-C++ 默认的 `Backend::hybrid` 留在 CPU，除非设置了 `PPOCR_ENABLE_HYBRID_GPU_GRAPH`。`Backend::gpu_only` 在设备或着色器无法运行时抛出 `std::runtime_error`。C ABI 在这种情况下从 `ppocr_create` 返回 `PPOCR_ERR_UNSUPPORTED`。
+C++ 默认的 `Backend::hybrid` 留在 CPU，除非设置了 `PPOCR_ENABLE_HYBRID_GPU_GRAPH`。`Backend::gpu_only` 在设备或着色器无法运行时抛出 `std::runtime_error`。C ABI 在这种情况下从 `rpocr_create` 返回 `RPOCR_ERR_UNSUPPORTED`。
 
 ```cpp
-ppocr::Options options;
-options.backend = ppocr::Backend::gpu_only;
+rpocr::Options options;
+options.backend = rpocr::Backend::gpu_only;
 options.vulkan_device_index = 0;  // -1：自动；跳过 CPU/lavapipe
-ppocr::OCR ocr(det, rec, dict, options);
+rpocr::OCR ocr(det, rec, dict, options);
 ```
 
 在部分显卡上，一整条录制好的命令缓冲会丢掉 CTC 时间步。默认 GPU 路径按带栅栏的分段提交。某块显卡验证通过之后，可以用 `PPOCR_ENABLE_GPU_GRAPH_REPLAY=1` 改回单条命令缓冲。
@@ -782,11 +782,11 @@ engine = RapidOCR(params={
 ```
 
 ```cpp
-ppocr::Options options;
-options.backend = ppocr::Backend::metal;  // ppocr::MetalAvailable() 报告是否支持
+rpocr::Options options;
+options.backend = rpocr::Backend::metal;  // rpocr::MetalAvailable() 报告是否支持
 ```
 
-C 接口用 `PPOCR_BACKEND_METAL`，`ppocr_metal_available()` 报告是否支持。没有 Metal 时（其他平台、未启用 Metal 的构建、`PPOCR_DISABLE_METAL=1`）三种接口都回退到 CPU，不会失败。驱动按进程选定一次：同一进程里不能混用 Metal 和 Vulkan。`ppocr_metal_check` 对比 Metal 与 CPU 并做多线程确定性检查；`tests/run_metal_macos.sh` 在 Metal API validation（`MTL_DEBUG_LAYER=1`）下运行它。
+C 接口用 `RPOCR_BACKEND_METAL`，`rpocr_metal_available()` 报告是否支持。没有 Metal 时（其他平台、未启用 Metal 的构建、`PPOCR_DISABLE_METAL=1`）三种接口都回退到 CPU，不会失败。驱动按进程选定一次：同一进程里不能混用 Metal 和 Vulkan。`ppocr_metal_check` 对比 Metal 与 CPU 并做多线程确定性检查；`tests/run_metal_macos.sh` 在 Metal API validation（`MTL_DEBUG_LAYER=1`）下运行它。
 
 ### ⚙️ 配置
 
@@ -800,7 +800,7 @@ Python 键使用 3.x 的 `Section.name` 形式。YAML `config_path` 由 PyYAML �
 | `Det.limit_side_len`、`Det.limit_type` | 缩放限制。`min` 与 3.x 相同（短边）。`max` 是 C++ 的长边默认。 |
 | `Det.thresh`、`Det.box_thresh`、`Det.unclip_ratio` | 检测掩码阈值、框分数和 unclip。 |
 | `Det.mean`、`Det.std` | 检测器归一化，BGR 顺序，长度 3。 |
-| `Det.use_dilation` | 检测掩码的 2×2 膨胀。Python 配置里开启，`ppocr::Options` 里关闭。 |
+| `Det.use_dilation` | 检测掩码的 2×2 膨胀。Python 配置里开启，`rpocr::Options` 里关闭。 |
 | `Global.text_score` | 丢掉低于该分数的行。也可以作为单次调用参数。 |
 | `Global.use_cls` | 接受该键。原生引擎不做方向分类，并警告一次。 |
 | `Global.model_root_dir` | 下载目录。为空时用包内 `models/`。 |
@@ -810,7 +810,7 @@ Python 键使用 3.x 的 `Section.name` 形式。YAML `config_path` 由 PyYAML �
 | `EngineConfig.ppocr_cpp.use_metal` | 请求 Metal 图（macOS）；否则用 CPU。 |
 | `EngineConfig.ppocr_cpp.backend` | `cpu`、`hybrid` 或 `vulkan`。 |
 
-C++ 默认值在 `include/ppocr/ppocr.hpp` 的 `ppocr::Options` 上（`det_limit_side_len` 960，`det_limit_type` 0，ImageNet `det_mean` / `det_std`，`rec_batch_size` 4）。`PPOCR_BENCH_THREADS` 覆盖常驻 SIMD 线程池（默认 `min(16, hardware_concurrency)`）。
+C++ 默认值在 `include/rapidocrlite/rapidocrlite.hpp` 的 `rpocr::Options` 上（`det_limit_side_len` 960，`det_limit_type` 0，ImageNet `det_mean` / `det_std`，`rec_batch_size` 4）。`PPOCR_BENCH_THREADS` 覆盖常驻 SIMD 线程池（默认 `min(16, hardware_concurrency)`）。
 
 ### 🔀 从 rapidocr 3.x 迁移
 

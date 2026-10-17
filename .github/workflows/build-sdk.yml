@@ -415,7 +415,7 @@ jobs:
           find "$SDK" | sort
           test -f "$SDK/README.md"
           test -f "$SDK/LICENSE"
-          test -f "$SDK/include/ppocr/ppocr.h"
+          test -f "$SDK/include/rapidocrlite/rapidocrlite.h"
           test -f "$SDK/lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake"
           test -f "$SDK/lib/cmake/ppocr/ppocrConfig.cmake"
 

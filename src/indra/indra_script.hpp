@@ -6,7 +6,7 @@
 #include <vector>
 #include "kern.hpp"
 #include "pool.hpp"
-namespace ppocr::indra {
+namespace rpocr::indra {
 class ScriptNet {
  public:
   ScriptNet(const std::string& path, int threads);
@@ -20,4 +20,4 @@ class ScriptNet {
   std::vector<L> layers_;
   std::vector<float> fc_; float fcb_ = 0.f;
 };
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

@@ -7,4 +7,4 @@
 #define VW NEON_VW
 #define KNAME "neon"
 #include "kern_impl.inc"
-namespace ppocr::indra { const Kern* KernNeon() { return &kKern; } }
+namespace rpocr::indra { const Kern* KernNeon() { return &kKern; } }

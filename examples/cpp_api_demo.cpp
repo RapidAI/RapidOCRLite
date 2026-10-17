@@ -1,10 +1,10 @@
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <iostream>
 #include <string>
 
 int main(int argc, char** argv) {
-  const auto cpu = ppocr::QueryCpuInfo();
+  const auto cpu = rpocr::QueryCpuInfo();
   if (argc == 2 && std::string(argv[1]) == "--cpu-info") {
     std::cout << "active_isa=" << cpu.active_isa
               << " avx2=" << cpu.avx2
@@ -18,10 +18,10 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
-    ppocr::Options options;
-    options.backend = ppocr::Backend::cpu_only;
-    ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
-    const ppocr::Image image = ppocr::LoadPPM(argv[4]);
+    rpocr::Options options;
+    options.backend = rpocr::Backend::cpu_only;
+    rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
+    const rpocr::Image image = rpocr::LoadPPM(argv[4]);
     const auto results = ocr.Recognize(image);
     std::cout << "isa=" << cpu.active_isa << " boxes=" << results.size() << '\n';
     for (const auto& result : results) {

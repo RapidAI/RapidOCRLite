@@ -6,7 +6,7 @@
 #include <mutex>
 #include <thread>
 #include <vector>
-namespace ppocr::indra {
+namespace rpocr::indra {
 class Pool {
  public:
   explicit Pool(int n) : n_(n < 1 ? 1 : n) {
@@ -64,4 +64,4 @@ class Pool {
   uint64_t gen_ = 0;
   bool stop_ = false;
 };
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

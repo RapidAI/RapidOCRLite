@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace ppocr::detail::kernels {
+namespace rpocr::detail::kernels {
 
 // Persistent-pool range split. Used by independent 1x1 Conv islands so FPN
 // laterals can run together without each nesting another ParallelFor.
@@ -428,4 +428,4 @@ struct IsaDispatch {
 
 [[nodiscard]] IsaDispatch QueryIsa() noexcept;
 
-}  // namespace ppocr::detail::kernels
+}  // namespace rpocr::detail::kernels

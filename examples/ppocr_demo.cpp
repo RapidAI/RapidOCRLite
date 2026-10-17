@@ -1,14 +1,14 @@
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <iostream>
 #include <string>
 
 namespace {
 
-ppocr::Backend ParseBackend(const std::string& value) {
-  if (value == "cpu") return ppocr::Backend::cpu_only;
-  if (value == "gpu") return ppocr::Backend::gpu_only;
-  if (value == "hybrid") return ppocr::Backend::hybrid;
+rpocr::Backend ParseBackend(const std::string& value) {
+  if (value == "cpu") return rpocr::Backend::cpu_only;
+  if (value == "gpu") return rpocr::Backend::gpu_only;
+  if (value == "hybrid") return rpocr::Backend::hybrid;
   throw std::runtime_error("backend must be cpu, gpu, or hybrid");
 }
 
@@ -16,7 +16,7 @@ ppocr::Backend ParseBackend(const std::string& value) {
 
 int main(int argc, char** argv) {
   if (argc == 2 && std::string(argv[1]) == "--backend-info") {
-    const auto info = ppocr::QueryBackendInfo();
+    const auto info = rpocr::QueryBackendInfo();
     std::cout << "vulkan_loader=" << info.vulkan_loader_available
               << " vulkan_compute=" << info.vulkan_compute_available
               << " full_graph_gpu=" << info.full_graph_gpu_available
@@ -28,13 +28,13 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
-    ppocr::Options options;
+    rpocr::Options options;
     if (argc == 7) {
       if (std::string(argv[5]) != "--backend") throw std::runtime_error("expected --backend");
       options.backend = ParseBackend(argv[6]);
     }
-    ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
-    for (const auto& r : ocr.Recognize(ppocr::LoadPPM(argv[4]))) {
+    rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
+    for (const auto& r : ocr.Recognize(rpocr::LoadPPM(argv[4]))) {
       std::cout << r.text << "\t" << r.confidence << "\t"
                 << r.bbox[0] << ',' << r.bbox[1] << ','
                 << r.bbox[2] << ',' << r.bbox[3] << '\n';

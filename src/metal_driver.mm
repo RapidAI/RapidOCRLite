@@ -124,9 +124,9 @@ std::array<bool, 3> g_program_attempted{};
 
 const std::vector<std::uint8_t>* MslSource(int kind) {
   static const std::vector<std::uint8_t> sources[3] = {
-      {ppocr::detail::kMetalBinaryMsl.begin(), ppocr::detail::kMetalBinaryMsl.end()},
-      {ppocr::detail::kMetalDepthwiseTailMsl.begin(), ppocr::detail::kMetalDepthwiseTailMsl.end()},
-      {ppocr::detail::kMetalPointwiseTailMsl.begin(), ppocr::detail::kMetalPointwiseTailMsl.end()}};
+      {rpocr::detail::kMetalBinaryMsl.begin(), rpocr::detail::kMetalBinaryMsl.end()},
+      {rpocr::detail::kMetalDepthwiseTailMsl.begin(), rpocr::detail::kMetalDepthwiseTailMsl.end()},
+      {rpocr::detail::kMetalPointwiseTailMsl.begin(), rpocr::detail::kMetalPointwiseTailMsl.end()}};
   return kind >= 0 && kind < 3 ? &sources[kind] : nullptr;
 }
 
@@ -150,7 +150,7 @@ std::string PrepareSource(int kind, bool* specializable) {
         !(std::isalnum(static_cast<unsigned char>(source[next + needle.size()])) ||
           source[next + needle.size()] == '_');
     out.append(source, position, next - position);
-    out.append(word_end ? "ppocr_mode(params)" : needle);
+    out.append(word_end ? "rpocr_mode(params)" : needle);
     if (word_end) ++replaced;
     position = next + needle.size();
   }
@@ -159,12 +159,12 @@ std::string PrepareSource(int kind, bool* specializable) {
   if (kernel == std::string::npos) return source;
   // Params is declared before the kernel by SPIRV-Cross.
   static const char* helper =
-      "constant uint ppocr_fixed_mode [[function_constant(0)]];\n"
-      "constant bool ppocr_has_fixed_mode = is_function_constant_defined(ppocr_fixed_mode);\n"
-      "static inline uint ppocr_mode(constant Params& p) {\n"
+      "constant uint rpocr_fixed_mode [[function_constant(0)]];\n"
+      "constant bool rpocr_has_fixed_mode = is_function_constant_defined(rpocr_fixed_mode);\n"
+      "static inline uint rpocr_mode(constant Params& p) {\n"
       // Only the low 16 bits select the code path; the high bits carry per-call
       // data (content width, pads, flags) and stay dynamic.
-      "  return ppocr_has_fixed_mode ? (ppocr_fixed_mode | (p.mode & 0xffff0000u)) : p.mode;\n"
+      "  return rpocr_has_fixed_mode ? (rpocr_fixed_mode | (p.mode & 0xffff0000u)) : p.mode;\n"
       "}\n\n";
   out.insert(kernel, helper);
   *specializable = true;
@@ -274,9 +274,9 @@ int ShaderKind(const VkShaderModuleCreateInfo* info) {
   const auto matches = [&](const auto& spv) {
     return info->codeSize == spv.size() && std::memcmp(info->pCode, spv.data(), spv.size()) == 0;
   };
-  if (matches(ppocr::detail::kVulkanBinarySpv)) return 0;
-  if (matches(ppocr::detail::kVulkanDepthwiseTailSpv)) return 1;
-  if (matches(ppocr::detail::kVulkanPointwiseTailSpv)) return 2;
+  if (matches(rpocr::detail::kVulkanBinarySpv)) return 0;
+  if (matches(rpocr::detail::kVulkanDepthwiseTailSpv)) return 1;
+  if (matches(rpocr::detail::kVulkanPointwiseTailSpv)) return 2;
   return -1;
 }
 
@@ -785,7 +785,7 @@ const NativeKernels& Native(id<MTLDevice> device) {
   if (std::getenv("PPOCR_METAL_DISABLE_NATIVE") != nullptr) return g_native;
   @autoreleasepool {
     NSError* error = nil;
-    NSString* text = [NSString stringWithUTF8String:ppocr::detail::kMetalNativeKernels];
+    NSString* text = [NSString stringWithUTF8String:rpocr::detail::kMetalNativeKernels];
     id<MTLLibrary> library = [device newLibraryWithSource:text options:SafeCompileOptions() error:&error];
     if (!library) {
       std::fprintf(stderr, "ppocr: Metal native kernels did not compile: %s\n",
@@ -1089,17 +1089,17 @@ PFN_vkVoidFunction Lookup(const char* name) {
 
 }  // namespace
 
-extern "C" PFN_vkGetInstanceProcAddr ppocr_metal_vk_get_instance_proc_addr(void) {
+extern "C" PFN_vkGetInstanceProcAddr rpocr_metal_vk_get_instance_proc_addr(void) {
   return SystemPhysicalDevice() ? &GetInstanceProcAddr : nullptr;
 }
 
-extern "C" int ppocr_metal_device_available(void) {
+extern "C" int rpocr_metal_device_available(void) {
   @autoreleasepool { return SystemPhysicalDevice() != nullptr; }
 }
 
-extern "C" int ppocr_metal_error_count(void) { return g_metal_errors.load(std::memory_order_relaxed); }
+extern "C" int rpocr_metal_error_count(void) { return g_metal_errors.load(std::memory_order_relaxed); }
 
-extern "C" void ppocr_metal_print_profile(void) {
+extern "C" void rpocr_metal_print_profile(void) {
   const auto ns = g_gpu_ns.load(std::memory_order_relaxed);
   std::fprintf(stderr, "metal_profile command_buffers=%llu dispatches=%llu gpu_ms=%.3f\n",
                static_cast<unsigned long long>(g_gpu_submits.load(std::memory_order_relaxed)),

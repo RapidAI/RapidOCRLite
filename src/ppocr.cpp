@@ -1,5 +1,5 @@
 #include "indra/lite_pipeline.hpp"
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include "db_geometry.hpp"
 #include "cv_compat.hpp"
@@ -34,7 +34,7 @@
 #include <malloc.h>
 #endif
 
-namespace ppocr {
+namespace rpocr {
 namespace {
 
 using detail::Tensor;
@@ -1696,7 +1696,7 @@ OCR::OCR(const std::string& det_model,const std::string& rec_model,std::string d
       note = "no Metal device (or PPOCR_DISABLE_METAL is set)";
     } else if (!detail::RequestMetalDriver() || !detail::MetalDriverRequested()) {
       note = "the GPU runtime of this process was already initialized for Vulkan "
-             "(a Vulkan/hybrid engine or ppocr_query_backend_info ran before the first "
+             "(a Vulkan/hybrid engine or rpocr_query_backend_info ran before the first "
              "Metal engine); Metal can only be chosen before that";
     } else if (!QueryBackendInfo().full_graph_gpu_available) {
       note = "the Metal GPU graph is unavailable";
@@ -2408,4 +2408,4 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
 }
 
 Image LoadPPM(const std::string& path) { std::ifstream f(path,std::ios::binary);if(!f)Fail("cannot open image "+path);std::string magic;f>>magic;if(magic!="P6")Fail("only binary P6 PPM is supported");auto token=[&](){std::string s;while(f>>s&&s.starts_with('#'))std::getline(f,s);return s;};int w=std::stoi(token()),h=std::stoi(token()),max=std::stoi(token());if(w<=0||h<=0||max!=255)Fail("invalid PPM header");f.get();Image out{w,h,std::vector<std::uint8_t>(std::size_t(w)*h*3)};f.read(reinterpret_cast<char*>(out.rgb.data()),std::streamsize(out.rgb.size()));if(f.gcount()!=std::streamsize(out.rgb.size()))Fail("truncated PPM pixels");return out; }
-}  // namespace ppocr
+}  // namespace rpocr

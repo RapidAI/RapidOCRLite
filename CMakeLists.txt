@@ -45,7 +45,7 @@ set_target_properties(ppocr_objects PROPERTIES
     POSITION_INDEPENDENT_CODE ON
     CXX_VISIBILITY_PRESET hidden
     VISIBILITY_INLINES_HIDDEN ON)
-target_compile_definitions(ppocr_objects PRIVATE PPOCR_BUILDING_SHARED)
+target_compile_definitions(ppocr_objects PRIVATE RPOCR_BUILDING_SHARED)
 target_include_directories(ppocr_objects PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
@@ -237,6 +237,16 @@ if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
 endif()
 
 # Native Indra OCR ("lite" model): ONNX reader, recognizer, ISA kernels (runtime dispatch).
+# The lite sources use GCC/Clang vector extensions and builtins; MSVC (cl.exe) builds get a stub
+# that rejects lite model folders with a clear error (PP-OCR models are unaffected).
+if((MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang") OR PPOCR_FORCE_LITE_STUB)
+  set(PPOCR_LITE_STUB ON)
+else()
+  set(PPOCR_LITE_STUB OFF)
+endif()
+if(PPOCR_LITE_STUB)
+  target_sources(ppocr_objects PRIVATE src/indra/lite_stub.cpp)
+else()
 target_sources(ppocr_objects PRIVATE src/indra/onnx_min.cpp src/indra/indra_rec.cpp src/indra/indra_det.cpp src/indra/indra_script.cpp src/indra/indra_order.cpp
     src/indra/dispatch.cpp src/indra/indra_c_api.cpp src/indra/kern_scalar.cpp src/indra/imgproc.cpp src/indra/lite_pipeline.cpp src/indra/int8_gemm.cpp)
 # imgproc.cpp reproduces OpenCV's float rounding: every FMA is explicit, so no compiler contraction.
@@ -269,6 +279,8 @@ if(APPLE)
   endif()
 endif()
 endif()
+
+endif()  # PPOCR_LITE_STUB
 
 # Apple Silicon matrix units (AMX/SME) are reachable from user code only via
 # Accelerate. Pointwise convolutions and the CTC head use cblas_sgemm there.
@@ -313,7 +325,7 @@ if(PPOCR_BUILD_SHARED)
       $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
   target_compile_features(ppocr_shared PUBLIC cxx_std_20)
-  target_compile_definitions(ppocr_shared PUBLIC PPOCR_SHARED)
+  target_compile_definitions(ppocr_shared PUBLIC RPOCR_SHARED)
   if(UNIX AND NOT APPLE)
     target_link_libraries(ppocr_shared PRIVATE ${CMAKE_DL_LIBS})
   endif()
@@ -371,6 +383,7 @@ if(PPOCR_BUILD_EXAMPLES)
   endif()
 
   # Lite (Indra) model through the public APIs only: C (50-page regression / timing) and C++.
+  if(NOT PPOCR_LITE_STUB)
   add_executable(ppocr_lite_c_test examples/lite_c_test.c)
   add_executable(ppocr_model_type_test tests/model_type_test.c)
   target_link_libraries(ppocr_model_type_test PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
@@ -379,6 +392,7 @@ if(PPOCR_BUILD_EXAMPLES)
   target_link_libraries(ppocr_lite_cpp_check PRIVATE $<IF:$<BOOL:${PPOCR_BUILD_SHARED}>,ppocr_shared,ppocr>)
   if(PPOCR_BUILD_SHARED)
     set_target_properties(ppocr_lite_c_test ppocr_lite_cpp_check ppocr_model_type_test PROPERTIES BUILD_RPATH "$<TARGET_FILE_DIR:ppocr_shared>")
+  endif()
   endif()
 
   add_executable(ppocr_replay examples/ppocr_replay.c)
@@ -441,7 +455,7 @@ if(PPOCR_BUILD_TESTS)
   endif()
   enable_testing()
   add_test(NAME c_api_smoke COMMAND ppocr_c_api_smoke)
-  if(TARGET ppocr_model_type_test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
+  if(TARGET ppocr_model_type_test AND NOT PPOCR_LITE_STUB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
     add_test(NAME model_type COMMAND ppocr_model_type_test
       "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite"
       "${CMAKE_CURRENT_SOURCE_DIR}/ci-models/PP-OCRv6_det_tiny.onnx"
@@ -449,7 +463,7 @@ if(PPOCR_BUILD_TESTS)
       "${CMAKE_CURRENT_SOURCE_DIR}/ci-models/ppocrv6_tiny_dict.txt"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/data/model_type.ppm")
   endif()
-  if(TARGET ppocr_lite_c_test AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
+  if(TARGET ppocr_lite_c_test AND NOT PPOCR_LITE_STUB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/python/src/rapidocr/models/lite/meta.json")
     if(PPOCR_CPU MATCHES "x86_64|amd64|x64")
       set(_lite_arch x86_64)
     elseif(PPOCR_CPU MATCHES "arm64|aarch64")
@@ -484,7 +498,7 @@ if(NOT SKBUILD)
       LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
       RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
       INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-  install(DIRECTORY include/ppocr DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  install(DIRECTORY include/rapidocrlite DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
   # Library files are librapidocrlite.{so,dylib,a} / rapidocrlite.dll (+ rapidocrlite_static.lib).
   # Primary package: find_package(RapidOCRLite) -> RapidOCRLite::rapidocrlite (shared), RapidOCRLite::static.
   install(EXPORT RapidOCRLiteTargets

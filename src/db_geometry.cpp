@@ -23,7 +23,7 @@
 #include <utility>
 #include <vector>
 
-namespace ppocr { namespace detail { namespace cvgeom {
+namespace rpocr { namespace detail { namespace cvgeom {
 
 constexpr double kPi = 3.1415926535897932384626433832795;  // CV_PI
 
@@ -457,9 +457,9 @@ inline std::array<FPt, 4> BoxPoints(const RRect& r) {
   return pt;
 }
 
-}}}  // namespace ppocr::detail::cvgeom
+}}}  // namespace rpocr::detail::cvgeom
 
-namespace ppocr { namespace detail {
+namespace rpocr { namespace detail {
 
 namespace {
 
@@ -593,4 +593,4 @@ bool Rapidocr3DbBox(const int* contour_xy, int count, const float* prob, int h, 
   return true;
 }
 
-}}  // namespace ppocr::detail
+}}  // namespace rpocr::detail

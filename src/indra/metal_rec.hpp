@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
-namespace ppocr::indra {
+namespace rpocr::indra {
 struct MetalRecBlock {
   std::vector<float> dwT, dwb;      // [9][C], [C]
   std::vector<float> ex, exb;       // [E][C], [E]
@@ -24,4 +24,4 @@ class MetalRec {
   struct Impl;
   std::unique_ptr<Impl> p_;
 };
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

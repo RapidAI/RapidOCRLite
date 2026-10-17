@@ -41,7 +41,7 @@ d.text((40,30),'RapidOCRLite 部署说明 / Deployment Notes v5.0',font=f(SB,26)
 paras=["1. 安装：执行 pip install rapidocrlite 即可，无需 ONNX Runtime、OpenCV 或 PaddlePaddle；Python 3.9–3.13 均受支持。",
 "2. 线程：通过环境变量 PPOCR_BENCH_THREADS=4 设置推理线程数；在 Apple M4 上可设置 PPOCR_INDRA_METAL=2 启用 Metal GPU。",
 "3. 模型选择：Det.model_type 与 Rec.model_type 设为 \"lite\" 即使用内置 lite 模型，权重许可证见 models/lite/LICENSE（OpenRAIL-M）。",
-"4. C API 示例：ppocr_options o; ppocr_options_init(&o); o.model_type = PPOCR_MODEL_LITE; ppocr_create(dir, NULL, NULL, &o);",
+"4. C API 示例：rpocr_options o; rpocr_options_init(&o); o.model_type = RPOCR_MODEL_LITE; rpocr_create(dir, NULL, NULL, &o);",
 "5. 常见问题（FAQ）：Q: 为什么第一次运行较慢？A: 首次调用会分配线程池和工作缓冲区（约 30–80 ms），之后的调用不再重复分配。",
 "6. 性能参考：x86 AVX-512 单页约 0.27 s（4 线程），M4 Metal 约 0.09 s；内存峰值约 0.8–1.2 GB，取决于页面尺寸与文字行数。",
 "7. 已知限制：不支持竖排文字与手写体；对旋转超过 ±10° 的页面需先做方向校正（deskew 仅覆盖小角度）。"]

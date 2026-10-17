@@ -1,4 +1,4 @@
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 #include "vulkan_backend.hpp"
 
 #include <algorithm>
@@ -12,7 +12,7 @@
 
 namespace {
 
-std::vector<float> CpuRgbRegionInput(const ppocr::Image& image, int left, int top,
+std::vector<float> CpuRgbRegionInput(const rpocr::Image& image, int left, int top,
                                      int region_width, int region_height,
                                      int width, int height, bool recognition) {
   std::vector<float> out(std::size_t(3) * width * height);
@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
-    const auto image = ppocr::LoadPPM(argv[1]);
+    const auto image = rpocr::LoadPPM(argv[1]);
     if (image.empty()) throw std::runtime_error("invalid image");
     const bool crop_mode = argc >= 9;
     const int left = crop_mode ? std::stoi(argv[2]) : 0;
@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
         top + region_height > image.height) {
       throw std::runtime_error("invalid RGB resize region");
     }
-    ppocr::detail::VulkanTensorArena arena;
+    rpocr::detail::VulkanTensorArena arena;
     auto rgb = arena.Acquire(image.rgb.size(), "rgb");
     const std::size_t output_elements = std::size_t(3) * width * height;
     auto output = arena.Acquire(offset_elements + output_elements, "output");

@@ -157,7 +157,7 @@ class RapidOCR:
         unclip = float(self.cfg.Det.get("unclip_ratio", 1.6))
         engine.set_det_thresholds(det_threshold, box_threshold, unclip)
         if not self.use_rec:
-            boxes, _, scores = engine.run(prepared, _native.PPOCR_TASK_DET)
+            boxes, _, scores = engine.run(prepared, _native.RPOCR_TASK_DET)
             elapsed = time.perf_counter() - started
             if not boxes:
                 return TextDetOutput()
@@ -165,7 +165,7 @@ class RapidOCR:
             mapped = map_boxes_to_original(np.asarray(boxes, dtype=np.float32), ratio_w, ratio_h, pad_top, ori_w, ori_h)
             return TextDetOutput(img=original, boxes=mapped, scores=list(scores), elapse=elapsed)
         if not self.use_det:
-            _, txts, scores = engine.run(prepared, _native.PPOCR_TASK_REC)
+            _, txts, scores = engine.run(prepared, _native.RPOCR_TASK_REC)
             elapsed = time.perf_counter() - started
             return TextRecOutput(
                 imgs=[original],
@@ -213,7 +213,7 @@ class RapidOCR:
             return self._engine
         if self._is_lite():
             # Det/Rec model_type="lite": bundled Indra OCR weights (models/lite), run by the
-            # native C++ engine with ppocr_options.model_type = PPOCR_MODEL_LITE.
+            # native C++ engine with rpocr_options.model_type = RPOCR_MODEL_LITE.
             from ._indra_lite import IndraLiteEngine, bundled_model_dir
             th = int(self.cfg.EngineConfig.onnxruntime.get("intra_op_num_threads", -1) or -1)
             if th <= 0:
@@ -223,8 +223,8 @@ class RapidOCR:
             return self._engine
         det, rec, dictionary = _resolve_models(self.cfg)
         options = _native.default_options()
-        options.backend = _native.PPOCR_BACKEND_CPU
-        options.model_type = _native.PPOCR_MODEL_PPOCR
+        options.backend = _native.RPOCR_BACKEND_CPU
+        options.model_type = _native.RPOCR_MODEL_PPOCR
         _apply_vulkan_options(self.cfg, options)
         options.det_threshold = float(self.cfg["Det"].get("thresh", options.det_threshold))
         options.det_box_threshold = float(self.cfg["Det"].get("box_thresh", options.det_box_threshold))
@@ -260,10 +260,10 @@ class RapidOCR:
 
 
 _BACKEND_NAMES = {
-    _native.PPOCR_BACKEND_CPU: "cpu",
-    _native.PPOCR_BACKEND_GPU: "vulkan",
-    _native.PPOCR_BACKEND_HYBRID: "hybrid",
-    _native.PPOCR_BACKEND_METAL: "metal",
+    _native.RPOCR_BACKEND_CPU: "cpu",
+    _native.RPOCR_BACKEND_GPU: "vulkan",
+    _native.RPOCR_BACKEND_HYBRID: "hybrid",
+    _native.RPOCR_BACKEND_METAL: "metal",
 }
 
 
@@ -273,7 +273,7 @@ def _log_active_backend(engine: _native.NativeOCR, requested: int) -> None:
     if active is None:
         return
     name = _BACKEND_NAMES.get(active, str(active))
-    if requested == _native.PPOCR_BACKEND_METAL and active != _native.PPOCR_BACKEND_METAL:
+    if requested == _native.RPOCR_BACKEND_METAL and active != _native.RPOCR_BACKEND_METAL:
         note = engine.backend_note()
         logger.warning(
             "Metal was requested but the engine runs on the %s backend%s",
@@ -313,10 +313,10 @@ def _apply_vulkan_options(cfg: ConfigNode, options: _native.Options) -> None:
         # would fix the process on Vulkan before the engine asks for Metal.
         if _native.metal_available():
             # The engine reports the backend it really uses after creation.
-            options.backend = _native.PPOCR_BACKEND_METAL
+            options.backend = _native.RPOCR_BACKEND_METAL
         else:
             logger.warning("Metal was requested but is not available; using the CPU backend")
-            options.backend = _native.PPOCR_BACKEND_CPU
+            options.backend = _native.RPOCR_BACKEND_CPU
         return
     try:
         device_index = int(section.get("device_index", -1))
@@ -331,19 +331,19 @@ def _apply_vulkan_options(cfg: ConfigNode, options: _native.Options) -> None:
         _native.request_vulkan_device(device_index)
     info = _native.backend_info()
     if wants_hybrid:
-        options.backend = _native.PPOCR_BACKEND_HYBRID
+        options.backend = _native.RPOCR_BACKEND_HYBRID
         if not info["vulkan_compute_available"]:
             logger.warning("Vulkan hybrid was requested but no compute device is available; using CPU")
         return
     if wants_vulkan:
         if info["vulkan_compute_available"]:
-            options.backend = _native.PPOCR_BACKEND_GPU
+            options.backend = _native.RPOCR_BACKEND_GPU
             logger.info("Vulkan device: %s", info["device_name"] or "(unnamed)")
         else:
             logger.warning(
                 "Vulkan was requested but no compute device is available; using the CPU backend"
             )
-            options.backend = _native.PPOCR_BACKEND_CPU
+            options.backend = _native.RPOCR_BACKEND_CPU
 
 
 def _copy_norm(mean_out, std_out, mean, std, default=None) -> None:

@@ -142,7 +142,7 @@ def test_metal_small_matches_cpu(wide_line, wide_lines):
     metal = _run("metal", images, wide_lines)
     cpu = _run("cpu", images, wide_lines)
     if metal["active"] is not None:
-        assert metal["active"] == _native.PPOCR_BACKEND_METAL, metal["stderr"]
+        assert metal["active"] == _native.RPOCR_BACKEND_METAL, metal["stderr"]
     for path in images:
         m, c = metal["pages"][path], cpu["pages"][path]
         assert m == metal["repeat"][path], f"Metal not deterministic on {path}"

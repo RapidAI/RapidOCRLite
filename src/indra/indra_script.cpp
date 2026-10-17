@@ -11,7 +11,7 @@
 static double g_sp[16];
 static struct SPD { ~SPD() { if (std::getenv("PPOCR_INDRA_PROFILE")) for (int i = 0; i < 10; ++i) std::fprintf(stderr, "script stage %d %.1f ms\n", i, g_sp[i]); } } g_spd;
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 int RoundUp(int n, int m) { return (n + m - 1) / m * m; }
 }
@@ -208,4 +208,4 @@ void ScriptNet::Run(const float* x, int B, int H, int W, const int64_t* widths, 
     for (int i = b; i < e; ++i) p[i] = Item(x + size_t(i) * H * W, H, W, widths[i]);
   });
 }
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

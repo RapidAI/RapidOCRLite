@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ppocr/export.h"
+#include "rapidocrlite/export.h"
 
 #include <array>
 #include <cstdint>
@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace ppocr {
+namespace rpocr {
 
 // Dependency-free 8-bit RGB image.  Pixels are packed RGB, row-major.
 struct Image {
@@ -65,10 +65,10 @@ struct BackendInfo {
   std::uint64_t vulkan_runtime_generation{};
 };
 
-[[nodiscard]] PPOCR_API BackendInfo QueryBackendInfo();
+[[nodiscard]] RPOCR_API BackendInfo QueryBackendInfo();
 // True when the library was built with Metal and a Metal device exists.
 // Does not initialize the GPU runtime.
-[[nodiscard]] PPOCR_API bool MetalAvailable();
+[[nodiscard]] RPOCR_API bool MetalAvailable();
 
 // Which SIMD path the process will actually enter. active_isa is one of
 // "avx512", "avx2", "neon", or "scalar". AVX-512 is reported only when the
@@ -86,7 +86,7 @@ struct CpuInfo {
   int threads{};
 };
 
-[[nodiscard]] PPOCR_API CpuInfo QueryCpuInfo();
+[[nodiscard]] RPOCR_API CpuInfo QueryCpuInfo();
 
 // Which model family OCR() loads. auto_detect: det_model naming a folder with
 // meta.json selects the lite (Indra) model, anything else PP-OCR.
@@ -181,7 +181,7 @@ struct Options {
 // PP-OCRv6 detector + recognizer with a deliberately narrow built-in ONNX
 // interpreter.  It does not link against ONNX Runtime, Paddle Inference, or
 // any other inference engine.
-class PPOCR_API OCR {
+class RPOCR_API OCR {
  public:
   OCR(const std::string& det_model, const std::string& rec_model,
       std::string dictionary_path, Options options = {});
@@ -227,6 +227,6 @@ class PPOCR_API OCR {
 // Small no-dependency input helper for the portable P6 PPM format.  The OCR
 // core accepts Image directly, so applications may use their own PNG/JPEG
 // decoder without coupling it to this library.
-[[nodiscard]] PPOCR_API Image LoadPPM(const std::string& path);
+[[nodiscard]] RPOCR_API Image LoadPPM(const std::string& path);
 
-}  // namespace ppocr
+}  // namespace rpocr

@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 
 struct OTensor {
   std::vector<int64_t> dims;
@@ -36,4 +36,4 @@ struct OModel {
 
 OModel LoadOnnx(const std::string& path);  // throws std::runtime_error
 
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

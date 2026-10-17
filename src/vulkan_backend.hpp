@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 #include "kernels.hpp"
 
 #include <array>
@@ -9,7 +9,7 @@
 #include <string_view>
 #include <vector>
 
-namespace ppocr::detail {
+namespace rpocr::detail {
 
 // Probes the loader and compute-capable physical devices without making
 // Vulkan a required build dependency. `full_graph_gpu_available` remains
@@ -975,4 +975,4 @@ struct VulkanStemLayer {
                                                 double* cpu_ms = nullptr,
                                                 bool immutable_right = false) noexcept;
 
-}  // namespace ppocr::detail
+}  // namespace rpocr::detail

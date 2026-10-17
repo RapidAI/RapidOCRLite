@@ -1,5 +1,5 @@
 #include "kernels.hpp"
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -23,7 +23,7 @@ double TimeMs(Fn&& fn, int warmup, int runs) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  const auto cpu = ppocr::QueryCpuInfo();
+  const auto cpu = rpocr::QueryCpuInfo();
   std::cout << "{\n"
             << "  \"active_isa\": \"" << cpu.active_isa << "\",\n"
             << "  \"avx2\": " << (cpu.avx2 ? "true" : "false") << ",\n"
@@ -31,9 +31,9 @@ int main(int argc, char** argv) {
             << "  \"neon\": " << (cpu.neon ? "true" : "false") << ",\n"
             << "  \"threads\": " << cpu.threads << ",\n";
 
-  using ppocr::detail::kernels::Gemm;
-  using ppocr::detail::kernels::GemmAccumulate;
-  using ppocr::detail::kernels::WriteIdentityRgbToNchw;
+  using rpocr::detail::kernels::Gemm;
+  using rpocr::detail::kernels::GemmAccumulate;
+  using rpocr::detail::kernels::WriteIdentityRgbToNchw;
 
   constexpr int rows = 32;
   constexpr int cols = 256;
@@ -67,10 +67,10 @@ int main(int argc, char** argv) {
             << "  \"identity_rgb_ms\": " << rgb_ms;
   if (argc == 6) {
     try {
-      ppocr::Options options;
-      options.backend = ppocr::Backend::cpu_only;
-      const auto image = ppocr::LoadPPM(argv[4]);
-      ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
+      rpocr::Options options;
+      options.backend = rpocr::Backend::cpu_only;
+      const auto image = rpocr::LoadPPM(argv[4]);
+      rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
       const int runs = std::stoi(argv[5]);
       const double ocr_ms = TimeMs([&] { (void)ocr.Recognize(image); }, 1, runs);
       const auto boxes = ocr.Recognize(image).size();

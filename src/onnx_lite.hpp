@@ -6,10 +6,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 #include "vulkan_backend.hpp"
 
-namespace ppocr::detail {
+namespace rpocr::detail {
 
 struct Tensor {
   std::vector<std::int64_t> shape;
@@ -181,4 +181,4 @@ class OnnxLite {
   std::shared_ptr<Impl> impl_;
 };
 
-}  // namespace ppocr::detail
+}  // namespace rpocr::detail

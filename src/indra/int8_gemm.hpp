@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 
 struct QMat {
   int N = 0, K = 0, Kp = 0;            // Kp: K rounded up to 64
@@ -20,4 +20,4 @@ QMat QuantizeRows(const float* W, int N, int K);
 void GemmQ(const float* A, int L, int K, int lda, const QMat& W, const float* bias, float* C, int ldc, int act);
 const char* Int8Isa();
 
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

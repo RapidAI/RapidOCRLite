@@ -8,7 +8,7 @@
 #include "kern.hpp"
 #include "onnx_min.hpp"
 #include "pool.hpp"
-namespace ppocr::indra {
+namespace rpocr::indra {
 class DetNet {
  public:
   DetNet(const std::string& path, int threads);
@@ -37,4 +37,4 @@ class DetNet {
   mutable std::mutex mu_;
   mutable std::vector<std::vector<float>> free_;  // recycled activation buffers
 };
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

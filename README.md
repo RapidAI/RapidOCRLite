@@ -65,7 +65,7 @@ If this project helps your work, a ⭐ Star helps it reach the next person.
 - One binary dispatches at runtime to AVX-512, AVX2+FMA, or AArch64 NEON. `PPOCR_FORCE_ISA=scalar|avx2|avx512|neon` selects a legal path for measurements. An AVX2-only machine never executes the AVX-512 object file.
 - LoongArch (loongarch64, Linux): LSX (the la64v1.0 baseline) runs the NEON code paths through `src/neon_lsx_shim.hpp`; LASX GEMM (FMA, 4-row), depthwise, GELU, CTC argmax, elementwise, fused ExpandGeluProjectAdd, gated fused depthwise+pointwise 3x3/5x5, and gated fused depthwise+ExpandGelu 3x3 are entered only when `getauxval(AT_HWCAP)` reports LASX (`PPOCR_FORCE_ISA=lasx|lsx|scalar`). Cross-built with `cmake/toolchains/loongarch64-linux-gnu.cmake` and verified only under QEMU user mode (CI job `loongarch64 qemu`: text identical to `expected_cpu_texts.json`, raw scores within about 4e-5 of x86; LASX kernels round in a different order than LSX, so scores can differ from LSX by about 1e-6, text unchanged). No real-hardware benchmarks; CI ships a C/C++ SDK tarball, no wheels (manylinux has no loongarch64 images yet).
 - Optional Vulkan compute. Source builds embed SPIR-V when `third_party/Vulkan-Headers` and `glslangValidator` are present (`PPOCR_ENABLE_VULKAN` defaults to `ON`). The loader is `dlopen` / `LoadLibrary` of `libvulkan.so.1` or `vulkan-1.dll`, so Vulkan is not a `DT_NEEDED` dependency. Published wheels pass `-DPPOCR_ENABLE_VULKAN=OFF`.
-- C ABI (`include/ppocr/ppocr.h`), C++ API (`include/ppocr/ppocr.hpp`), and the Python package `rapidocr`. Python calls the C ABI with ctypes.
+- C ABI (`include/rapidocrlite/rapidocrlite.h`), C++ API (`include/rapidocrlite/rapidocrlite.hpp`), and the Python package `rapidocr`. Python calls the C ABI with ctypes.
 - The Python call shape follows 3.x: `RapidOCR(params={"Section.key": value})`, then `result.txts`, `result.scores`, `result.boxes`, `result.elapse`, `to_json()`, `to_markdown()`, and `vis()`.
 - Missing model files are downloaded from the ModelScope URLs in `default_models.yaml` (the same file names as 3.x; PP-OCRv6 files from tag `v3.10.0`) into `Global.model_root_dir`, and the SHA256 is checked.
 
@@ -161,7 +161,7 @@ Same SWHL sets and settings as above; `full` is det+rec on the 212 det images (`
 By default recognition reproduces 3.10 exactly: lines sorted by aspect ratio, batches of `rec_batch_num` (6) padded to the widest line, minimum width 320. Fast mode keeps the same crop, resize and normalisation, but runs each line at about its own width (x86 rounds widths up to 32 so similar lines share a batch; AArch64 keeps exact widths). Single-line rec (`use_det=False`) keeps the 320 minimum, because dropping it cost about 2 points of exact match (`PPOCR_REC_FAST_NO_MIN=1` drops it anyway). Text can then differ slightly from 3.10.
 
 - Python: `RapidOCR(params={"Rec.fast_mode": True})` or `fast_mode: true` under `Rec:` in `config.yaml`. Other parameters are unchanged.
-- C API: `ppocr_options.rec_fast_mode = 1` (field appended at the end; callers built against an older header pass a smaller `struct_size` and get 0). C++: `ppocr::Options::rec_fast_mode`.
+- C API: `rpocr_options.rec_fast_mode = 1` (field appended at the end; callers built against an older header pass a smaller `struct_size` and get 0). C++: `rpocr::Options::rec_fast_mode`.
 - Environment: `PPOCR_REC_FAST=1` (or `0`) overrides the option.
 
 Accuracy in fast mode (same sets as above; det is not affected):
@@ -234,7 +234,7 @@ add_executable(ocr_app main.c)
 target_link_libraries(ocr_app PRIVATE RapidOCRLite::rapidocrlite)
 ```
 
-The install prefix contains `librapidocrlite.so` (SONAME `librapidocrlite.so.5`), headers under `include/ppocr/`, and `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`. Link `RapidOCRLite::static` (`librapidocrlite.a`) for the static library. The old `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` names still work as compatibility wrappers. At run time the dynamic loader has to see `librapidocrlite.so.5` (`LD_LIBRARY_PATH` or an rpath).
+The install prefix contains `librapidocrlite.so` (SONAME `librapidocrlite.so.5`), headers under `include/rapidocrlite/`, and `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`. Link `RapidOCRLite::static` (`librapidocrlite.a`) for the static library. The old `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` names still work as compatibility wrappers. At run time the dynamic loader has to see `librapidocrlite.so.5` (`LD_LIBRARY_PATH` or an rpath).
 
 ### 📋 Usage
 
@@ -289,15 +289,15 @@ python -m rapidocr hello.png \
 #### C++
 
 ```cpp
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <iostream>
 
 int main(int argc, char** argv) {
-  ppocr::Options options;
-  options.backend = ppocr::Backend::cpu_only;
-  ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
-  for (const ppocr::Result& result : ocr.Recognize(ppocr::LoadPPM(argv[4]))) {
+  rpocr::Options options;
+  options.backend = rpocr::Backend::cpu_only;
+  rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
+  for (const rpocr::Result& result : ocr.Recognize(rpocr::LoadPPM(argv[4]))) {
     std::cout << result.text << '\t' << result.confidence << '\n';
   }
 }
@@ -312,36 +312,36 @@ Images passed to the library are packed RGB, row-major, 8-bit. `LoadPPM` reads b
 #### C
 
 ```c
-#include "ppocr/ppocr.h"
+#include "rapidocrlite/rapidocrlite.h"
 
 #include <stdio.h>
 
 int main(int argc, char** argv) {
-  ppocr_options options;
-  ppocr_options_init(&options);
-  options.backend = PPOCR_BACKEND_CPU;
+  rpocr_options options;
+  rpocr_options_init(&options);
+  options.backend = RPOCR_BACKEND_CPU;
 
-  ppocr_ocr* ocr = ppocr_create(argv[1], argv[2], argv[3], &options);
-  ppocr_image_buffer loaded = {0};
-  if (ppocr_load_ppm(argv[4], &loaded) != PPOCR_OK) return 1;
+  rpocr_ocr* ocr = rpocr_create(argv[1], argv[2], argv[3], &options);
+  rpocr_image_buffer loaded = {0};
+  if (rpocr_load_ppm(argv[4], &loaded) != RPOCR_OK) return 1;
 
-  ppocr_image image = {loaded.width, loaded.height, loaded.rgb};
-  ppocr_result result = {0};
-  if (ppocr_recognize(ocr, &image, &result) != PPOCR_OK) {
-    fprintf(stderr, "%s\n", ppocr_last_error());
+  rpocr_image image = {loaded.width, loaded.height, loaded.rgb};
+  rpocr_result result = {0};
+  if (rpocr_recognize(ocr, &image, &result) != RPOCR_OK) {
+    fprintf(stderr, "%s\n", rpocr_last_error());
     return 1;
   }
   for (size_t i = 0; i < result.count; ++i) {
     printf("%s\t%.4f\n", result.items[i].text, result.items[i].confidence);
   }
-  ppocr_result_free(&result);
-  ppocr_image_free(&loaded);
-  ppocr_destroy(ocr);
+  rpocr_result_free(&result);
+  rpocr_image_free(&loaded);
+  rpocr_destroy(ocr);
   return 0;
 }
 ```
 
-`ppocr_recognize` on one handle is serialized. Create one handle per thread when pages should run together. `ppocr_options.struct_size` is filled by `ppocr_options_init` so later fields can be appended.
+`rpocr_recognize` on one handle is serialized. Create one handle per thread when pages should run together. `rpocr_options.struct_size` is filled by `rpocr_options_init` so later fields can be appended.
 
 #### Vulkan
 
@@ -362,13 +362,13 @@ print(result.txts)
 
 `device_index` `-1` skips CPU Vulkan devices such as lavapipe. Set the index (or `PPOCR_VULKAN_DEVICE_INDEX`) when lavapipe is the device you want, and point `VK_ICD_FILENAMES` at its ICD. If no compute device exists, Python logs a warning and stays on CPU. `backend` accepts `cpu`, `hybrid`, or `vulkan`.
 
-In C++ the default `Backend::hybrid` stays on CPU unless `PPOCR_ENABLE_HYBRID_GPU_GRAPH` is set. `Backend::gpu_only` throws `std::runtime_error` when the device or a shader cannot run. The C ABI returns `PPOCR_ERR_UNSUPPORTED` from `ppocr_create` in that case.
+In C++ the default `Backend::hybrid` stays on CPU unless `PPOCR_ENABLE_HYBRID_GPU_GRAPH` is set. `Backend::gpu_only` throws `std::runtime_error` when the device or a shader cannot run. The C ABI returns `RPOCR_ERR_UNSUPPORTED` from `rpocr_create` in that case.
 
 ```cpp
-ppocr::Options options;
-options.backend = ppocr::Backend::gpu_only;
+rpocr::Options options;
+options.backend = rpocr::Backend::gpu_only;
 options.vulkan_device_index = 0;  // -1: automatic; CPU/lavapipe are skipped
-ppocr::OCR ocr(det, rec, dict, options);
+rpocr::OCR ocr(det, rec, dict, options);
 ```
 
 One recorded command buffer can drop CTC timesteps on some adapters. The default GPU path submits fenced segments. `PPOCR_ENABLE_GPU_GRAPH_REPLAY=1` opts into the single command buffer after that adapter has been qualified.
@@ -385,11 +385,11 @@ engine = RapidOCR(params={
 ```
 
 ```cpp
-ppocr::Options options;
-options.backend = ppocr::Backend::metal;  // ppocr::MetalAvailable() reports support
+rpocr::Options options;
+options.backend = rpocr::Backend::metal;  // rpocr::MetalAvailable() reports support
 ```
 
-In C, set `PPOCR_BACKEND_METAL`; `ppocr_metal_available()` reports support. Without Metal (other platforms, a build without it, `PPOCR_DISABLE_METAL=1`) all three fall back to CPU and do not fail. The driver is chosen once per process: Metal and Vulkan do not mix in one process. `ppocr_metal_check` compares Metal to CPU and runs a multithreaded determinism check; `tests/run_metal_macos.sh` runs it under Metal API validation (`MTL_DEBUG_LAYER=1`).
+In C, set `RPOCR_BACKEND_METAL`; `rpocr_metal_available()` reports support. Without Metal (other platforms, a build without it, `PPOCR_DISABLE_METAL=1`) all three fall back to CPU and do not fail. The driver is chosen once per process: Metal and Vulkan do not mix in one process. `ppocr_metal_check` compares Metal to CPU and runs a multithreaded determinism check; `tests/run_metal_macos.sh` runs it under Metal API validation (`MTL_DEBUG_LAYER=1`).
 
 ### ⚙️ Configuration
 
@@ -403,7 +403,7 @@ Python keys use the 3.x `Section.name` form. A YAML `config_path` is loaded with
 | `Det.limit_side_len`, `Det.limit_type` | Resize limit. `min` matches 3.x (short side). `max` is the C++ long-side default. |
 | `Det.thresh`, `Det.box_thresh`, `Det.unclip_ratio` | Detector mask threshold, box score, and unclip. |
 | `Det.mean`, `Det.std` | Detector normalization, BGR order, length 3. |
-| `Det.use_dilation` | 2×2 dilation of the detector mask. On in the Python config, off in `ppocr::Options`. |
+| `Det.use_dilation` | 2×2 dilation of the detector mask. On in the Python config, off in `rpocr::Options`. |
 | `Global.text_score` | Drop lines below this score. Also a per-call argument. |
 | `Global.use_cls` | Accepted. The native engine does not run an angle classifier and warns once. |
 | `Global.model_root_dir` | Download directory. The package `models/` directory when null. |
@@ -413,7 +413,7 @@ Python keys use the 3.x `Section.name` form. A YAML `config_path` is loaded with
 | `EngineConfig.ppocr_cpp.use_metal` | Request the Metal graph (macOS); CPU otherwise. |
 | `EngineConfig.ppocr_cpp.backend` | `cpu`, `hybrid`, or `vulkan`. |
 
-C++ defaults live on `ppocr::Options` in `include/ppocr/ppocr.hpp` (`det_limit_side_len` 960, `det_limit_type` 0, ImageNet `det_mean` / `det_std`, `rec_batch_size` 4). `PPOCR_BENCH_THREADS` overrides the persistent SIMD pool (default `min(16, hardware_concurrency)`).
+C++ defaults live on `rpocr::Options` in `include/rapidocrlite/rapidocrlite.hpp` (`det_limit_side_len` 960, `det_limit_type` 0, ImageNet `det_mean` / `det_std`, `rec_batch_size` 4). `PPOCR_BENCH_THREADS` overrides the persistent SIMD pool (default `min(16, hardware_concurrency)`).
 
 ### 🔀 Migrating from rapidocr 3.x
 

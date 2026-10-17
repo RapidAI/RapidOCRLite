@@ -38,18 +38,18 @@
 #include "indra_script.hpp"
 
 extern "C" {
-int ppocr_img_resize_u8(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, int dh, int interp, int flags);
-int ppocr_img_warp_affine(const void* src, int sw, int sh, void* dst, int dw, int dh, const double* M, int is_float,
+int rpocr_img_resize_u8(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, int dh, int interp, int flags);
+int rpocr_img_warp_affine(const void* src, int sw, int sh, void* dst, int dw, int dh, const double* M, int is_float,
                           int border, double bval, int uf, int flags);
-void ppocr_img_rotation_matrix(double cx, double cy, double angle, double scale, int flags, double* M);
-void ppocr_img_set_local_threads(int n);
-int ppocr_img_get_threads(void);
-void ppocr_img_rgb2gray(const uint8_t* rgb, int w, int h, int stride, uint8_t* dst);
-int ppocr_img_cc4(const uint8_t* mask, int w, int h, int32_t* labels, int32_t* stats, int max_n);
-void ppocr_img_set_threads(int n);
+void rpocr_img_rotation_matrix(double cx, double cy, double angle, double scale, int flags, double* M);
+void rpocr_img_set_local_threads(int n);
+int rpocr_img_get_threads(void);
+void rpocr_img_rgb2gray(const uint8_t* rgb, int w, int h, int stride, uint8_t* dst);
+int rpocr_img_cc4(const uint8_t* mask, int w, int h, int32_t* labels, int32_t* stats, int max_n);
+void rpocr_img_set_threads(int n);
 }
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 
 #include "unicode_tab.inc"
@@ -326,7 +326,7 @@ struct LiteEngine::Impl {
     const uint8_t* src = gray.data();
     if (nh != h || nw != w) {
       g.resize((size_t)nh * nw);
-      ppocr_img_resize_u8(gray.data(), w, h, g.data(), (int)nw, (int)nh, scale < 1 ? 3 : 1, -1);
+      rpocr_img_resize_u8(gray.data(), w, h, g.data(), (int)nw, (int)nh, scale < 1 ? 3 : 1, -1);
       src = g.data();
     }
     int ph = (int)std::ceil(nh / 32.0) * 32, pw = (int)std::ceil(nw / 32.0) * 32;
@@ -348,8 +348,8 @@ struct LiteEngine::Impl {
     std::vector<float> prob(n); std::vector<uint8_t> mask(n);
     for (size_t i = 0; i < n; i++) { prob[i] = 1.0f / (1.0f + NpExp(-out[i])); mask[i] = prob[i] > 0.5f; }
     std::vector<int32_t> lab(n); std::vector<int32_t> st(5 * 1024);
-    int nc = ppocr_img_cc4(mask.data(), w, h, lab.data(), st.data(), 1024);
-    if (nc > 1024) { st.resize((size_t)5 * nc); nc = ppocr_img_cc4(mask.data(), w, h, lab.data(), st.data(), nc); }
+    int nc = rpocr_img_cc4(mask.data(), w, h, lab.data(), st.data(), 1024);
+    if (nc > 1024) { st.resize((size_t)5 * nc); nc = rpocr_img_cc4(mask.data(), w, h, lab.data(), st.data(), nc); }
     std::vector<Box5> boxes;
     if (nc <= 1) return boxes;
     std::vector<double> sy0(nc, 0), sy1(nc, 0), ssc(nc, 0); std::vector<long> cnt(nc, 0);
@@ -407,7 +407,7 @@ struct LiteEngine::Impl {
         std::memcpy(&crop[(size_t)(r - iy0) * cw + (sx0 - ix0)], &gray[(size_t)r * W + sx0], (size_t)(sx1 - sx0));
     long ow = std::max(8L, std::min(4096L, PyRoundInt((double)cw * height / (double)ch)));
     std::vector<uint8_t> rs((size_t)ow * height);
-    ppocr_img_resize_u8(crop.data(), (int)cw, (int)ch, rs.data(), (int)ow, height, ch > height ? 3 : 1, -1);
+    rpocr_img_resize_u8(crop.data(), (int)cw, (int)ch, rs.data(), (int)ow, height, ch > height ? 3 : 1, -1);
     Crop c; c.w = (int)ow; c.d.resize(rs.size());
     for (size_t i = 0; i < rs.size(); i++) c.d[i] = 1.0f - (float)rs[i] / 255.0f;
     return c;
@@ -799,7 +799,7 @@ struct LiteEngine::Impl {
     double s = 800.0 / (double)std::max(h, w);
     int sw = (int)std::max(1L, PyRoundInt(w * s)), sh = (int)std::max(1L, PyRoundInt(h * s));
     std::vector<uint8_t> small((size_t)sw * sh);
-    ppocr_img_resize_u8(gray.data(), w, h, small.data(), sw, sh, 3, -1);
+    rpocr_img_resize_u8(gray.data(), w, h, small.data(), sw, sh, 3, -1);
     std::vector<float> ink(small.size());
     for (size_t i = 0; i < ink.size(); i++) ink[i] = (255.0f - (float)small[i]) / 255.0f;
     if (MeanF(ink.data(), ink.size()) < 0.003f) return 0.0;
@@ -807,21 +807,21 @@ struct LiteEngine::Impl {
     // Sharpness of each candidate angle is independent: evaluate them in parallel (one warp per thread,
     // image ops single-threaded inside), then pick the first maximum in order as before.
     auto sharp = [&](double a, std::vector<float>& r, std::vector<float>& p, std::vector<float>& d2) {
-      double M[6]; ppocr_img_rotation_matrix(cx, cy, a, 1.0, -1, M);
-      ppocr_img_warp_affine(ink.data(), sw, sh, r.data(), sw, sh, M, 1, 0, 0.0, 0, -1);
+      double M[6]; rpocr_img_rotation_matrix(cx, cy, a, 1.0, -1, M);
+      rpocr_img_warp_affine(ink.data(), sw, sh, r.data(), sw, sh, M, 1, 0, 0.0, 0, -1);
       for (int y = 0; y < sh; y++) p[y] = SumF(&r[(size_t)y * sw], sw);
       for (int y = 0; y + 1 < sh; y++) { float d = p[y + 1] - p[y]; d2[y] = d * d; }
       return (double)SumF(d2.data(), d2.size());
     };
     auto argbest = [&](const std::vector<double>& v) {
       std::vector<double> q(v.size());
-      int nt = std::max(1, std::min((int)v.size(), ppocr_img_get_threads()));
+      int nt = std::max(1, std::min((int)v.size(), rpocr_img_get_threads()));
       std::atomic<size_t> next{0};
       auto work = [&] {
-        if (nt > 1) ppocr_img_set_local_threads(1);
+        if (nt > 1) rpocr_img_set_local_threads(1);
         std::vector<float> r(ink.size()), p(sh), d2(sh > 0 ? sh - 1 : 0);
         for (size_t i; (i = next++) < v.size();) q[i] = sharp(v[i], r, p, d2);
-        if (nt > 1) ppocr_img_set_local_threads(0);
+        if (nt > 1) rpocr_img_set_local_threads(0);
       };
       std::vector<std::thread> th;
       for (int t = 1; t < nt; t++) th.emplace_back(work);
@@ -849,9 +849,9 @@ struct LiteEngine::Impl {
     double skew = EstimateSkew(gray, w, h);
     double t1 = NowMs();
     if (std::fabs(skew) >= kDeskewMin) {
-      double M[6]; ppocr_img_rotation_matrix(w / 2.0, h / 2.0, skew, 1.0, -1, M);
+      double M[6]; rpocr_img_rotation_matrix(w / 2.0, h / 2.0, skew, 1.0, -1, M);
       std::vector<uint8_t> rot(gray.size());
-      ppocr_img_warp_affine(gray.data(), w, h, rot.data(), w, h, M, 0, 1, 0.0, 0, -1);
+      rpocr_img_warp_affine(gray.data(), w, h, rot.data(), w, h, M, 0, 1, 0.0, 0, -1);
       gray.swap(rot);
     } else skew = 0.0;
     double t2 = NowMs();
@@ -879,7 +879,7 @@ struct LiteEngine::Impl {
     if (prof_on) { prof[3] += t4 - t3; prof[4] += t5 - t4; prof[5] += t6 - t5; }
     std::vector<LiteLine> out;
     double Mi[6];
-    if (skew) ppocr_img_rotation_matrix(w / 2.0, h / 2.0, -skew, 1.0, -1, Mi);
+    if (skew) rpocr_img_rotation_matrix(w / 2.0, h / 2.0, -skew, 1.0, -1, Mi);
     for (int i : order_) {
       if (texts[i].empty()) continue;
       double v[4]; for (int k = 0; k < 4; k++) v[k] = PyRound((double)nb[i][k], 1);
@@ -917,7 +917,7 @@ LiteEngine::LiteEngine(const std::string& dir, int threads) : p_(std::make_uniqu
     if (exists(n)) throw std::runtime_error(dir + "/" + n + ": not supported by the native lite pipeline");
   int t = std::max(1, threads);
   p_->threads = t;
-  ppocr_img_set_threads(t);
+  rpocr_img_set_threads(t);
   std::ifstream f(need("meta.json"), std::ios::binary);
   std::stringstream ss; ss << f.rdbuf();
   J meta = ParseJson(ss.str());
@@ -947,10 +947,10 @@ std::string LiteEngine::Note() const {
 std::vector<LiteLine> LiteEngine::Run(const std::uint8_t* rgb, int w, int h, int tasks) const {
   if (!rgb || w <= 0 || h <= 0) throw std::invalid_argument("empty image");
   std::lock_guard<std::mutex> lock(p_->mu);
-  ppocr_img_set_threads(p_->threads);
+  rpocr_img_set_threads(p_->threads);
   std::vector<uint8_t> g((size_t)w * h);
   double tg = p_->prof_on ? Impl::NowMs() : 0;
-  ppocr_img_rgb2gray(rgb, w, h, w * 3, g.data());
+  rpocr_img_rgb2gray(rgb, w, h, w * 3, g.data());
   if (p_->prof_on) p_->prof[6] += Impl::NowMs() - tg;
   std::vector<LiteLine> out;
   if (tasks == 1) {
@@ -973,11 +973,11 @@ std::vector<LiteLine> LiteEngine::Run(const std::uint8_t* rgb, int w, int h, int
 std::vector<std::vector<LiteLine>> LiteEngine::RunBatch(const std::vector<BatchImage>& images) const {
   for (auto& im : images) if (!im.rgb || im.w <= 0 || im.h <= 0) throw std::invalid_argument("empty image");
   std::lock_guard<std::mutex> lock(p_->mu);
-  ppocr_img_set_threads(p_->threads);
+  rpocr_img_set_threads(p_->threads);
   std::vector<std::vector<LiteLine>> out(images.size());
   auto front = [&](size_t i) {
     std::vector<uint8_t> g((size_t)images[i].w * images[i].h);
-    ppocr_img_rgb2gray(images[i].rgb, images[i].w, images[i].h, images[i].w * 3, g.data());
+    rpocr_img_rgb2gray(images[i].rgb, images[i].w, images[i].h, images[i].w * 3, g.data());
     return p_->MakeFront(std::move(g), images[i].w, images[i].h);
   };
   const char* e = std::getenv("PPOCR_LITE_PIPELINE");
@@ -995,4 +995,4 @@ std::vector<std::vector<LiteLine>> LiteEngine::RunBatch(const std::vector<BatchI
   return out;
 }
 
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

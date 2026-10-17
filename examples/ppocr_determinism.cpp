@@ -1,5 +1,5 @@
 #include "kernels.hpp"
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -13,7 +13,7 @@
 
 namespace {
 
-std::string Fingerprint(const std::vector<ppocr::Result>& results) {
+std::string Fingerprint(const std::vector<rpocr::Result>& results) {
   std::ostringstream out;
   for (const auto& result : results) {
     std::uint32_t bits = 0;
@@ -53,7 +53,7 @@ int PoolCheck(int repeats) {
            std::size_t(chunk + 1) * output_plane < 65536) {
       ++chunk;
     }
-    ppocr::detail::kernels::AveragePool3x2Valid(
+    rpocr::detail::kernels::AveragePool3x2Valid(
         expected.data() + std::size_t(plane) * output_plane,
         input.data() + std::size_t(plane) * input_plane, static_cast<std::size_t>(chunk),
         kHeight, kWidth);
@@ -61,7 +61,7 @@ int PoolCheck(int repeats) {
   }
   for (int repeat = 0; repeat < repeats; ++repeat) {
     auto working = input;
-    ppocr::detail::kernels::AveragePool3x2Valid(
+    rpocr::detail::kernels::AveragePool3x2Valid(
         working.data(), working.data(), kPlanes, kHeight, kWidth);
     if (working.size() < expected.size() ||
         std::memcmp(working.data(), expected.data(), expected.size() * sizeof(float)) != 0) {
@@ -81,11 +81,11 @@ int OcrCheck(int argc, char** argv, bool fingerprint_only) {
   }
   const int repeats = std::atoi(argv[5]);
   if (repeats <= 0) return 2;
-  ppocr::Options options;
-  options.backend = ppocr::Backend::cpu_only;
-  ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
-  const auto image = ppocr::LoadPPM(argv[4]);
-  const auto info = ppocr::QueryCpuInfo();
+  rpocr::Options options;
+  options.backend = rpocr::Backend::cpu_only;
+  rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
+  const auto image = rpocr::LoadPPM(argv[4]);
+  const auto info = rpocr::QueryCpuInfo();
   std::string first;
   double timed_ms = 0;
   int timed = 0;

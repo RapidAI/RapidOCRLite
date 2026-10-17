@@ -1,4 +1,4 @@
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -26,23 +26,23 @@ void OverridePositiveFromEnv(const char* name, int& value) {
   if (const char* text = std::getenv(name)) value = ParsePositive(text, name);
 }
 
-void OverrideBackendFromEnv(ppocr::Backend& backend) {
+void OverrideBackendFromEnv(rpocr::Backend& backend) {
   const char* text = std::getenv("PPOCR_BACKEND");
   if (!text) return;
   const std::string value{text};
-  if (value == "cpu") { backend = ppocr::Backend::cpu_only; return; }
-  if (value == "hybrid") { backend = ppocr::Backend::hybrid; return; }
-  if (value == "gpu") { backend = ppocr::Backend::gpu_only; return; }
-  if (value == "metal") { backend = ppocr::Backend::metal; return; }
+  if (value == "cpu") { backend = rpocr::Backend::cpu_only; return; }
+  if (value == "hybrid") { backend = rpocr::Backend::hybrid; return; }
+  if (value == "gpu") { backend = rpocr::Backend::gpu_only; return; }
+  if (value == "metal") { backend = rpocr::Backend::metal; return; }
   throw std::runtime_error("PPOCR_BACKEND must be cpu, hybrid, gpu, or metal");
 }
 
-const char* BackendName(ppocr::Backend backend) {
+const char* BackendName(rpocr::Backend backend) {
   switch (backend) {
-    case ppocr::Backend::cpu_only: return "cpu";
-    case ppocr::Backend::gpu_only: return "gpu";
-    case ppocr::Backend::hybrid: return "hybrid";
-    case ppocr::Backend::metal: return "metal";
+    case rpocr::Backend::cpu_only: return "cpu";
+    case rpocr::Backend::gpu_only: return "gpu";
+    case rpocr::Backend::hybrid: return "hybrid";
+    case rpocr::Backend::metal: return "metal";
   }
   return "unknown";
 }
@@ -67,9 +67,9 @@ int main(int argc, char** argv) {
     if (const char* affinity = std::getenv("PPOCR_CPU_AFFINITY")) {
       std::cerr << "PPOCR_CPU_AFFINITY is requested but unsupported by this portable benchmark: " << affinity << '\n';
     }
-    const auto image = ppocr::LoadPPM(argv[4]);
+    const auto image = rpocr::LoadPPM(argv[4]);
     const auto load_begin = std::chrono::steady_clock::now();
-    ppocr::Options options;
+    rpocr::Options options;
     // The public library defaults are conservative. These optional benchmark
     // switches let deployment owners tune dense-page recognition for their
     // actual CPU without changing model accuracy or the library ABI.
@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
                             options.batch_preprocess_parallelism);
     OverridePositiveFromEnv("PPOCR_IMAGE_BATCH_PARALLELISM", options.image_batch_parallelism);
     OverrideBackendFromEnv(options.backend);
-    ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
+    rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
     const double load_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - load_begin).count();
     for (int i = 0; i < warmup; ++i) (void)ocr.Recognize(image);
@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
     const double median = ordered[(ordered.size() - 1) / 2];
     std::cout << std::fixed << std::setprecision(3)
               << "{\n"
-              << "  \"engine\": \"ppocr_cpp\",\n"
+              << "  \"engine\": \"rpocr_cpp\",\n"
               << "  \"backend\": \"" << BackendName(options.backend) << "\",\n"
               << "  \"load_ms\": " << load_ms << ",\n"
               << "  \"warmup\": " << warmup << ",\n"

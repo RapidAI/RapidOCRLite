@@ -1,4 +1,4 @@
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -36,25 +36,25 @@ double Median(std::vector<double> samples) {
   return samples[(samples.size() - 1) / 2];
 }
 
-void ApplyBackendFromEnv(ppocr::Backend& backend) {
+void ApplyBackendFromEnv(rpocr::Backend& backend) {
   const char* text = std::getenv("PPOCR_BACKEND");
   if (!text || std::string{text} == "cpu") {
-    backend = ppocr::Backend::cpu_only;
+    backend = rpocr::Backend::cpu_only;
     return;
   }
   if (std::string{text} == "hybrid") {
-    backend = ppocr::Backend::hybrid;
+    backend = rpocr::Backend::hybrid;
     return;
   }
   if (std::string{text} == "gpu") {
-    backend = ppocr::Backend::gpu_only;
+    backend = rpocr::Backend::gpu_only;
     return;
   }
   throw std::runtime_error("PPOCR_BACKEND must be cpu, hybrid, or gpu");
 }
 
-bool SameResults(const std::vector<ppocr::Result>& left,
-                 const std::vector<ppocr::Result>& right) {
+bool SameResults(const std::vector<rpocr::Result>& left,
+                 const std::vector<rpocr::Result>& right) {
   if (left.size() != right.size()) return false;
   for (std::size_t i = 0; i < left.size(); ++i) {
     if (left[i].text != right[i].text || left[i].bbox != right[i].bbox ||
@@ -70,8 +70,8 @@ bool SameResults(const std::vector<ppocr::Result>& left,
   return true;
 }
 
-std::string DescribeDifference(const std::vector<ppocr::Result>& serial,
-                               const std::vector<ppocr::Result>& batched) {
+std::string DescribeDifference(const std::vector<rpocr::Result>& serial,
+                               const std::vector<rpocr::Result>& batched) {
   if (serial.size() != batched.size()) {
     return "result-count serial=" + std::to_string(serial.size()) +
            " batch=" + std::to_string(batched.size());
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
-    ppocr::Options options;
+    rpocr::Options options;
     ApplyBackendFromEnv(options.backend);
     options.image_batch_parallelism = Positive(argv[4], "PARALLELISM");
     if (const char* text = std::getenv("PPOCR_REC_BATCH_SIZE")) {
@@ -134,12 +134,12 @@ int main(int argc, char** argv) {
     int runs = 1;
     OverridePositiveFromEnv("PPOCR_BATCH_WARMUP", warmup);
     OverridePositiveFromEnv("PPOCR_BATCH_RUNS", runs);
-    std::vector<ppocr::Image> images;
+    std::vector<rpocr::Image> images;
     images.reserve(static_cast<std::size_t>(argc - 5));
-    for (int i = 5; i < argc; ++i) images.push_back(ppocr::LoadPPM(argv[i]));
+    for (int i = 5; i < argc; ++i) images.push_back(rpocr::LoadPPM(argv[i]));
 
-    ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
-    std::vector<std::vector<ppocr::Result>> serial;
+    rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
+    std::vector<std::vector<rpocr::Result>> serial;
     serial.reserve(images.size());
     // Warm the model and persistent CPU worker set before measuring either
     // scheduler. This keeps the reported comparison about page batching,
@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
     std::vector<double> serial_samples, batch_samples;
     serial_samples.reserve(runs);
     batch_samples.reserve(runs);
-    std::vector<std::vector<ppocr::Result>> batched;
+    std::vector<std::vector<rpocr::Result>> batched;
     for (int iteration = 0; iteration < runs; ++iteration) {
       serial.clear();
       const auto serial_begin = std::chrono::steady_clock::now();
@@ -183,8 +183,8 @@ int main(int argc, char** argv) {
     std::cout << std::fixed << std::setprecision(3)
               << "batch_smoke images=" << images.size()
               << " results=" << result_count
-              << " backend=" << (options.backend == ppocr::Backend::hybrid ? "hybrid" :
-                                    options.backend == ppocr::Backend::gpu_only ? "gpu" : "cpu")
+              << " backend=" << (options.backend == rpocr::Backend::hybrid ? "hybrid" :
+                                    options.backend == rpocr::Backend::gpu_only ? "gpu" : "cpu")
               << " parallelism=" << options.image_batch_parallelism
               << " preprocess_parallelism=" << options.batch_preprocess_parallelism
               << " det_batch=" << options.det_batch_size

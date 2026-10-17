@@ -21,21 +21,21 @@ _lib = None
 def bind(lib_path: str):
     global _lib
     lib = ctypes.CDLL(lib_path)
-    lib.ppocr_img_resize_u8.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
+    lib.rpocr_img_resize_u8.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
                                         ctypes.c_int, ctypes.c_int, ctypes.c_int]
-    lib.ppocr_img_warp_affine.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
+    lib.rpocr_img_warp_affine.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_int,
                                           ctypes.c_int, ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_double,
                                           ctypes.c_int, ctypes.c_int]
-    lib.ppocr_img_rgb2gray.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
-    lib.ppocr_img_set_threads.argtypes = [ctypes.c_int]
-    lib.ppocr_img_rotation_matrix.argtypes = [ctypes.c_double] * 4 + [ctypes.c_int, ctypes.c_void_p]
-    lib.ppocr_img_cc4.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
+    lib.rpocr_img_rgb2gray.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+    lib.rpocr_img_set_threads.argtypes = [ctypes.c_int]
+    lib.rpocr_img_rotation_matrix.argtypes = [ctypes.c_double] * 4 + [ctypes.c_int, ctypes.c_void_p]
+    lib.rpocr_img_cc4.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int]
     _lib = lib
     return lib
 
 
 def set_threads(n: int):
-    _lib.ppocr_img_set_threads(int(n))
+    _lib.rpocr_img_set_threads(int(n))
 
 
 def resize(img: np.ndarray, size, interpolation=INTER_LINEAR, flags: int = -1) -> np.ndarray:
@@ -43,16 +43,16 @@ def resize(img: np.ndarray, size, interpolation=INTER_LINEAR, flags: int = -1) -
     src = np.ascontiguousarray(img, np.uint8)
     w, h = int(size[0]), int(size[1])
     out = np.empty((h, w), np.uint8)
-    r = _lib.ppocr_img_resize_u8(src.ctypes.data, src.shape[1], src.shape[0], out.ctypes.data, w, h, interpolation, flags)
+    r = _lib.rpocr_img_resize_u8(src.ctypes.data, src.shape[1], src.shape[0], out.ctypes.data, w, h, interpolation, flags)
     if r:
-        raise ValueError(f"ppocr_img_resize_u8 failed ({r})")
+        raise ValueError(f"rpocr_img_resize_u8 failed ({r})")
     return out
 
 
 def rotation_matrix(center, angle: float, scale: float = 1.0, flags: int = -1) -> np.ndarray:
     """cv2.getRotationMatrix2D (same rounding as the OpenCV build of the platform)."""
     M = np.empty((2, 3), np.float64)
-    _lib.ppocr_img_rotation_matrix(float(center[0]), float(center[1]), float(angle), float(scale), flags, M.ctypes.data)
+    _lib.rpocr_img_rotation_matrix(float(center[0]), float(center[1]), float(angle), float(scale), flags, M.ctypes.data)
     return M
 
 
@@ -64,7 +64,7 @@ def warp_affine(img: np.ndarray, M: np.ndarray, size, border=BORDER_CONSTANT, va
     w, h = int(size[0]), int(size[1])
     out = np.empty((h, w), src.dtype)
     m = np.ascontiguousarray(M, np.float64)
-    _lib.ppocr_img_warp_affine(src.ctypes.data, src.shape[1], src.shape[0], out.ctypes.data, w, h, m.ctypes.data,
+    _lib.rpocr_img_warp_affine(src.ctypes.data, src.shape[1], src.shape[0], out.ctypes.data, w, h, m.ctypes.data,
                                int(is_f), border, float(value), uf, flags)
     return out
 
@@ -77,7 +77,7 @@ def connected_components_with_stats(mask: np.ndarray):
     cap = 1024
     while True:
         st = np.empty((cap, 5), np.int32)
-        n = _lib.ppocr_img_cc4(m.ctypes.data, w, h, lab.ctypes.data, st.ctypes.data, cap)
+        n = _lib.rpocr_img_cc4(m.ctypes.data, w, h, lab.ctypes.data, st.ctypes.data, cap)
         if n <= cap:
             return n, lab, st[:n]
         cap = n  # rerun with room for all stats
@@ -92,7 +92,7 @@ def rgb2gray(rgb: np.ndarray) -> np.ndarray:
         a = np.ascontiguousarray(a, np.uint8)
     h, w = a.shape[:2]
     out = np.empty((h, w), np.uint8)
-    _lib.ppocr_img_rgb2gray(a.ctypes.data, w, h, a.strides[0], out.ctypes.data)
+    _lib.rpocr_img_rgb2gray(a.ctypes.data, w, h, a.strides[0], out.ctypes.data)
     return out
 
 

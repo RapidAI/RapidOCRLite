@@ -9,7 +9,7 @@
 #include <limits>
 #include <vector>
 
-namespace ppocr::detail::kernels {
+namespace rpocr::detail::kernels {
 
 void Avx2WidenU8ToFloat(float* dst, const std::uint8_t* src, std::size_t n) noexcept {
   std::size_t index = 0;
@@ -3453,4 +3453,4 @@ void Avx2DetStemTailRows(float* dst, const float* conv0, const float* conv1_w,
   }
 }
 
-}  // namespace ppocr::detail::kernels
+}  // namespace rpocr::detail::kernels

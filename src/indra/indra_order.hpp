@@ -5,7 +5,7 @@
 #include <vector>
 #include "kern.hpp"
 #include "pool.hpp"
-namespace ppocr::indra {
+namespace rpocr::indra {
 class OrderNet {
  public:
   OrderNet(const std::string& path, int threads);
@@ -27,4 +27,4 @@ class OrderNet {
   std::vector<float> gN_, bN_;
   float lnEps_ = 1e-5f, scale_ = 11.3137083f;
 };
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

@@ -10,7 +10,7 @@
 #include <type_traits>
 #include <vector>
 
-namespace ppocr::detail::kernels {
+namespace rpocr::detail::kernels {
 
 namespace {
 inline __mmask16 Avx512CountMask(int n) noexcept {
@@ -6261,4 +6261,4 @@ void Avx512DetStemTailRows(float* dst, const float* conv0, const float* conv1_w,
   }
 }
 
-}  // namespace ppocr::detail::kernels
+}  // namespace rpocr::detail::kernels

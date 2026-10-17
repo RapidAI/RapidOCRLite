@@ -42,7 +42,7 @@ int main(int argc, char** argv) {
       input_scale = std::strtof(text, nullptr);
       if (!std::isfinite(input_scale) || input_scale <= 0.F) throw std::runtime_error("invalid PPOCR_GPU_GRAPH_INPUT_SCALE");
     }
-    ppocr::detail::Tensor input{{n, c, h, w},
+    rpocr::detail::Tensor input{{n, c, h, w},
         std::vector<float>(static_cast<std::size_t>(n) * c * h * w)};
     if (const char* bin = std::getenv("PPOCR_GPU_GRAPH_INPUT_BIN")) {
       std::ifstream in(bin, std::ios::binary);
@@ -57,8 +57,8 @@ int main(int argc, char** argv) {
         input.data[index] = (float((index * 37u) % 251u) / 125.F - 1.F) * input_scale;
       }
     }
-    ppocr::detail::OnnxLite cpu(argv[1], ppocr::Backend::cpu_only);
-    ppocr::detail::OnnxLite gpu(argv[1], ppocr::Backend::gpu_only);
+    rpocr::detail::OnnxLite cpu(argv[1], rpocr::Backend::cpu_only);
+    rpocr::detail::OnnxLite gpu(argv[1], rpocr::Backend::gpu_only);
     const auto input_name = "x";  // PP-OCRv6 exported graph input.
     // The first pass verifies graph parity.  Optional additional passes make
     // this the reproducible whole-neural-network CPU/Vulkan boundary

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 const char* kSrc = R"MSL(
 #include <metal_stdlib>
@@ -137,4 +137,4 @@ void MetalHead::Run(const float* h, int rows, int ldh, int64_t* ids, float* conf
     for (int r = 0; r < rows; ++r) { ids[r] = gi[r]; conf[r] = gc[r]; }
   }
 }
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

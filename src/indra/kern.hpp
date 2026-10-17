@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-namespace ppocr::indra {
+namespace rpocr::indra {
 // act: 0 none, 1 hardswish, 2 relu
 struct Kern {
   const char* name;
@@ -39,4 +39,4 @@ const Kern* KernAvx2();
 const Kern* KernAvx512();
 const Kern* KernNeon();
 const Kern* SelectKern();  // runtime dispatch, honours PPOCR_FORCE_ISA
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

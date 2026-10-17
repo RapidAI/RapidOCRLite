@@ -41,7 +41,7 @@ pip install .
 `pip install ./python` also works from a checkout, because that project
 points CMake at the parent tree. It does not produce a self-contained sdist.
 
-The binding is ctypes over the C ABI (`include/ppocr/ppocr.h`), so the wheel
+The binding is ctypes over the C ABI (`include/rapidocrlite/rapidocrlite.h`), so the wheel
 ships `librapidocrlite` and does not add a second C++ wrapper.
 
 ## Vulkan

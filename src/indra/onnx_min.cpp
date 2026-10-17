@@ -4,7 +4,7 @@
 #include <fstream>
 #include <stdexcept>
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 
 struct Reader {
@@ -125,4 +125,4 @@ OModel LoadOnnx(const std::string& path) {
   return m;
 }
 
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

@@ -7,7 +7,7 @@
 
 #include <algorithm>
 
-namespace ppocr::detail::cvc {
+namespace rpocr::detail::cvc {
 
 void BicubicRowAvx2(const CubicRow& s, const float* xs, const float* ys, int len,
                     std::uint8_t* dst) {
@@ -66,4 +66,4 @@ void BicubicRowAvx2(const CubicRow& s, const float* xs, const float* ys, int len
   }
 }
 
-}  // namespace ppocr::detail::cvc
+}  // namespace rpocr::detail::cvc

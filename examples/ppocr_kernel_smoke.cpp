@@ -31,7 +31,7 @@ bool VerifyGemm(int rows, int cols, int depth, bool with_bias) {
       expected[std::size_t(row) * cols + col] = value;
     }
   }
-  ppocr::detail::kernels::Gemm(output.data(), a.data(), b.data(),
+  rpocr::detail::kernels::Gemm(output.data(), a.data(), b.data(),
                                 with_bias ? bias.data() : nullptr, rows, cols, depth);
   for (std::size_t i = 0; i < output.size(); ++i) {
     const float tolerance = 2e-5F * std::max(1.F, std::abs(expected[i]));
@@ -73,7 +73,7 @@ bool VerifyIdentityRgbToNchw() {
           static_cast<float>(pixel[0]) * scale[2] + shift[2];
     }
   }
-  ppocr::detail::kernels::WriteIdentityRgbToNchw(
+  rpocr::detail::kernels::WriteIdentityRgbToNchw(
       output.data(), rgb.data(), width, height, source_width, left, top,
       scale, shift, row_width);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -154,7 +154,7 @@ bool VerifyBilinearRgbToNchw(int image_width, int image_height, int left, int to
       expected[2 * plane + std::size_t(y) * row_width + x] = sampled_red * scale[2] + shift[2];
     }
   }
-  ppocr::detail::kernels::WriteBilinearRgbToNchw(
+  rpocr::detail::kernels::WriteBilinearRgbToNchw(
       output.data(), rgb.data(), image_width, image_height, left, top, source_width,
       source_height, width, height, scale, shift, row_width, parallel);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -197,7 +197,7 @@ bool VerifyLayerNorm(std::size_t rows, std::size_t width) {
       dst[column] = ((src[column] - mean) / denom) * gamma[column] + beta[column];
     }
   }
-  ppocr::detail::kernels::LayerNorm(output.data(), input.data(), gamma.data(),
+  rpocr::detail::kernels::LayerNorm(output.data(), input.data(), gamma.data(),
                                     beta.data(), rows, width, epsilon);
   for (std::size_t i = 0; i < output.size(); ++i) {
     const float tolerance = 3e-6F * std::max(1.F, std::abs(expected[i]));
@@ -215,7 +215,7 @@ bool VerifySigmoid(std::size_t n) {
   std::vector<float> input(n), output(n), expected(n);
   for (std::size_t i = 0; i < n; ++i) input[i] = float(int(i % 63) - 31) * .0625F;
   for (std::size_t i = 0; i < n; ++i) expected[i] = 1.F / (1.F + std::exp(-input[i]));
-  ppocr::detail::kernels::Sigmoid(output.data(), input.data(), n);
+  rpocr::detail::kernels::Sigmoid(output.data(), input.data(), n);
   for (std::size_t i = 0; i < n; ++i) {
     const float tolerance = 3e-6F * std::max(1.F, std::abs(expected[i]));
     if (std::abs(output[i] - expected[i]) > tolerance) {
@@ -257,7 +257,7 @@ bool VerifyMaxPool2x2Same(int planes, int height, int width) {
     }
     out[plane - 1] = in[plane - 1];
   }
-  ppocr::detail::kernels::MaxPool2x2Same(output.data(), input.data(), planes, height, width);
+  rpocr::detail::kernels::MaxPool2x2Same(output.data(), input.data(), planes, height, width);
   for (std::size_t i = 0; i < output.size(); ++i) {
     if (output[i] != expected[i]) {
       std::cerr << "MaxPool2x2Same mismatch at " << i << '\n';
@@ -284,7 +284,7 @@ bool VerifyMaxPool2x2Valid(int planes, int height, int width) {
           std::max(in[std::size_t(y + 1) * width + x], in[std::size_t(y + 1) * width + x + 1]));
     }
   }
-  ppocr::detail::kernels::MaxPool2x2Valid(output.data(), input.data(), planes, height, width);
+  rpocr::detail::kernels::MaxPool2x2Valid(output.data(), input.data(), planes, height, width);
   for (std::size_t i = 0; i < output.size(); ++i) {
     if (output[i] != expected[i]) {
       std::cerr << "MaxPool2x2Valid mismatch at " << i << '\n';
@@ -303,7 +303,7 @@ bool VerifyExactGelu() {
   for (std::size_t i = 0; i < input.size(); ++i) {
     expected[i] = input[i] * .5F * (1.F + std::erf(input[i] * inv_sqrt2));
   }
-  ppocr::detail::kernels::ExactGelu(output.data(), input.data(), input.size());
+  rpocr::detail::kernels::ExactGelu(output.data(), input.data(), input.size());
   for (std::size_t i = 0; i < input.size(); ++i) {
     const float tolerance = 2e-5F * std::max(1.F, std::abs(expected[i]));
     if (std::abs(output[i] - expected[i]) > tolerance) {
@@ -323,7 +323,7 @@ bool VerifyRgbByteWiden() {
   for (std::size_t index = 0; index < input.size(); ++index) {
     input[index] = static_cast<std::uint8_t>((index * 37 + 19) & 255u);
   }
-  ppocr::detail::kernels::WidenU8ToFloat(output.data(), input.data(), input.size());
+  rpocr::detail::kernels::WidenU8ToFloat(output.data(), input.data(), input.size());
   for (std::size_t index = 0; index < input.size(); ++index) {
     if (output[index] != static_cast<float>(input[index])) {
       std::cerr << "RGB byte widen mismatch index=" << index << '\n';
@@ -365,7 +365,7 @@ bool VerifyConv3x3Tile(int input_channels, int output_channels, int height,
       }
     }
   }
-  ppocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
+  rpocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
                                   input_channels, output_channels, height, width,
                                   height, width, 3, 3, 1, 1, 1, 1, relu);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -416,7 +416,7 @@ bool VerifyConv3x3Stride2(int input_channels, int output_channels, int height,
       }
     }
   }
-  ppocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
+  rpocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
                                   input_channels, output_channels, height, width,
                                   output_height, output_width, 3, 3, 2, 2, pad, pad, relu);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -480,7 +480,7 @@ bool VerifyConcatChannelConv(int source_count, int channels_each, int output_cha
           relu ? std::max(value, 0.F) : value;
     }
   }
-  ppocr::detail::kernels::ConcatChannelConv2d(
+  rpocr::detail::kernels::ConcatChannelConv2d(
       output.data(), source_ptrs.data(), source_channels.data(), source_count,
       weights.data(), bias.data(), output_channels, height, width, output_height,
       output_width, 3, 3, stride_h, stride_w, pad, pad, relu);
@@ -549,7 +549,7 @@ bool VerifyConcatChannelConvMixed(const int* channels, int source_count,
           relu ? std::max(value, 0.F) : value;
     }
   }
-  ppocr::detail::kernels::ConcatChannelConv2d(
+  rpocr::detail::kernels::ConcatChannelConv2d(
       output.data(), source_ptrs.data(), source_channels.data(), source_count,
       weights.data(), bias.data(), output_channels, height, width, output_height,
       output_width, 3, 3, stride_h, stride_w, pad, pad, relu);
@@ -665,12 +665,12 @@ bool VerifyConcatConvDualTranspose(int source_count, int channels_each, int conv
   std::vector<float> conv(std::size_t(conv_oc) * conv_h * conv_width);
   std::vector<float> mid(std::size_t(conv_oc) * mid_h * mid_w);
   std::vector<float> output(expected.size());
-  ppocr::detail::kernels::ConcatChannelConv2d(
+  rpocr::detail::kernels::ConcatChannelConv2d(
       conv.data(), source_ptrs.data(), source_channels.data(), source_count, conv_weights.data(),
       conv_b.data(), conv_oc, height, width, conv_h, conv_width, 3, 3, 1, 1, pad, pad, true);
-  ppocr::detail::kernels::ConvTranspose2x2(mid.data(), conv.data(), ct0_w.data(), ct0_b.data(),
+  rpocr::detail::kernels::ConvTranspose2x2(mid.data(), conv.data(), ct0_w.data(), ct0_b.data(),
                                            conv_oc, conv_oc, conv_h, conv_width, 1);
-  ppocr::detail::kernels::ConvTranspose2x2(output.data(), mid.data(), ct1_w.data(),
+  rpocr::detail::kernels::ConvTranspose2x2(output.data(), mid.data(), ct1_w.data(),
                                            ct1_b.data(), conv_oc, final_oc, mid_h, mid_w, 2);
   for (std::size_t i = 0; i < output.size(); ++i) {
     const float tolerance = 4e-5F * std::max(1.F, std::abs(expected[i]));
@@ -709,19 +709,19 @@ bool VerifyDetStemFromNchw(int height, int width) {
   std::vector<float> pooled(c0.size());
   std::vector<float> expected(std::size_t(ocs) * stem_h * stem_w);
   std::vector<float> output(expected.size(), -99.F);
-  ppocr::detail::kernels::Conv2d(c0.data(), rgb.data(), w0.data(), b0.data(), 3, oc0, height,
+  rpocr::detail::kernels::Conv2d(c0.data(), rgb.data(), w0.data(), b0.data(), 3, oc0, height,
                                  width, c0_h, c0_w, 3, 3, 2, 2, 1, 1, true);
-  ppocr::detail::kernels::Conv2d(c1.data(), c0.data(), w1.data(), b1.data(), oc0, oc1, c0_h,
+  rpocr::detail::kernels::Conv2d(c1.data(), c0.data(), w1.data(), b1.data(), oc0, oc1, c0_h,
                                  c0_w, c0_h, c0_w, 2, 2, 1, 1, 0, 0, true);
-  ppocr::detail::kernels::Conv2d(c2.data(), c1.data(), w2.data(), b2.data(), oc1, oc2, c0_h,
+  rpocr::detail::kernels::Conv2d(c2.data(), c1.data(), w2.data(), b2.data(), oc1, oc2, c0_h,
                                  c0_w, c0_h, c0_w, 2, 2, 1, 1, 0, 0, true);
-  ppocr::detail::kernels::MaxPool2x2Same(pooled.data(), c0.data(), std::size_t(oc0), c0_h, c0_w);
+  rpocr::detail::kernels::MaxPool2x2Same(pooled.data(), c0.data(), std::size_t(oc0), c0_h, c0_w);
   const float* sources[2] = {pooled.data(), c2.data()};
   const int chans[2] = {oc0, oc2};
-  ppocr::detail::kernels::ConcatChannelConv2d(expected.data(), sources, chans, 2, ws.data(),
+  rpocr::detail::kernels::ConcatChannelConv2d(expected.data(), sources, chans, 2, ws.data(),
                                               bs.data(), ocs, c0_h, c0_w, stem_h, stem_w, 3, 3,
                                               2, 2, 1, 1, true);
-  ppocr::detail::kernels::DetStemFromNchw(output.data(), rgb.data(), w0.data(), b0.data(), oc0,
+  rpocr::detail::kernels::DetStemFromNchw(output.data(), rgb.data(), w0.data(), b0.data(), oc0,
                                           w1.data(), b1.data(), oc1, w2.data(), b2.data(), oc2,
                                           ws.data(), bs.data(), ocs, height, width, true, true);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -764,7 +764,7 @@ bool VerifyConv2x2SameUpper(int input_channels, int output_channels, int height,
           relu ? std::max(value, 0.F) : value;
     }
   }
-  ppocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
+  rpocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
                                   input_channels, output_channels, height, width,
                                   height, width, 2, 2, 1, 1, 0, 0, relu);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -809,7 +809,7 @@ bool VerifyConvWideTile(int input_channels, int output_channels, int height,
       expected[(std::size_t(output_channel) * height + y) * width + x] = value;
     }
   }
-  ppocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
+  rpocr::detail::kernels::Conv2d(output.data(), input.data(), weights.data(), bias.data(),
                                   input_channels, output_channels, height, width,
                                   height, width, kernel, kernel, 1, 1, pad, pad, false);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -846,7 +846,7 @@ bool VerifyPointwiseConv(int input_channels, int output_channels, std::size_t pl
       dst[index] = value;
     }
   }
-  ppocr::detail::kernels::PointwiseConv(output.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::PointwiseConv(output.data(), input.data(), weights.data(),
                                          bias.data(), output_channels, input_channels, plane);
   for (std::size_t i = 0; i < output.size(); ++i) {
     const float tolerance = 3e-5F * std::max(1.F, std::abs(expected[i]));
@@ -869,10 +869,10 @@ bool VerifyPointwiseConvRelu(int input_channels, int output_channels, std::size_
   for (std::size_t i = 0; i < input.size(); ++i) input[i] = float(int(i % 37) - 18) * .03125F;
   for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 31) - 15) * .015625F;
   for (std::size_t i = 0; i < bias.size(); ++i) bias[i] = float(int(i % 17) - 8) * .0625F;
-  ppocr::detail::kernels::PointwiseConv(expected.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::PointwiseConv(expected.data(), input.data(), weights.data(),
                                          bias.data(), output_channels, input_channels, plane);
-  ppocr::detail::kernels::Relu(expected.data(), expected.data(), expected.size());
-  ppocr::detail::kernels::PointwiseConvRelu(output.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::Relu(expected.data(), expected.data(), expected.size());
+  rpocr::detail::kernels::PointwiseConvRelu(output.data(), input.data(), weights.data(),
                                             bias.data(), output_channels, input_channels, plane);
   for (std::size_t i = 0; i < output.size(); ++i) {
     const float tolerance = 3e-5F * std::max(1.F, std::abs(expected[i]));
@@ -925,7 +925,7 @@ bool VerifyExpandGeluProjectAdd(int channels, int hidden, std::size_t plane) {
       expected[std::size_t(channel) * plane + spatial] = sum;
     }
   }
-  ppocr::detail::kernels::ExpandGeluProjectAdd(
+  rpocr::detail::kernels::ExpandGeluProjectAdd(
       output.data(), input.data(), expand_weights.data(), expand_bias.data(),
       project_weights.data(), project_bias.data(), channels, hidden, plane);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -961,26 +961,26 @@ bool VerifyPointwiseResidualBatch(int batches, int input_channels,
     const float* src = input.data() + std::size_t(batch) * input_batch;
     const float* add = residual.data() + std::size_t(batch) * output_batch;
     if (activation == 0) {
-      ppocr::detail::kernels::PointwiseConvAdd(dst, src, weights.data(), bias.data(), add,
+      rpocr::detail::kernels::PointwiseConvAdd(dst, src, weights.data(), bias.data(), add,
                                                 output_channels, input_channels, plane);
     } else if (activation == 1) {
-      ppocr::detail::kernels::PointwiseConvAddRelu(dst, src, weights.data(), bias.data(), add,
+      rpocr::detail::kernels::PointwiseConvAddRelu(dst, src, weights.data(), bias.data(), add,
                                                     output_channels, input_channels, plane);
     } else {
-      ppocr::detail::kernels::PointwiseConvAddSwish(dst, src, weights.data(), bias.data(), add,
+      rpocr::detail::kernels::PointwiseConvAddSwish(dst, src, weights.data(), bias.data(), add,
                                                      output_channels, input_channels, plane);
     }
   }
   if (activation == 0) {
-    ppocr::detail::kernels::PointwiseConvAddBatch(output.data(), input.data(), weights.data(),
+    rpocr::detail::kernels::PointwiseConvAddBatch(output.data(), input.data(), weights.data(),
                                                    bias.data(), residual.data(), batches,
                                                    output_channels, input_channels, plane);
   } else if (activation == 1) {
-    ppocr::detail::kernels::PointwiseConvAddReluBatch(output.data(), input.data(), weights.data(),
+    rpocr::detail::kernels::PointwiseConvAddReluBatch(output.data(), input.data(), weights.data(),
                                                        bias.data(), residual.data(), batches,
                                                        output_channels, input_channels, plane);
   } else {
-    ppocr::detail::kernels::PointwiseConvAddSwishBatch(output.data(), input.data(), weights.data(),
+    rpocr::detail::kernels::PointwiseConvAddSwishBatch(output.data(), input.data(), weights.data(),
                                                         bias.data(), residual.data(), batches,
                                                         output_channels, input_channels, plane);
   }
@@ -1011,27 +1011,27 @@ bool VerifyDepthwisePointwiseFused(int channels, int output_channels, int height
   for (std::size_t i = 0; i < dw_b.size(); ++i) dw_b[i] = float(int(i % 13) - 6) * .0625F;
   for (std::size_t i = 0; i < pw_w.size(); ++i) pw_w[i] = float(int(i % 31) - 15) * .015625F;
   for (std::size_t i = 0; i < pw_b.size(); ++i) pw_b[i] = float(int(i % 17) - 8) * .0625F;
-  ppocr::detail::kernels::DepthwiseConv(
+  rpocr::detail::kernels::DepthwiseConv(
       intermediate.data(), input.data(), dw_w.data(), dw_b.data(), channels, height,
       width, height, width, 3, 3, 1, 1, 1, 1);
   if (activation == 1) {
-    ppocr::detail::kernels::PointwiseConvRelu(expected.data(), intermediate.data(),
+    rpocr::detail::kernels::PointwiseConvRelu(expected.data(), intermediate.data(),
                                               pw_w.data(), pw_b.data(), output_channels,
                                               channels, std::size_t(height) * width);
   } else if (activation == 2) {
-    ppocr::detail::kernels::PointwiseConvHardSwish(expected.data(), intermediate.data(),
+    rpocr::detail::kernels::PointwiseConvHardSwish(expected.data(), intermediate.data(),
                                                    pw_w.data(), pw_b.data(), output_channels,
                                                    channels, std::size_t(height) * width);
   } else {
-    ppocr::detail::kernels::PointwiseConv(expected.data(), intermediate.data(), pw_w.data(),
+    rpocr::detail::kernels::PointwiseConv(expected.data(), intermediate.data(), pw_w.data(),
                                           pw_b.data(), output_channels, channels,
                                           std::size_t(height) * width);
     if (activation == 3) {
-      ppocr::detail::kernels::Gelu(expected.data(), expected.data(), expected.size(),
+      rpocr::detail::kernels::Gelu(expected.data(), expected.data(), expected.size(),
                                    expected.size());
     }
   }
-  const bool fused = ppocr::detail::kernels::DepthwisePointwiseConvFused(
+  const bool fused = rpocr::detail::kernels::DepthwisePointwiseConvFused(
       output.data(), input.data(), dw_w.data(), dw_b.data(), pw_w.data(), pw_b.data(),
       1, channels, output_channels, height, width, 3, 3, 1, 1, 1, 1, activation);
   if (!fused) {
@@ -1066,27 +1066,27 @@ bool VerifyDepthwisePointwiseFused5x5(int channels, int output_channels, int hei
   for (std::size_t i = 0; i < dw_b.size(); ++i) dw_b[i] = float(int(i % 13) - 6) * .0625F;
   for (std::size_t i = 0; i < pw_w.size(); ++i) pw_w[i] = float(int(i % 31) - 15) * .015625F;
   for (std::size_t i = 0; i < pw_b.size(); ++i) pw_b[i] = float(int(i % 17) - 8) * .0625F;
-  ppocr::detail::kernels::DepthwiseConv(
+  rpocr::detail::kernels::DepthwiseConv(
       intermediate.data(), input.data(), dw_w.data(), dw_b.data(), channels, height,
       width, height, width, 5, 5, 1, 1, 2, 2);
   if (activation == 1) {
-    ppocr::detail::kernels::PointwiseConvRelu(expected.data(), intermediate.data(),
+    rpocr::detail::kernels::PointwiseConvRelu(expected.data(), intermediate.data(),
                                               pw_w.data(), pw_b.data(), output_channels,
                                               channels, std::size_t(height) * width);
   } else if (activation == 2) {
-    ppocr::detail::kernels::PointwiseConvHardSwish(expected.data(), intermediate.data(),
+    rpocr::detail::kernels::PointwiseConvHardSwish(expected.data(), intermediate.data(),
                                                    pw_w.data(), pw_b.data(), output_channels,
                                                    channels, std::size_t(height) * width);
   } else {
-    ppocr::detail::kernels::PointwiseConv(expected.data(), intermediate.data(), pw_w.data(),
+    rpocr::detail::kernels::PointwiseConv(expected.data(), intermediate.data(), pw_w.data(),
                                           pw_b.data(), output_channels, channels,
                                           std::size_t(height) * width);
     if (activation == 3) {
-      ppocr::detail::kernels::Gelu(expected.data(), expected.data(), expected.size(),
+      rpocr::detail::kernels::Gelu(expected.data(), expected.data(), expected.size(),
                                    expected.size());
     }
   }
-  const bool fused = ppocr::detail::kernels::DepthwisePointwiseConvFused(
+  const bool fused = rpocr::detail::kernels::DepthwisePointwiseConvFused(
       output.data(), input.data(), dw_w.data(), dw_b.data(), pw_w.data(), pw_b.data(),
       1, channels, output_channels, height, width, 5, 5, 1, 1, 2, 2, activation);
   if (!fused) {
@@ -1126,18 +1126,18 @@ bool VerifyPointwiseDepthwise(int input_channels, int output_channels, int heigh
   for (std::size_t i = 0; i < dw_w.size(); ++i) dw_w[i] = float(int(i % 23) - 11) * .03125F;
   for (std::size_t i = 0; i < dw_b.size(); ++i) dw_b[i] = float(int(i % 13) - 6) * .0625F;
   if (relu) {
-    ppocr::detail::kernels::PointwiseConvRelu(
+    rpocr::detail::kernels::PointwiseConvRelu(
         intermediate.data(), input.data(), pw_w.data(), pw_b.data(), output_channels,
         input_channels, std::size_t(height) * width);
   } else {
-    ppocr::detail::kernels::PointwiseConv(
+    rpocr::detail::kernels::PointwiseConv(
         intermediate.data(), input.data(), pw_w.data(), pw_b.data(), output_channels,
         input_channels, std::size_t(height) * width);
   }
-  ppocr::detail::kernels::DepthwiseConv(
+  rpocr::detail::kernels::DepthwiseConv(
       expected.data(), intermediate.data(), dw_w.data(), dw_b.data(), output_channels,
       height, width, height, width, 3, 3, 1, 1, 1, 1);
-  const bool fused = ppocr::detail::kernels::PointwiseDepthwiseConvFused(
+  const bool fused = rpocr::detail::kernels::PointwiseDepthwiseConvFused(
       output.data(), input.data(), pw_w.data(), pw_b.data(), dw_w.data(), dw_b.data(),
       1, input_channels, output_channels, height, width, relu);
   if (!fused) {
@@ -1185,14 +1185,14 @@ bool VerifyDepthwiseExpandGelu(int channels, int hidden, int height, int width) 
   for (std::size_t i = 0; i < expand_b.size(); ++i) expand_b[i] = float(int(i % 17) - 8) * .0625F;
   for (std::size_t i = 0; i < project_w.size(); ++i) project_w[i] = float(int(i % 29) - 14) * .015625F;
   for (std::size_t i = 0; i < project_b.size(); ++i) project_b[i] = float(int(i % 11) - 5) * .0625F;
-  ppocr::detail::kernels::DepthwiseConv(
+  rpocr::detail::kernels::DepthwiseConv(
       intermediate.data(), input.data(), dw_w.data(), dw_b.data(), channels, height,
       width, height, width, 3, 3, 1, 1, 1, 1);
-  ppocr::detail::kernels::ExpandGeluProjectAdd(
+  rpocr::detail::kernels::ExpandGeluProjectAdd(
       expected.data(), intermediate.data(), expand_w.data(), expand_b.data(),
       project_w.data(), project_b.data(), channels, hidden,
       std::size_t(height) * width);
-  ppocr::detail::kernels::DepthwiseExpandGeluProjectAdd(
+  rpocr::detail::kernels::DepthwiseExpandGeluProjectAdd(
       output.data(), input.data(), dw_w.data(), dw_b.data(), expand_w.data(),
       expand_b.data(), project_w.data(), project_b.data(), 1, channels, hidden,
       height, width, 3, 3, 1, 1, 1, 1);
@@ -1223,13 +1223,13 @@ bool VerifyDepthwiseBatch(int batches, int channels, int input_height,
   for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 23) - 11) * .03125F;
   for (std::size_t i = 0; i < bias.size(); ++i) bias[i] = float(int(i % 13) - 6) * .0625F;
   for (int batch = 0; batch < batches; ++batch) {
-    ppocr::detail::kernels::DepthwiseConv(
+    rpocr::detail::kernels::DepthwiseConv(
         expected.data() + std::size_t(batch) * output_batch,
         input.data() + std::size_t(batch) * input_batch, weights.data(), bias.data(), channels,
         input_height, input_width, output_height, output_width, kernel, kernel, stride, stride,
         pad, pad);
   }
-  ppocr::detail::kernels::DepthwiseConvBatch(
+  rpocr::detail::kernels::DepthwiseConvBatch(
       output.data(), input.data(), weights.data(), bias.data(), batches, channels,
       input_height, input_width, output_height, output_width, kernel, kernel, stride, stride,
       pad, pad);
@@ -1265,12 +1265,12 @@ bool VerifyFoldedDepthwiseHardSwish(int channels, int height, int width, int ker
     factor[static_cast<std::size_t>(i)] = 0.75F + float(i % 5) * .05F;
     offset[static_cast<std::size_t>(i)] = float(int(i % 7) - 3) * .03125F;
   }
-  ppocr::detail::kernels::DepthwiseConv(expected.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::DepthwiseConv(expected.data(), input.data(), weights.data(),
                                         bias.data(), channels, height, width, out_h, out_w,
                                         kernel_h, kernel_w, 1, 1, pad_h, pad_w);
-  ppocr::detail::kernels::BatchNormAffine(expected.data(), expected.data(), factor.data(),
+  rpocr::detail::kernels::BatchNormAffine(expected.data(), expected.data(), factor.data(),
                                           offset.data(), 1, channels, std::size_t(out_h) * out_w);
-  ppocr::detail::kernels::HardSwish(expected.data(), expected.data(), expected.size());
+  rpocr::detail::kernels::HardSwish(expected.data(), expected.data(), expected.size());
   const int per = kernel_h * kernel_w;
   for (int c = 0; c < channels; ++c) {
     for (int k = 0; k < per; ++k)
@@ -1278,10 +1278,10 @@ bool VerifyFoldedDepthwiseHardSwish(int channels, int height, int width, int ker
     folded_b[static_cast<std::size_t>(c)] =
         bias[static_cast<std::size_t>(c)] * factor[c] + offset[c];
   }
-  ppocr::detail::kernels::DepthwiseConv(fused.data(), input.data(), folded_w.data(),
+  rpocr::detail::kernels::DepthwiseConv(fused.data(), input.data(), folded_w.data(),
                                         folded_b.data(), channels, height, width, out_h, out_w,
                                         kernel_h, kernel_w, 1, 1, pad_h, pad_w);
-  ppocr::detail::kernels::HardSwish(fused.data(), fused.data(), fused.size());
+  rpocr::detail::kernels::HardSwish(fused.data(), fused.data(), fused.size());
   for (std::size_t i = 0; i < expected.size(); ++i) {
     const float tolerance = 4e-5F * std::max(1.F, std::abs(expected[i]));
     if (std::abs(fused[i] - expected[i]) > tolerance) {
@@ -1325,7 +1325,7 @@ bool VerifyDepthwiseScalar(int channels, int height, int width, int kernel, int 
       }
     }
   }
-  ppocr::detail::kernels::DepthwiseConv(output.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::DepthwiseConv(output.data(), input.data(), weights.data(),
                                         bias.data(), channels, height, width, output_height,
                                         output_width, kernel, kernel, 1, 1, pad, pad);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -1356,14 +1356,14 @@ bool VerifyConvBatch(int batches, int input_channels, int output_channels,
   for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 37) - 18) * .015625F;
   for (std::size_t i = 0; i < bias.size(); ++i) bias[i] = float(int(i % 17) - 8) * .0625F;
   for (int batch = 0; batch < batches; ++batch) {
-    ppocr::detail::kernels::Conv2d(
+    rpocr::detail::kernels::Conv2d(
         expected.data() + std::size_t(batch) * output_batch,
         input.data() + std::size_t(batch) * input_batch, weights.data(), bias.data(),
         input_channels, output_channels, input_height, input_width, output_height,
         output_width, kernel_height, kernel_width, stride_height, stride_width,
         pad_top, pad_left, relu);
   }
-  ppocr::detail::kernels::Conv2dBatch(
+  rpocr::detail::kernels::Conv2dBatch(
       output.data(), input.data(), weights.data(), bias.data(), batches, input_channels,
       output_channels, input_height, input_width, output_height, output_width,
       kernel_height, kernel_width, stride_height, stride_width, pad_top, pad_left, relu);
@@ -1395,12 +1395,12 @@ bool VerifyPointwiseHardSwishBatch(int batches, int input_channels,
   for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 29) - 14) * .03125F;
   for (std::size_t i = 0; i < bias.size(); ++i) bias[i] = float(int(i % 11) - 5) * .125F;
   for (int batch = 0; batch < batches; ++batch) {
-    ppocr::detail::kernels::PointwiseConvHardSwish(
+    rpocr::detail::kernels::PointwiseConvHardSwish(
         expected.data() + std::size_t(batch) * output_batch,
         input.data() + std::size_t(batch) * input_batch, weights.data(), bias.data(),
         output_channels, input_channels, plane);
   }
-  ppocr::detail::kernels::PointwiseConvHardSwishBatch(
+  rpocr::detail::kernels::PointwiseConvHardSwishBatch(
       output.data(), input.data(), weights.data(), bias.data(), batches,
       output_channels, input_channels, plane);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -1461,7 +1461,7 @@ bool VerifySqueezeExcitation(int batches, int channels, int reduced, int height,
     }
   }
   auto output = values;
-  ppocr::detail::kernels::SqueezeExcitationGateInplace(
+  rpocr::detail::kernels::SqueezeExcitationGateInplace(
       output.data(), first_w.data(), first_b.data(), second_w.data(), second_b.data(),
       batches, channels, reduced, spatial, alpha, beta, residual);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -1510,7 +1510,7 @@ bool VerifyConvTransposeScalar(int input_channels, int output_channels, int inpu
       }
     }
   }
-  ppocr::detail::kernels::ConvTranspose2x2(output.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::ConvTranspose2x2(output.data(), input.data(), weights.data(),
                                            bias.data(), input_channels, output_channels,
                                            input_height, input_width);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -1538,7 +1538,7 @@ bool VerifyConvTransposeAct(int input_channels, int output_channels, int input_h
   for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 23) - 11) * .03125F;
   for (int i = 0; i < output_channels; ++i)
     bias[static_cast<std::size_t>(i)] = float(int(i % 13) - 6) * .0625F;
-  ppocr::detail::kernels::ConvTranspose2x2(expected.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::ConvTranspose2x2(expected.data(), input.data(), weights.data(),
                                            bias.data(), input_channels, output_channels,
                                            input_height, input_width, 0);
   if (act == 1) {
@@ -1546,7 +1546,7 @@ bool VerifyConvTransposeAct(int input_channels, int output_channels, int input_h
   } else if (act == 2) {
     for (float& value : expected) value = 1.F / (1.F + std::exp(-value));
   }
-  ppocr::detail::kernels::ConvTranspose2x2(output.data(), input.data(), weights.data(),
+  rpocr::detail::kernels::ConvTranspose2x2(output.data(), input.data(), weights.data(),
                                            bias.data(), input_channels, output_channels,
                                            input_height, input_width, act);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -1578,12 +1578,12 @@ bool VerifyConvTransposeChain(int input_channels, int mid_channels, int output_c
   for (int i = 0; i < mid_channels; ++i) b0[static_cast<std::size_t>(i)] = float(int(i % 13) - 6) * .0625F;
   for (std::size_t i = 0; i < w1.size(); ++i) w1[i] = float(int(i % 19) - 9) * .03125F;
   for (int i = 0; i < output_channels; ++i) b1[static_cast<std::size_t>(i)] = float(int(i % 11) - 5) * .0625F;
-  ppocr::detail::kernels::ConvTranspose2x2(mid.data(), input.data(), w0.data(), b0.data(),
+  rpocr::detail::kernels::ConvTranspose2x2(mid.data(), input.data(), w0.data(), b0.data(),
                                            input_channels, mid_channels, input_height,
                                            input_width, 1);
-  ppocr::detail::kernels::ConvTranspose2x2(expected.data(), mid.data(), w1.data(), b1.data(),
+  rpocr::detail::kernels::ConvTranspose2x2(expected.data(), mid.data(), w1.data(), b1.data(),
                                            mid_channels, output_channels, mid_h, mid_w, 2);
-  ppocr::detail::kernels::ConvTranspose2x2Chain(output.data(), input.data(), w0.data(), b0.data(),
+  rpocr::detail::kernels::ConvTranspose2x2Chain(output.data(), input.data(), w0.data(), b0.data(),
                                                 w1.data(), b1.data(), input_channels, mid_channels,
                                                 output_channels, input_height, input_width);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -1611,12 +1611,12 @@ bool VerifyConvTransposeBatch(int batches, int input_channels, int output_channe
   for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 23) - 11) * .03125F;
   for (std::size_t i = 0; i < bias.size(); ++i) bias[i] = float(int(i % 13) - 6) * .0625F;
   for (int batch = 0; batch < batches; ++batch) {
-    ppocr::detail::kernels::ConvTranspose2x2(
+    rpocr::detail::kernels::ConvTranspose2x2(
         expected.data() + std::size_t(batch) * output_batch,
         input.data() + std::size_t(batch) * input_batch, weights.data(), bias.data(),
         input_channels, output_channels, input_height, input_width);
   }
-  ppocr::detail::kernels::ConvTranspose2x2Batch(
+  rpocr::detail::kernels::ConvTranspose2x2Batch(
       output.data(), input.data(), weights.data(), bias.data(), batches, input_channels,
       output_channels, input_height, input_width);
   for (std::size_t i = 0; i < output.size(); ++i) {
@@ -1645,7 +1645,7 @@ bool VerifyBatchNormAffine(int batches, int channels, std::size_t spatial) {
       expected[offset + index] = input[offset + index] * scale[channel] + shift[channel];
     }
   }
-  ppocr::detail::kernels::BatchNormAffine(output.data(), input.data(), scale.data(), shift.data(),
+  rpocr::detail::kernels::BatchNormAffine(output.data(), input.data(), scale.data(), shift.data(),
                                            batches, channels, spatial);
   for (std::size_t i = 0; i < output.size(); ++i) {
     const float tolerance = 3e-6F * std::max(1.F, std::abs(expected[i]));
@@ -1655,7 +1655,7 @@ bool VerifyBatchNormAffine(int batches, int channels, std::size_t spatial) {
     }
   }
   auto inplace = input;
-  ppocr::detail::kernels::BatchNormAffine(inplace.data(), inplace.data(), scale.data(), shift.data(),
+  rpocr::detail::kernels::BatchNormAffine(inplace.data(), inplace.data(), scale.data(), shift.data(),
                                            batches, channels, spatial);
   for (std::size_t i = 0; i < inplace.size(); ++i) {
     if (inplace[i] != expected[i]) {
@@ -1685,7 +1685,7 @@ bool VerifyNearestResize2xAdd(int batches, int channels, int height, int width) 
       dst[offset + output_width + 1] = value + add[offset + output_width + 1];
     }
   }
-  ppocr::detail::kernels::NearestResize2xAdd(output.data(), input.data(), residual.data(),
+  rpocr::detail::kernels::NearestResize2xAdd(output.data(), input.data(), residual.data(),
                                                batches, channels, height, width);
   for (std::size_t i = 0; i < output.size(); ++i) {
     if (output[i] != expected[i]) {
@@ -1718,7 +1718,7 @@ bool VerifyAveragePool3x2Valid(int planes, int height, int width) {
       destination[std::size_t(y) * output_width + x] = sum / 6.F;
     }
   }
-  ppocr::detail::kernels::AveragePool3x2Valid(output.data(), input.data(), planes, height, width);
+  rpocr::detail::kernels::AveragePool3x2Valid(output.data(), input.data(), planes, height, width);
   for (std::size_t i = 0; i < output.size(); ++i) {
     const float tolerance = 3e-6F * std::max(1.F, std::abs(expected[i]));
     if (std::abs(output[i] - expected[i]) > tolerance) {
@@ -1742,9 +1742,9 @@ bool VerifyCtcTop1(int batches, int steps, int vocab) {
     // Cover blank and repeated top-1 decisions, including vector tails.
     logits[row * vocab + (row % 5 == 0 ? 0 : int((row + 7) % vocab))] = 3.F + float(row % 3);
   }
-  ppocr::detail::kernels::CtcTop1Scalar(expected_indices.data(), expected_probabilities.data(),
+  rpocr::detail::kernels::CtcTop1Scalar(expected_indices.data(), expected_probabilities.data(),
                                          logits.data(), rows, steps, vocab);
-  ppocr::detail::kernels::CtcTop1(output_indices.data(), output_probabilities.data(),
+  rpocr::detail::kernels::CtcTop1(output_indices.data(), output_probabilities.data(),
                                    logits.data(), rows, steps, vocab);
   for (std::size_t row = 0; row < rows; ++row) {
     if (output_indices[row] != expected_indices[row]) {
@@ -1776,9 +1776,9 @@ bool VerifyCtcTop1FirstMaximum() {
     }
     std::vector<int> expected_indices(steps), output_indices(steps);
     std::vector<float> expected_probabilities(steps), output_probabilities(steps);
-    ppocr::detail::kernels::CtcTop1Scalar(expected_indices.data(), expected_probabilities.data(),
+    rpocr::detail::kernels::CtcTop1Scalar(expected_indices.data(), expected_probabilities.data(),
                                            logits.data(), steps, steps, vocab);
-    ppocr::detail::kernels::CtcTop1(output_indices.data(), output_probabilities.data(),
+    rpocr::detail::kernels::CtcTop1(output_indices.data(), output_probabilities.data(),
                                      logits.data(), steps, steps, vocab);
     for (int row = 0; row < steps; ++row) {
       if (output_indices[row] != expected_indices[row] ||
@@ -1803,11 +1803,11 @@ bool VerifyGemmCtcTop1(int batches, int steps, int vocab, int depth) {
   for (std::size_t i = 0; i < left.size(); ++i) left[i] = float(int(i % 37) - 18) * .0625F;
   for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 41) - 20) * .03125F;
   for (int i = 0; i < vocab; ++i) bias[std::size_t(i)] = float(i % 11) * .0625F - .25F;
-  ppocr::detail::kernels::Gemm(logits.data(), left.data(), weights.data(), bias.data(),
+  rpocr::detail::kernels::Gemm(logits.data(), left.data(), weights.data(), bias.data(),
                                 int(rows), vocab, depth);
-  ppocr::detail::kernels::CtcTop1Scalar(expected_indices.data(), expected_probabilities.data(),
+  rpocr::detail::kernels::CtcTop1Scalar(expected_indices.data(), expected_probabilities.data(),
                                          logits.data(), rows, steps, vocab);
-  ppocr::detail::kernels::GemmCtcTop1(output_indices.data(), output_probabilities.data(),
+  rpocr::detail::kernels::GemmCtcTop1(output_indices.data(), output_probabilities.data(),
                                        left.data(), weights.data(), bias.data(), int(rows), depth,
                                        vocab, steps);
   for (std::size_t row = 0; row < rows; ++row) {
@@ -1844,8 +1844,8 @@ bool VerifyApproximateGelu() {
     const float t = std::clamp(z * (27.F + z2) / (27.F + 9.F * z2), -1.F, 1.F);
     expected[i] = .5F * x * (1.F + t);
   }
-  ppocr::detail::kernels::Gelu(output.data(), input.data(), input.size(), input.size());
-  ppocr::detail::kernels::Gelu(inplace.data(), inplace.data(), inplace.size(), inplace.size());
+  rpocr::detail::kernels::Gelu(output.data(), input.data(), input.size(), input.size());
+  rpocr::detail::kernels::Gelu(inplace.data(), inplace.data(), inplace.size(), inplace.size());
   for (std::size_t i = 0; i < input.size(); ++i) {
     const float tolerance = 3e-6F * std::max(1.F, std::abs(expected[i]));
     if (std::abs(output[i] - expected[i]) > tolerance ||

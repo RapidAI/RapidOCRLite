@@ -3,7 +3,7 @@
 #include <cstring>
 #include <algorithm>
 #include "kern.hpp"
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 typedef float vf __attribute__((vector_size(VW * 4)));
 typedef int32_t vi __attribute__((vector_size(VW * 4)));
@@ -461,4 +461,4 @@ void gemm_n4(const float* A, int L, int K, int lda, const float* W4, const float
 }
 const Kern kKern = {KNAME, NB, pack, gemm, dw9, rowmax, dw2d, c1conv, gemm3, softplus_mul, gemm_n4, gemm_acc, softmax_row, gelu_row};
 }  // namespace
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

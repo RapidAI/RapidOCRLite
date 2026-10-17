@@ -10,7 +10,7 @@
 #define ORDER_ACCEL 1
 #endif
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 int RoundUp(int n, int m) { return (n + m - 1) / m * m; }
 inline float Gelu(float x) { return (std::erf(x / 1.41421354f) + 1.f) * x * 0.5f; }
@@ -231,4 +231,4 @@ void OrderNet::Run(const float* feats, const uint8_t* mask, int N, float* a, flo
   Linear(cls_, h.data(), N, Dp, c.data(), cls_.Np, 0);
   for (int i = 0; i < N; ++i) std::copy(c.begin() + size_t(i) * cls_.Np, c.begin() + size_t(i) * cls_.Np + ncls_, cls + size_t(i) * ncls_);
 }
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

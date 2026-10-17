@@ -1,4 +1,4 @@
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -31,11 +31,11 @@ void OverridePositiveFromEnv(const char* name, int& value) {
   if (const char* text = std::getenv(name)) value = ParsePositive(text, name);
 }
 
-void ApplyBackendFromEnv(ppocr::Backend& backend) {
+void ApplyBackendFromEnv(rpocr::Backend& backend) {
   const char* text = std::getenv("PPOCR_BACKEND");
-  if (!text || std::string{text} == "cpu") { backend = ppocr::Backend::cpu_only; return; }
-  if (std::string{text} == "hybrid") { backend = ppocr::Backend::hybrid; return; }
-  if (std::string{text} == "gpu") { backend = ppocr::Backend::gpu_only; return; }
+  if (!text || std::string{text} == "cpu") { backend = rpocr::Backend::cpu_only; return; }
+  if (std::string{text} == "hybrid") { backend = rpocr::Backend::hybrid; return; }
+  if (std::string{text} == "gpu") { backend = rpocr::Backend::gpu_only; return; }
   throw std::runtime_error("PPOCR_BACKEND must be cpu, hybrid, or gpu");
 }
 
@@ -89,7 +89,7 @@ int main(int argc, char** argv) {
     std::vector<std::string> image_paths;
     image_paths.reserve(argc - 5);
     for (int i = 5; i < argc; ++i) image_paths.emplace_back(argv[i]);
-    ppocr::Options options;
+    rpocr::Options options;
     ApplyBackendFromEnv(options.backend);
     OverridePositiveFromEnv("PPOCR_REC_BATCH_SIZE", options.rec_batch_size);
     OverridePositiveFromEnv("PPOCR_REC_WIDTH_BUCKET", options.rec_batch_width_bucket);
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
     OverridePositiveFromEnv("PPOCR_BATCH_PREPROCESS_PARALLELISM",
                             options.batch_preprocess_parallelism);
     OverridePositiveFromEnv("PPOCR_IMAGE_BATCH_PARALLELISM", options.image_batch_parallelism);
-    ppocr::OCR ocr(argv[1], argv[2], argv[3], options);
+    rpocr::OCR ocr(argv[1], argv[2], argv[3], options);
 
     // Establish model, worker, and every size bucket before the baseline.
     // Warm-up samples are intentionally retained as diagnostic detail, but
@@ -109,15 +109,15 @@ int main(int argc, char** argv) {
     warmup_samples.reserve(image_paths.size());
     for (const auto& path : image_paths) {
       {
-        auto image = ppocr::LoadPPM(path);
+        auto image = rpocr::LoadPPM(path);
         (void)ocr.Recognize(image);
       }
       warmup_samples.push_back(ProcessMemoryUsage().private_bytes);
     }
     const auto baseline = ProcessMemoryUsage();
     std::cout << "{\"backend\":\""
-              << (options.backend == ppocr::Backend::hybrid ? "hybrid" :
-                  options.backend == ppocr::Backend::gpu_only ? "gpu" : "cpu")
+              << (options.backend == rpocr::Backend::hybrid ? "hybrid" :
+                  options.backend == rpocr::Backend::gpu_only ? "gpu" : "cpu")
               << "\",\"baseline_private_bytes\":" << baseline.private_bytes
               << ",\"baseline_working_set_bytes\":" << baseline.working_set_bytes
               << ",\"warmup_samples\":[";
@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
       std::cout << "{\"cycle\":" << (cycle + 1) << ",\"samples\":[";
       for (std::size_t index = 0; index < image_paths.size(); ++index) {
         {
-          auto image = ppocr::LoadPPM(image_paths[index]);
+          auto image = rpocr::LoadPPM(image_paths[index]);
           (void)ocr.Recognize(image);
         }
         const auto memory = ProcessMemoryUsage();

@@ -8,7 +8,7 @@
 #include <cstdlib>
 #include <map>
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 int RoundUp(int n, int m) { return (n + m - 1) / m * m; }
 struct FT {  // NHWC, channel stride Cs (multiple of nb), padded channels are 0
@@ -516,4 +516,4 @@ void DetNet::Run(const float* x, int H, int W, std::vector<float>& out, int& OC,
   for (int c = 0; c < OC; ++c)
     for (size_t p = 0; p < size_t(OH) * OW; ++p) out[size_t(c) * OH * OW + p] = o.d[p * o.Cs + c];
 }
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

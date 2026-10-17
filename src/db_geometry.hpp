@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ppocr { namespace detail {
+namespace rpocr { namespace detail {
 
 // One rapidocr 3.x DB candidate. contour_xy holds `count` int (x, y) pairs
 // in cv2.findContours order (only hull vertices are needed). Returns false
@@ -14,4 +14,4 @@ bool Rapidocr3DbBox(const int* contour_xy, int count, const float* prob, int h, 
 // Shortest decimal (as double) that parses back to `value`.
 double ShortestDouble(float value);
 
-}}  // namespace ppocr::detail
+}}  // namespace rpocr::detail

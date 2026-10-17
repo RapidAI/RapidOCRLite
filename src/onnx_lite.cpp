@@ -21,7 +21,7 @@
 #include <map>
 #include <unordered_set>
 
-namespace ppocr::detail {
+namespace rpocr::detail {
 namespace {
 
 [[noreturn]] void Fail(const std::string& message) { throw std::runtime_error("ppocr ONNX: " + message); }
@@ -10651,4 +10651,4 @@ OnnxLite::CtcTop1Output OnnxLite::RunCtcTop1(
   return result;
 }
 
-}  // namespace ppocr::detail
+}  // namespace rpocr::detail

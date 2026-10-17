@@ -1,5 +1,5 @@
-#include "ppocr/ppocr.h"
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.h"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -12,15 +12,15 @@
 
 namespace {
 
-ppocr::Image Solid(int width, int height, unsigned char value) {
-  ppocr::Image image;
+rpocr::Image Solid(int width, int height, unsigned char value) {
+  rpocr::Image image;
   image.width = width;
   image.height = height;
   image.rgb.assign(static_cast<std::size_t>(width) * height * 3, value);
   return image;
 }
 
-std::string Joined(const std::vector<ppocr::Result>& results) {
+std::string Joined(const std::vector<rpocr::Result>& results) {
   std::string text;
   for (const auto& result : results) {
     if (!text.empty()) text.push_back('\n');
@@ -29,9 +29,9 @@ std::string Joined(const std::vector<ppocr::Result>& results) {
   return text;
 }
 
-ppocr::Options GpuOptions() {
-  ppocr::Options options;
-  options.backend = ppocr::Backend::gpu_only;
+rpocr::Options GpuOptions() {
+  rpocr::Options options;
+  options.backend = rpocr::Backend::gpu_only;
   if (const char* value = std::getenv("PPOCR_VULKAN_DEVICE_INDEX")) {
     const int index = std::atoi(value);
     if (index >= 0) options.vulkan_device_index = index;
@@ -44,9 +44,9 @@ bool GpuReady() {
   // probe initializes the process-wide runtime and then ignores later pins.
   if (const char* value = std::getenv("PPOCR_VULKAN_DEVICE_INDEX")) {
     const int index = std::atoi(value);
-    if (index >= 0) ppocr_request_vulkan_device(index);
+    if (index >= 0) rpocr_request_vulkan_device(index);
   }
-  const auto info = ppocr::QueryBackendInfo();
+  const auto info = rpocr::QueryBackendInfo();
   if (!info.vulkan_compute_available || !info.full_graph_gpu_available) return false;
   std::cout << "vulkan_device=" << info.device_name << '\n';
   return true;
@@ -54,17 +54,17 @@ bool GpuReady() {
 
 int MissingDevice(const std::string& det, const std::string& rec, const std::string& dict) {
   const auto image = Solid(32, 16, 255);
-  ppocr::Options cpu_options;
-  cpu_options.backend = ppocr::Backend::cpu_only;
+  rpocr::Options cpu_options;
+  cpu_options.backend = rpocr::Backend::cpu_only;
   {
-    ppocr::OCR cpu(det, rec, dict, cpu_options);
+    rpocr::OCR cpu(det, rec, dict, cpu_options);
     (void)cpu.Recognize(image);
   }
   bool gpu_rejected = false;
   try {
-    ppocr::Options gpu = GpuOptions();
+    rpocr::Options gpu = GpuOptions();
     gpu.vulkan_device_index = -1;
-    ppocr::OCR unexpected(det, rec, dict, gpu);
+    rpocr::OCR unexpected(det, rec, dict, gpu);
     (void)unexpected;
   } catch (const std::exception& ex) {
     gpu_rejected = std::string(ex.what()).find("GPU-only") != std::string::npos;
@@ -74,9 +74,9 @@ int MissingDevice(const std::string& det, const std::string& rec, const std::str
     std::cerr << "gpu_only constructed without a selected Vulkan device\n";
     return 1;
   }
-  ppocr::Options hybrid;
-  hybrid.backend = ppocr::Backend::hybrid;
-  ppocr::OCR ocr(det, rec, dict, hybrid);
+  rpocr::Options hybrid;
+  hybrid.backend = rpocr::Backend::hybrid;
+  rpocr::OCR ocr(det, rec, dict, hybrid);
   (void)ocr.Recognize(image);
   std::cout << "missing-device fallback passed\n";
   return 0;
@@ -85,10 +85,10 @@ int MissingDevice(const std::string& det, const std::string& rec, const std::str
 int BadIndex(const std::string& det, const std::string& rec, const std::string& dict) {
   bool rejected = false;
   try {
-    ppocr::Options gpu;
-    gpu.backend = ppocr::Backend::gpu_only;
+    rpocr::Options gpu;
+    gpu.backend = rpocr::Backend::gpu_only;
     gpu.vulkan_device_index = 99;
-    ppocr::OCR ocr(det, rec, dict, gpu);
+    rpocr::OCR ocr(det, rec, dict, gpu);
     (void)ocr;
   } catch (const std::exception& ex) {
     rejected = std::string(ex.what()).find("GPU-only") != std::string::npos;
@@ -98,9 +98,9 @@ int BadIndex(const std::string& det, const std::string& rec, const std::string& 
     std::cerr << "gpu_only accepted device index 99\n";
     return 1;
   }
-  ppocr::Options cpu_options;
-  cpu_options.backend = ppocr::Backend::cpu_only;
-  ppocr::OCR cpu(det, rec, dict, cpu_options);
+  rpocr::Options cpu_options;
+  cpu_options.backend = rpocr::Backend::cpu_only;
+  rpocr::OCR cpu(det, rec, dict, cpu_options);
   (void)cpu.Recognize(Solid(24, 12, 200));
   std::cout << "bad-index fallback passed\n";
   return 0;
@@ -113,7 +113,7 @@ int Lifecycle(const std::string& det, const std::string& rec, const std::string&
     return 2;
   }
   const auto options = GpuOptions();
-  const std::vector<ppocr::Image> sizes = {
+  const std::vector<rpocr::Image> sizes = {
       Solid(8, 8, 255),
       Solid(17, 13, 10),
       Solid(320, 48, 240),
@@ -121,10 +121,10 @@ int Lifecycle(const std::string& det, const std::string& rec, const std::string&
   };
   std::string first_text;
   for (int pass = 0; pass < 3; ++pass) {
-    ppocr::OCR ocr(det, rec, dict, options);
+    rpocr::OCR ocr(det, rec, dict, options);
     for (const auto& image : sizes) (void)ocr.Recognize(image);
     if (!image_path.empty()) {
-      const auto text = Joined(ocr.Recognize(ppocr::LoadPPM(image_path)));
+      const auto text = Joined(ocr.Recognize(rpocr::LoadPPM(image_path)));
       if (pass == 0) first_text = text;
       else if (text != first_text) {
         std::cerr << "create/destroy pass " << pass << " changed text\n";
@@ -148,8 +148,8 @@ int Threads(const std::string& det, const std::string& rec, const std::string& d
     return 2;
   }
   const auto options = GpuOptions();
-  const auto image = ppocr::LoadPPM(image_path);
-  const std::string expected = Joined(ppocr::OCR(det, rec, dict, options).Recognize(image));
+  const auto image = rpocr::LoadPPM(image_path);
+  const std::string expected = Joined(rpocr::OCR(det, rec, dict, options).Recognize(image));
   std::string left;
   std::string right;
   std::string left_error;
@@ -157,14 +157,14 @@ int Threads(const std::string& det, const std::string& rec, const std::string& d
   {
     std::thread a([&] {
       try {
-        left = Joined(ppocr::OCR(det, rec, dict, options).Recognize(image));
+        left = Joined(rpocr::OCR(det, rec, dict, options).Recognize(image));
       } catch (const std::exception& ex) {
         left_error = ex.what();
       }
     });
     std::thread b([&] {
       try {
-        right = Joined(ppocr::OCR(det, rec, dict, options).Recognize(image));
+        right = Joined(rpocr::OCR(det, rec, dict, options).Recognize(image));
       } catch (const std::exception& ex) {
         right_error = ex.what();
       }
@@ -180,7 +180,7 @@ int Threads(const std::string& det, const std::string& rec, const std::string& d
     std::cerr << "two handles produced different text\n";
     return 1;
   }
-  ppocr::OCR shared(det, rec, dict, options);
+  rpocr::OCR shared(det, rec, dict, options);
   std::string shared_left;
   std::string shared_right;
   std::string shared_left_error;

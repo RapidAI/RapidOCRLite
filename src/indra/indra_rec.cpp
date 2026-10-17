@@ -17,7 +17,7 @@
 #define INDRA_ACCEL 1
 #endif
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 int RoundUp(int n, int m) { return (n + m - 1) / m * m; }
 std::vector<float> Packed(const Kern* k, const std::vector<float>& W, int N, int K) {
@@ -295,4 +295,4 @@ void RecNet::Run(const float* x, int B, int H, int W, const int64_t* widths, int
   work();
   for (auto& th : pool) th.join();
 }
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

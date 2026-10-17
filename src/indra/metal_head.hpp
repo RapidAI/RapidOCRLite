@@ -3,7 +3,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
-namespace ppocr::indra {
+namespace rpocr::indra {
 class MetalHead {
  public:
   // W: [V][C] row-major, b: [V]. Throws if no Metal device or C unsupported.
@@ -16,4 +16,4 @@ class MetalHead {
   struct Impl;
   std::unique_ptr<Impl> p_;
 };
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

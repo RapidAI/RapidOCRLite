@@ -1,5 +1,5 @@
-#include "ppocr/ppocr.h"
-#include "ppocr/ppocr.hpp"
+#include "rapidocrlite/rapidocrlite.h"
+#include "rapidocrlite/rapidocrlite.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -14,7 +14,7 @@
 
 namespace {
 
-float BoxIou(const ppocr::Result& left, const ppocr::Result& right) {
+float BoxIou(const rpocr::Result& left, const rpocr::Result& right) {
   const float ax0 = static_cast<float>(left.bbox[0]);
   const float ay0 = static_cast<float>(left.bbox[1]);
   const float ax1 = ax0 + static_cast<float>(left.bbox[2]);
@@ -35,8 +35,8 @@ float BoxIou(const ppocr::Result& left, const ppocr::Result& right) {
   return area > 0.F ? inter / area : 0.F;
 }
 
-void CheckPage(const std::vector<ppocr::Result>& cpu,
-               const std::vector<ppocr::Result>& gpu,
+void CheckPage(const std::vector<rpocr::Result>& cpu,
+               const std::vector<rpocr::Result>& gpu,
                const std::string& image_name, float& worst_confidence_error,
                float& worst_iou) {
   if (cpu.size() != gpu.size()) {
@@ -49,7 +49,7 @@ void CheckPage(const std::vector<ppocr::Result>& cpu,
     const auto& actual = gpu[index];
     const float iou = BoxIou(expected, actual);
     worst_iou = std::min(worst_iou, iou);
-    const auto describe = [](const ppocr::Result& value) {
+    const auto describe = [](const rpocr::Result& value) {
       std::ostringstream out;
       out << "text='" << value.text << "' bbox=" << value.bbox[0] << ','
           << value.bbox[1] << ',' << value.bbox[2] << ',' << value.bbox[3]
@@ -84,10 +84,10 @@ int main(int argc, char** argv) {
     return 2;
   }
   try {
-    ppocr::Options cpu_options;
-    cpu_options.backend = ppocr::Backend::cpu_only;
-    ppocr::Options gpu_options = cpu_options;
-    gpu_options.backend = ppocr::Backend::gpu_only;
+    rpocr::Options cpu_options;
+    cpu_options.backend = rpocr::Backend::cpu_only;
+    rpocr::Options gpu_options = cpu_options;
+    gpu_options.backend = rpocr::Backend::gpu_only;
     if (const char* value = std::getenv("PPOCR_VULKAN_DEVICE_INDEX")) {
       const int index = std::atoi(value);
       if (index >= 0) gpu_options.vulkan_device_index = index;
@@ -103,9 +103,9 @@ int main(int argc, char** argv) {
       return 1;
     }();
     for (int index = 4; index < argc; ++index) {
-      ppocr::OCR cpu(argv[1], argv[2], argv[3], cpu_options);
-      ppocr::OCR gpu(argv[1], argv[2], argv[3], gpu_options);
-      const auto image = ppocr::LoadPPM(argv[index]);
+      rpocr::OCR cpu(argv[1], argv[2], argv[3], cpu_options);
+      rpocr::OCR gpu(argv[1], argv[2], argv[3], gpu_options);
+      const auto image = rpocr::LoadPPM(argv[index]);
       const auto cpu_begin = std::chrono::steady_clock::now();
       const auto expected = cpu.Recognize(image);
       const double cpu_ms = std::chrono::duration<double, std::milli>(
@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
                 << " vulkan_ms=" << (gpu_ms / repeats)
                 << " lines=" << expected.size() << '\n';
     }
-    const int validation_errors = ppocr_vulkan_validation_error_count();
+    const int validation_errors = rpocr_vulkan_validation_error_count();
     std::cout << std::fixed << std::setprecision(7)
               << "GPU-only OCR smoke passed images=" << argc - 4
               << " repeats=" << repeats

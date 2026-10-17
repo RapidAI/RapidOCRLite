@@ -9,7 +9,7 @@
 #include <vector>
 
 int main() {
-  const auto info = ppocr::detail::QueryVulkanBackendInfo();
+  const auto info = rpocr::detail::QueryVulkanBackendInfo();
   if (!info.vulkan_compute_available) {
     std::cerr << "Vulkan compute unavailable\n";
     return 2;
@@ -18,7 +18,7 @@ int main() {
   // than using a per-operator host round trip. Verify the allocator's
   // last-use reuse contract independently of any model-specific graph.
   {
-    ppocr::detail::VulkanTensorArena arena;
+    rpocr::detail::VulkanTensorArena arena;
     if (!arena.available()) {
       std::cerr << "Vulkan tensor arena unavailable\n";
       return 1;
@@ -45,7 +45,7 @@ int main() {
     }
     if (!rhs.resident || !rhs2.resident || !arena.Upload(reused, arena_left.data(), arena_left.size()) ||
         !arena.Upload(rhs, arena_right.data(), arena_right.size()) ||
-        !arena.BinaryInplace(reused, rhs, ppocr::detail::kernels::BinaryOp::mul) ||
+        !arena.BinaryInplace(reused, rhs, rpocr::detail::kernels::BinaryOp::mul) ||
         !arena.Download(arena_output.data(), reused, arena_output.size())) {
       std::cerr << "Vulkan tensor arena device binary failed\n";
       return 1;
@@ -97,7 +97,7 @@ int main() {
         !arena.Upload(broadcast_b, broadcast_rhs.data(), broadcast_rhs.size()) ||
         !arena.BinaryBroadcast(broadcast_a, broadcast_b, broadcast_d, broadcast_batches,
                                broadcast_plane, broadcast_channels, true,
-                               ppocr::detail::kernels::BinaryOp::mul) ||
+                               rpocr::detail::kernels::BinaryOp::mul) ||
         !arena.Download(broadcast_output.data(), broadcast_d, broadcast_output.size())) {
       std::cerr << "Vulkan tensor arena broadcast failed\n";
       return 1;
@@ -116,7 +116,7 @@ int main() {
     constexpr std::size_t concat_outer = 3, concat_inner = 5;
     const std::vector<std::size_t> concat_axes{2, 3, 1, 4};
     std::vector<std::vector<float>> concat_host(4);
-    std::vector<ppocr::detail::VulkanTensorSlot> concat_inputs;
+    std::vector<rpocr::detail::VulkanTensorSlot> concat_inputs;
     for (std::size_t input_index = 0; input_index < concat_axes.size(); ++input_index) {
       concat_host[input_index].resize(concat_outer * concat_axes[input_index] * concat_inner);
       for (std::size_t i = 0; i < concat_host[input_index].size(); ++i)
@@ -254,8 +254,8 @@ int main() {
     // Unary activations are a separate device-resident graph boundary; chain
     // exact ONNX HardSigmoid and HardSwish before observing the result.
     if (!arena.Upload(reused, arena_left.data(), arena_left.size()) ||
-        !arena.UnaryInplace(reused, ppocr::detail::VulkanUnaryOp::hard_sigmoid, .2F, .5F) ||
-        !arena.UnaryInplace(reused, ppocr::detail::VulkanUnaryOp::hard_swish, 1.F / 6.F, .5F) ||
+        !arena.UnaryInplace(reused, rpocr::detail::VulkanUnaryOp::hard_sigmoid, .2F, .5F) ||
+        !arena.UnaryInplace(reused, rpocr::detail::VulkanUnaryOp::hard_swish, 1.F / 6.F, .5F) ||
         !arena.Download(arena_output.data(), reused, arena_output.size())) {
       std::cerr << "Vulkan tensor arena unary activation failed\n";
       return 1;
@@ -271,7 +271,7 @@ int main() {
     // Exact Erf-GELU is required by all PP-OCRv6 variants. This is a graph
     // device operation, not the optional approximate fused-convolution mode.
     if (!arena.Upload(reused, arena_left.data(), arena_left.size()) ||
-        !arena.UnaryInplace(reused, ppocr::detail::VulkanUnaryOp::gelu) ||
+        !arena.UnaryInplace(reused, rpocr::detail::VulkanUnaryOp::gelu) ||
         !arena.Download(arena_output.data(), reused, arena_output.size())) {
       std::cerr << "Vulkan tensor arena GELU failed\n";
       return 1;
@@ -287,8 +287,8 @@ int main() {
     if (!arena.Upload(reused, arena_left.data(), arena_left.size()) ||
         !arena.Upload(rhs2, arena_right.data(), arena_right.size()) ||
         !arena.BinaryChainInplace(reused, {rhs, rhs2},
-                                  {ppocr::detail::kernels::BinaryOp::add,
-                                   ppocr::detail::kernels::BinaryOp::mul}) ||
+                                  {rpocr::detail::kernels::BinaryOp::add,
+                                   rpocr::detail::kernels::BinaryOp::mul}) ||
         !arena.Download(arena_output.data(), reused, arena_output.size())) {
       std::cerr << "Vulkan tensor arena device chain failed\n";
       return 1;
@@ -390,11 +390,11 @@ int main() {
       std::cerr << "Vulkan tensor arena depthwise hard-swish failed\n";
       return 1;
     }
-    ppocr::detail::kernels::DepthwiseConv(cpu_depth_hswish.data(), host_depth_input.data(),
+    rpocr::detail::kernels::DepthwiseConv(cpu_depth_hswish.data(), host_depth_input.data(),
                                           host_depth_weights.data(), host_depth_bias.data(),
                                           depth_channels, input_height, input_width, output_height,
                                           output_width, kernel_height, kernel_width, 2, 2, 1, 1);
-    ppocr::detail::kernels::HardSwish(cpu_depth_hswish.data(), cpu_depth_hswish.data(),
+    rpocr::detail::kernels::HardSwish(cpu_depth_hswish.data(), cpu_depth_hswish.data(),
                                       cpu_depth_hswish.size());
     for (std::size_t index = 0; index < cpu_depth_hswish.size(); ++index) {
       const float tolerance = 4e-5F * std::max(1.F, std::abs(cpu_depth_hswish[index]));
@@ -756,9 +756,9 @@ int main() {
     for (int i = 0; i < chain_cout; ++i) host_b1[static_cast<std::size_t>(i)] = float(int(i % 11) - 5) * .0625F;
     std::memcpy(host_packed.data(), host_w1.data(), host_w1.size() * sizeof(float));
     std::memcpy(host_packed.data() + host_w1.size(), host_b1.data(), host_b1.size() * sizeof(float));
-    ppocr::detail::kernels::ConvTranspose2x2(host_mid.data(), host_chain_in.data(), host_w0.data(),
+    rpocr::detail::kernels::ConvTranspose2x2(host_mid.data(), host_chain_in.data(), host_w0.data(),
                                              host_b0.data(), chain_cin, chain_mid, chain_h, chain_w, 1);
-    ppocr::detail::kernels::ConvTranspose2x2(host_chain_cpu.data(), host_mid.data(), host_w1.data(),
+    rpocr::detail::kernels::ConvTranspose2x2(host_chain_cpu.data(), host_mid.data(), host_w1.data(),
                                              host_b1.data(), chain_mid, chain_cout, chain_h * 2,
                                              chain_w * 2, 2);
     auto chain_in = arena.Acquire(host_chain_in.size(), "arena-ct-chain-in");
@@ -1143,16 +1143,16 @@ int main() {
       for (int i = 0; i < dwpw_m; ++i) host_pb[i] = float(i - 3) * .0625F;
       std::copy(host_db.begin(), host_db.end(), packed_bias.begin());
       std::copy(host_pb.begin(), host_pb.end(), packed_bias.begin() + dwpw_c);
-      ppocr::detail::kernels::DepthwiseConv(
+      rpocr::detail::kernels::DepthwiseConv(
           host_mid.data(), host_in.data(), host_dw.data(), host_db.data(), dwpw_c,
           dwpw_h, dwpw_w, dwpw_h, dwpw_w, 3, 3, 1, 1, 1, 1);
       for (int gelu = 0; gelu < 2; ++gelu) {
         std::vector<float> host_expected(dwpw_m * plane), host_out(dwpw_m * plane);
-        ppocr::detail::kernels::PointwiseConv(
+        rpocr::detail::kernels::PointwiseConv(
             host_expected.data(), host_mid.data(), host_pw.data(), host_pb.data(),
             dwpw_m, dwpw_c, plane);
         if (gelu) {
-          ppocr::detail::kernels::Gelu(host_expected.data(), host_expected.data(),
+          rpocr::detail::kernels::Gelu(host_expected.data(), host_expected.data(),
                                        host_expected.size(), host_expected.size());
         }
         auto slot_in = arena.Acquire(host_in.size(), "arena-dwpw-in");
@@ -1375,10 +1375,10 @@ int main() {
       for (std::size_t i = 0; i < stem_weights.size(); ++i) stem_weights[i] = float(int(i % 17) - 8) * .015625F;
       for (int i = 0; i < stem_m; ++i) stem_bias[std::size_t(i)] = float(i - 3) * .0625F;
       std::vector<float> pooled(stem_a.size());
-      ppocr::detail::kernels::MaxPool2x2Same(pooled.data(), stem_a.data(), stem_c0, stem_h, stem_w);
+      rpocr::detail::kernels::MaxPool2x2Same(pooled.data(), stem_a.data(), stem_c0, stem_h, stem_w);
       const float* sources[] = {pooled.data(), stem_b.data()};
       const int source_channels[] = {stem_c0, stem_c1};
-      ppocr::detail::kernels::ConcatChannelConv2d(
+      rpocr::detail::kernels::ConcatChannelConv2d(
           stem_cpu.data(), sources, source_channels, 2, stem_weights.data(), stem_bias.data(),
           stem_m, stem_h, stem_w, stem_oh, stem_ow, stem_kh, stem_kw, 2, 2, 0, 0, true);
       auto gpu_a = arena.Acquire(stem_a.size(), "stem-a");
@@ -1428,7 +1428,7 @@ int main() {
       for (std::size_t i = 0; i < project_w.size(); ++i) project_w[i] = float(int(i % 13) - 6) * .015625F;
       for (int i = 0; i < hidden; ++i) expand_b[std::size_t(i)] = float(i - 7) * .0625F;
       for (int i = 0; i < channels; ++i) project_b[std::size_t(i)] = float(i - 3) * .0625F;
-      ppocr::detail::kernels::ExpandGeluProjectAdd(
+      rpocr::detail::kernels::ExpandGeluProjectAdd(
           cpu.data(), src.data(), expand_w.data(), expand_b.data(), project_w.data(),
           project_b.data(), channels, hidden, plane);
       auto g_src = arena.Acquire(src.size(), "ir-src");
@@ -1478,11 +1478,11 @@ int main() {
       left[i] = float(i) * .125F - 17.F;
       right[i] = float(i % 31) * .25F + .75F;
     }
-    for (const auto operation : {ppocr::detail::kernels::BinaryOp::add,
-                                 ppocr::detail::kernels::BinaryOp::sub,
-                                 ppocr::detail::kernels::BinaryOp::mul,
-                                 ppocr::detail::kernels::BinaryOp::div}) {
-      if (!ppocr::detail::VulkanBinary(output.data(), left.data(), right.data(), count,
+    for (const auto operation : {rpocr::detail::kernels::BinaryOp::add,
+                                 rpocr::detail::kernels::BinaryOp::sub,
+                                 rpocr::detail::kernels::BinaryOp::mul,
+                                 rpocr::detail::kernels::BinaryOp::div}) {
+      if (!rpocr::detail::VulkanBinary(output.data(), left.data(), right.data(), count,
                                        operation)) {
         std::cerr << "Vulkan binary dispatch failed, count=" << count << '\n';
         return 1;
@@ -1490,10 +1490,10 @@ int main() {
       for (std::size_t i = 0; i < count; ++i) {
         float expected{};
         switch (operation) {
-          case ppocr::detail::kernels::BinaryOp::add: expected = left[i] + right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::sub: expected = left[i] - right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::mul: expected = left[i] * right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::div: expected = left[i] / right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::add: expected = left[i] + right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::sub: expected = left[i] - right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::mul: expected = left[i] * right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::div: expected = left[i] / right[i]; break;
         }
         const float tolerance = 2e-5F * std::max(1.F, std::abs(expected));
         if (std::abs(output[i] - expected) > tolerance) {
@@ -1511,12 +1511,12 @@ int main() {
       left[i] = float(i) * .03125F - 5.F;
       right[i] = float(i % 23) * .0625F + .5F;
     }
-    const std::vector<ppocr::detail::kernels::BinaryOp> chain{
-        ppocr::detail::kernels::BinaryOp::add,
-        ppocr::detail::kernels::BinaryOp::mul,
-        ppocr::detail::kernels::BinaryOp::sub,
-        ppocr::detail::kernels::BinaryOp::div};
-    if (!ppocr::detail::VulkanBinaryChain(output.data(), left.data(), right.data(), count, chain)) {
+    const std::vector<rpocr::detail::kernels::BinaryOp> chain{
+        rpocr::detail::kernels::BinaryOp::add,
+        rpocr::detail::kernels::BinaryOp::mul,
+        rpocr::detail::kernels::BinaryOp::sub,
+        rpocr::detail::kernels::BinaryOp::div};
+    if (!rpocr::detail::VulkanBinaryChain(output.data(), left.data(), right.data(), count, chain)) {
       std::cerr << "Vulkan binary chain dispatch failed\n";
       return 1;
     }
@@ -1524,10 +1524,10 @@ int main() {
       float expected = left[i];
       for (const auto operation : chain) {
         switch (operation) {
-          case ppocr::detail::kernels::BinaryOp::add: expected += right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::sub: expected -= right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::mul: expected *= right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::div: expected /= right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::add: expected += right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::sub: expected -= right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::mul: expected *= right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::div: expected /= right[i]; break;
         }
       }
       const float tolerance = 2e-5F * std::max(1.F, std::abs(expected));
@@ -1548,10 +1548,10 @@ int main() {
     std::vector<float> left(count * batches), right(right_elements), output(count * batches);
     for (std::size_t i = 0; i < left.size(); ++i) left[i] = float(i % count) * .03125F - 4.F;
     for (std::size_t i = 0; i < right.size(); ++i) right[i] = float(i % 31) * .0625F + .75F;
-    const std::vector<ppocr::detail::kernels::BinaryOp> chain{
-        ppocr::detail::kernels::BinaryOp::mul,
-        ppocr::detail::kernels::BinaryOp::add};
-    if (!ppocr::detail::VulkanBinaryBroadcastRightChainBatch(
+    const std::vector<rpocr::detail::kernels::BinaryOp> chain{
+        rpocr::detail::kernels::BinaryOp::mul,
+        rpocr::detail::kernels::BinaryOp::add};
+    if (!rpocr::detail::VulkanBinaryBroadcastRightChainBatch(
             output.data(), left.data(), right.data(), count, batches,
             right_repeat, right_elements, chain)) {
       std::cerr << "Vulkan broadcast batch dispatch failed\n";
@@ -1562,10 +1562,10 @@ int main() {
       const float gate = right[(i / count) * right_per_batch + (i % count) / right_repeat];
       for (const auto operation : chain) {
         switch (operation) {
-          case ppocr::detail::kernels::BinaryOp::add: expected += gate; break;
-          case ppocr::detail::kernels::BinaryOp::sub: expected -= gate; break;
-          case ppocr::detail::kernels::BinaryOp::mul: expected *= gate; break;
-          case ppocr::detail::kernels::BinaryOp::div: expected /= gate; break;
+          case rpocr::detail::kernels::BinaryOp::add: expected += gate; break;
+          case rpocr::detail::kernels::BinaryOp::sub: expected -= gate; break;
+          case rpocr::detail::kernels::BinaryOp::mul: expected *= gate; break;
+          case rpocr::detail::kernels::BinaryOp::div: expected /= gate; break;
         }
       }
       const float tolerance = 2e-5F * std::max(1.F, std::abs(expected));
@@ -1591,11 +1591,11 @@ int main() {
       left1[i] = float(i % count) * .03125F + 2.F;
     }
     for (std::size_t i = 0; i < right.size(); ++i) right[i] = float(i % 29) * .0625F + .625F;
-    const std::vector<ppocr::detail::kernels::BinaryOp> chain{
-        ppocr::detail::kernels::BinaryOp::mul,
-        ppocr::detail::kernels::BinaryOp::add};
+    const std::vector<rpocr::detail::kernels::BinaryOp> chain{
+        rpocr::detail::kernels::BinaryOp::mul,
+        rpocr::detail::kernels::BinaryOp::add};
     for (const float* left : {left0.data(), left1.data()}) {
-      if (!ppocr::detail::VulkanBinaryBroadcastRightChainBatch(
+      if (!rpocr::detail::VulkanBinaryBroadcastRightChainBatch(
               output.data(), left, right.data(), count, batches, right_repeat,
               right_per_batch, chain, true)) {
         std::cerr << "Vulkan shared-RHS broadcast batch dispatch failed\n";
@@ -1624,7 +1624,7 @@ int main() {
     for (std::size_t i = 0; i < left.size(); ++i) left[i] = float(i % 79) * .03125F - 1.F;
     for (std::size_t i = 0; i < right.size(); ++i) right[i] = float(i % 47) * .015625F - .375F;
     for (int i = 0; i < columns; ++i) bias[std::size_t(i)] = float(i % 17) * .0625F - .5F;
-    if (!ppocr::detail::VulkanGemm(output.data(), left.data(), right.data(), bias.data(),
+    if (!rpocr::detail::VulkanGemm(output.data(), left.data(), right.data(), bias.data(),
                                    rows, depth, columns, true)) {
       std::cerr << "Vulkan GEMM dispatch failed\n";
       return 1;
@@ -1657,7 +1657,7 @@ int main() {
     for (std::size_t i = 0; i < left.size(); ++i) left[i] = float(i % 83) * .03125F - .875F;
     for (std::size_t i = 0; i < right.size(); ++i) right[i] = float(i % 53) * .015625F - .4375F;
     for (int i = 0; i < columns; ++i) bias[std::size_t(i)] = float(i % 19) * .0625F - .5F;
-    if (!ppocr::detail::VulkanGemm(output.data(), left.data(), right.data(), bias.data(),
+    if (!rpocr::detail::VulkanGemm(output.data(), left.data(), right.data(), bias.data(),
                                    rows, depth, columns, true)) {
       std::cerr << "Vulkan tiled GEMM dispatch failed\n";
       return 1;
@@ -1689,7 +1689,7 @@ int main() {
     for (std::size_t i = 0; i < left.size(); ++i) left[i] = float(i % 71) * .03125F - .875F;
     for (std::size_t i = 0; i < right.size(); ++i) right[i] = float(i % 43) * .015625F - .3125F;
     for (int i = 0; i < columns; ++i) bias[std::size_t(i)] = float(i % 13) * .0625F - .375F;
-    if (!ppocr::detail::VulkanGemmSwish(output.data(), left.data(), right.data(), bias.data(),
+    if (!rpocr::detail::VulkanGemmSwish(output.data(), left.data(), right.data(), bias.data(),
                                         rows, depth, columns, true)) {
       std::cerr << "Vulkan GEMM+Swish dispatch failed\n";
       return 1;
@@ -1731,13 +1731,13 @@ int main() {
       for (std::size_t i = 0; i < right.size(); ++i)
         right[i] = float(int(i % 17) - 8) * .03125F;
       for (int i = 0; i < cse.vocab; ++i) bias[i] = float(i % 13) * .0625F - .375F;
-      if (!ppocr::detail::VulkanGemmCtcTop1(gpu_idx.data(), gpu_prob.data(), left.data(),
+      if (!rpocr::detail::VulkanGemmCtcTop1(gpu_idx.data(), gpu_prob.data(), left.data(),
                                             right.data(), bias.data(), cse.rows, cse.depth,
                                             cse.vocab, cse.rows, true)) {
         std::cerr << "Vulkan GEMM+CTC dispatch failed (" << cse.name << ")\n";
         return 1;
       }
-      ppocr::detail::kernels::GemmCtcTop1(cpu_idx.data(), cpu_prob.data(), left.data(),
+      rpocr::detail::kernels::GemmCtcTop1(cpu_idx.data(), cpu_prob.data(), left.data(),
                                           right.data(), bias.data(), cse.rows, cse.depth,
                                           cse.vocab, cse.rows);
       for (int row = 0; row < cse.rows; ++row) {
@@ -1756,7 +1756,7 @@ int main() {
     }
     double gemm_ctc_gpu_ms{};
     double gemm_ctc_cpu_ms{};
-    const bool hybrid_gemm_ctc_selects_gpu = ppocr::detail::VulkanGemmCtcTop1NoSlowerThanCpu(
+    const bool hybrid_gemm_ctc_selects_gpu = rpocr::detail::VulkanGemmCtcTop1NoSlowerThanCpu(
         76, 96, 6625, &gemm_ctc_gpu_ms, &gemm_ctc_cpu_ms, true);
     std::cerr << "hybrid GEMM+CTC admission gpu_ms=" << gemm_ctc_gpu_ms
               << " cpu_ms=" << gemm_ctc_cpu_ms
@@ -1779,7 +1779,7 @@ int main() {
     std::vector<float> output(residual.size());
     for (std::size_t i = 0; i < source.size(); ++i) source[i] = float(i % 131) * .015625F - 1.F;
     for (std::size_t i = 0; i < residual.size(); ++i) residual[i] = float(i % 97) * .03125F - .5F;
-    if (!ppocr::detail::VulkanNearestResize2xAddBatch(
+    if (!rpocr::detail::VulkanNearestResize2xAddBatch(
             output.data(), source.data(), residual.data(), batches, channels,
             input_height, input_width)) {
       std::cerr << "Vulkan nearest-resize-add batch dispatch failed\n";
@@ -1824,7 +1824,7 @@ int main() {
     for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(i % 43) * .03125F - .625F;
     for (int i = 0; i < output_channels; ++i) bias[std::size_t(i)] = float(i % 11) * .0625F - .25F;
     for (std::size_t i = 0; i < residual.size(); ++i) residual[i] = float(i % 67) * .015625F - .5F;
-    if (!ppocr::detail::VulkanConvTranspose2x2AddBatch(
+    if (!rpocr::detail::VulkanConvTranspose2x2AddBatch(
             output.data(), input.data(), weights.data(), bias.data(), residual.data(), batches,
             input_channels, output_channels, input_height, input_width, true)) {
       std::cerr << "Vulkan ConvTranspose2x2+Add dispatch failed\n";
@@ -1875,7 +1875,7 @@ int main() {
     for (std::size_t i = 0; i < input.size(); ++i) input[i] = float(int(i % 31) - 15) * .0625F;
     for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 19) - 9) * .03125F;
     for (int channel = 0; channel < channels; ++channel) bias[channel] = float(channel - 4) * .0625F;
-    if (!ppocr::detail::VulkanDepthwiseConvBatch(
+    if (!rpocr::detail::VulkanDepthwiseConvBatch(
             output.data(), input.data(), weights.data(), bias.data(), batches, channels,
             input_height, input_width, output_height, output_width,
             kernel_height, kernel_width, stride_height, stride_width,
@@ -1934,7 +1934,7 @@ int main() {
       bias[i] = float(i % 23) * .015625F - .25F;
     }
     for (const float* left : {left0.data(), left1.data()}) {
-      if (!ppocr::detail::VulkanChannelAffineBatch(
+      if (!rpocr::detail::VulkanChannelAffineBatch(
               output.data(), left, scale.data(), bias.data(), count, batches,
               channel_repeat, channels, true)) {
         std::cerr << "Vulkan channel-affine batch dispatch failed\n";
@@ -1970,7 +1970,7 @@ int main() {
       bias[i] = float(i % 23) * .015625F - .25F;
     }
     for (const float* left : {left0.data(), left1.data()}) {
-      if (!ppocr::detail::VulkanChannelAffineSwishBatch(
+      if (!rpocr::detail::VulkanChannelAffineSwishBatch(
               output.data(), left, scale.data(), bias.data(), count, batches,
               channel_repeat, channels, true)) {
         std::cerr << "Vulkan channel-affine Swish batch dispatch failed\n";
@@ -2006,9 +2006,9 @@ int main() {
       scale[i] = float(i % 29) * .03125F + .5F;
       bias[i] = float(i % 23) * .015625F - .25F;
     }
-    if (!ppocr::detail::VulkanChannelAffineSwishBinaryBatch(
+    if (!rpocr::detail::VulkanChannelAffineSwishBinaryBatch(
             output.data(), left.data(), scale.data(), bias.data(), right.data(), count, batches,
-            channel_repeat, channels, ppocr::detail::kernels::BinaryOp::add, true)) {
+            channel_repeat, channels, rpocr::detail::kernels::BinaryOp::add, true)) {
       std::cerr << "Vulkan channel-affine Swish+Add batch dispatch failed\n";
       return 1;
     }
@@ -2041,7 +2041,7 @@ int main() {
     for (std::size_t i = 0; i < residual.size(); ++i) residual[i] = float(i % 37) * .03125F - .5F;
     // Conv->Sigmoid is a detector gate. Keep it in the same batch-aware GPU
     // dispatch so hybrid does not need a CPU activation pass after readback.
-    if (!ppocr::detail::VulkanPointwiseConvBatch(
+    if (!rpocr::detail::VulkanPointwiseConvBatch(
             output.data(), input.data(), weights.data(), bias.data(), batches,
             input_channels, output_channels, plane, true, false, false, true)) {
       std::cerr << "Vulkan pointwise Conv+Sigmoid batch dispatch failed\n";
@@ -2067,7 +2067,7 @@ int main() {
     }
     // PP-OCR detector squeeze-excitation gates also export HardSigmoid.
     // Validate its alpha/beta push constants on the same odd spatial tail.
-    if (!ppocr::detail::VulkanPointwiseConvBatch(
+    if (!rpocr::detail::VulkanPointwiseConvBatch(
             output.data(), input.data(), weights.data(), bias.data(), batches,
             input_channels, output_channels, plane, true, false, false, false,
             true, 1.F / 6.F, .5F)) {
@@ -2095,7 +2095,7 @@ int main() {
     // Conv->HardSigmoid->Mul is canonicalized to exact HardSwish by the
     // detector graph fuser. Keep that final activation in the same batch
     // dispatch and validate the odd spatial tail independently.
-    if (!ppocr::detail::VulkanPointwiseConvBatch(
+    if (!rpocr::detail::VulkanPointwiseConvBatch(
             output.data(), input.data(), weights.data(), bias.data(), batches,
             input_channels, output_channels, plane, true, false, false, false,
             false, 1.F / 6.F, .5F, true)) {
@@ -2121,7 +2121,7 @@ int main() {
       }
     }
     for (const bool relu : {false, true}) {
-      if (!ppocr::detail::VulkanPointwiseConvBatch(
+      if (!rpocr::detail::VulkanPointwiseConvBatch(
               output.data(), input.data(), weights.data(), bias.data(), batches,
               input_channels, output_channels, plane, true, relu)) {
         std::cerr << "Vulkan pointwise Conv batch dispatch failed\n";
@@ -2148,7 +2148,7 @@ int main() {
     }
     // The common Conv->Sigmoid->Mul graph is folded to Conv+Swish. Exercise
     // its one-dispatch pointwise implementation across the same NCHW batch.
-    if (!ppocr::detail::VulkanPointwiseConvBatch(
+    if (!rpocr::detail::VulkanPointwiseConvBatch(
             output.data(), input.data(), weights.data(), bias.data(), batches,
             input_channels, output_channels, plane, true, false, true)) {
       std::cerr << "Vulkan pointwise Conv+Swish batch dispatch failed\n";
@@ -2173,7 +2173,7 @@ int main() {
       }
     }
     for (const bool relu : {false, true}) {
-      if (!ppocr::detail::VulkanPointwiseConvAddBatch(
+      if (!rpocr::detail::VulkanPointwiseConvAddBatch(
               output.data(), input.data(), weights.data(), bias.data(), residual.data(), batches,
               input_channels, output_channels, plane, true, relu)) {
         std::cerr << "Vulkan residual pointwise Conv batch dispatch failed\n";
@@ -2203,7 +2203,7 @@ int main() {
     }
     // The recognizer also contains Conv->shortcut Add->Sigmoid->Mul. This
     // is mode 9: the residual and exact Swish stay in the same GPU dispatch.
-    if (!ppocr::detail::VulkanPointwiseConvAddBatch(
+    if (!rpocr::detail::VulkanPointwiseConvAddBatch(
             output.data(), input.data(), weights.data(), bias.data(), residual.data(), batches,
             input_channels, output_channels, plane, true, false, true)) {
       std::cerr << "Vulkan residual pointwise Conv+Swish batch dispatch failed\n";
@@ -2243,12 +2243,12 @@ int main() {
         right[offset] = float((i + batch) % 17) * .125F + .5F;
       }
     }
-    const std::vector<ppocr::detail::kernels::BinaryOp> chain{
-        ppocr::detail::kernels::BinaryOp::add,
-        ppocr::detail::kernels::BinaryOp::mul,
-        ppocr::detail::kernels::BinaryOp::sub,
-        ppocr::detail::kernels::BinaryOp::div};
-    if (!ppocr::detail::VulkanBinaryChainBatch(output.data(), left.data(), right.data(),
+    const std::vector<rpocr::detail::kernels::BinaryOp> chain{
+        rpocr::detail::kernels::BinaryOp::add,
+        rpocr::detail::kernels::BinaryOp::mul,
+        rpocr::detail::kernels::BinaryOp::sub,
+        rpocr::detail::kernels::BinaryOp::div};
+    if (!rpocr::detail::VulkanBinaryChainBatch(output.data(), left.data(), right.data(),
                                                 count, batches, chain)) {
       std::cerr << "Vulkan binary batch dispatch failed\n";
       return 1;
@@ -2257,10 +2257,10 @@ int main() {
       float expected = left[i];
       for (const auto operation : chain) {
         switch (operation) {
-          case ppocr::detail::kernels::BinaryOp::add: expected += right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::sub: expected -= right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::mul: expected *= right[i]; break;
-          case ppocr::detail::kernels::BinaryOp::div: expected /= right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::add: expected += right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::sub: expected -= right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::mul: expected *= right[i]; break;
+          case rpocr::detail::kernels::BinaryOp::div: expected /= right[i]; break;
         }
       }
       const float tolerance = 2e-5F * std::max(1.F, std::abs(expected));
@@ -2282,8 +2282,8 @@ int main() {
       right[i] = float(i % 29) * .125F + .5F;
     }
     for (const float* left : {left0.data(), left1.data()}) {
-      if (!ppocr::detail::VulkanBinary(output.data(), left, right.data(), count,
-                                       ppocr::detail::kernels::BinaryOp::mul, true)) {
+      if (!rpocr::detail::VulkanBinary(output.data(), left, right.data(), count,
+                                       rpocr::detail::kernels::BinaryOp::mul, true)) {
         std::cerr << "Vulkan immutable RHS dispatch failed\n";
         return 1;
       }
@@ -2317,7 +2317,7 @@ int main() {
       for (std::size_t i = 0; i < input.size(); ++i) input[i] = float(int(i % 31) - 15) * .03125F;
       for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 19) - 9) * .015625F;
       for (int channel = 0; channel < output_channels; ++channel) bias[channel] = float(channel - 3) * .0625F;
-      if (!ppocr::detail::VulkanConv2dBatch(
+      if (!rpocr::detail::VulkanConv2dBatch(
               output.data(), input.data(), weights.data(), bias.data(), batches,
               input_channels, output_channels, input_height, input_width,
               output_height, output_width, kernel_height, kernel_width,
@@ -2382,7 +2382,7 @@ int main() {
         weights[i] = float(int(i % 19) - 9) * .015625F;
       for (int channel = 0; channel < spatial.oc; ++channel)
         bias[channel] = float(channel - 3) * .0625F;
-      if (!ppocr::detail::VulkanConv2dBatch(
+      if (!rpocr::detail::VulkanConv2dBatch(
               output.data(), input.data(), weights.data(), bias.data(), spatial.batches,
               spatial.ic, spatial.oc, spatial.ih, spatial.iw, spatial.oh, spatial.ow,
               3, 3, 2, 2, 1, 1, true, spatial.relu)) {
@@ -2434,7 +2434,7 @@ int main() {
     for (std::size_t i = 0; i < input.size(); ++i) input[i] = float(int(i % 23) - 11) * .0625F;
     for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(int(i % 17) - 8) * .03125F;
     for (int channel = 0; channel < channels; ++channel) bias[channel] = float(channel - 2) * .125F;
-    if (!ppocr::detail::VulkanDepthwiseConvBatch(
+    if (!rpocr::detail::VulkanDepthwiseConvBatch(
             output.data(), input.data(), weights.data(), bias.data(), batches, channels,
             input_height, input_width, output_height, output_width,
             kernel_height, kernel_width, stride_height, stride_width,
@@ -2494,14 +2494,14 @@ int main() {
     }
     for (int channel = 0; channel < channels; ++channel) depthwise_bias[channel] = float(channel % 11 - 5) * .125F;
     for (int channel = 0; channel < output_channels; ++channel) pointwise_bias[channel] = float(channel % 13 - 6) * .0625F;
-    ppocr::detail::kernels::DepthwiseConvBatch(
+    rpocr::detail::kernels::DepthwiseConvBatch(
         intermediate.data(), input.data(), depthwise_weights.data(), depthwise_bias.data(),
         int(batches), channels, input_height, input_width, output_height, output_width,
         kernel_height, kernel_width, stride_height, stride_width, pad_top, pad_left);
-    ppocr::detail::kernels::PointwiseConvBatch(
+    rpocr::detail::kernels::PointwiseConvBatch(
         expected.data(), intermediate.data(), pointwise_weights.data(), pointwise_bias.data(),
         int(batches), output_channels, channels, output_plane);
-    if (!ppocr::detail::VulkanDepthwisePointwiseConvBatch(
+    if (!rpocr::detail::VulkanDepthwisePointwiseConvBatch(
             output.data(), input.data(), depthwise_weights.data(), depthwise_bias.data(),
             pointwise_weights.data(), pointwise_bias.data(), batches, channels, output_channels,
             input_height, input_width, output_height, output_width, kernel_height, kernel_width,
@@ -2529,7 +2529,7 @@ int main() {
       const float t = std::clamp(z * (27.F + z2) / (27.F + 9.F * z2), -1.F, 1.F);
       value = .5F * value * (1.F + t);
     }
-    if (!ppocr::detail::VulkanDepthwisePointwiseConvBatch(
+    if (!rpocr::detail::VulkanDepthwisePointwiseConvBatch(
             output.data(), input.data(), depthwise_weights.data(), depthwise_bias.data(),
             pointwise_weights.data(), pointwise_bias.data(), batches, channels, output_channels,
             input_height, input_width, output_height, output_width, kernel_height, kernel_width,
@@ -2548,42 +2548,42 @@ int main() {
   }
   double gpu_ms{};
   double cpu_ms{};
-  const bool hybrid_selects_gpu = ppocr::detail::VulkanBinaryNoSlowerThanCpu(
-      65537, ppocr::detail::kernels::BinaryOp::mul, &gpu_ms, &cpu_ms);
+  const bool hybrid_selects_gpu = rpocr::detail::VulkanBinaryNoSlowerThanCpu(
+      65537, rpocr::detail::kernels::BinaryOp::mul, &gpu_ms, &cpu_ms);
   double chain_gpu_ms{};
   double chain_cpu_ms{};
-  const bool hybrid_chain_selects_gpu = ppocr::detail::VulkanBinaryChainNoSlowerThanCpu(
-      65537, {ppocr::detail::kernels::BinaryOp::add, ppocr::detail::kernels::BinaryOp::mul,
-              ppocr::detail::kernels::BinaryOp::sub, ppocr::detail::kernels::BinaryOp::div},
+  const bool hybrid_chain_selects_gpu = rpocr::detail::VulkanBinaryChainNoSlowerThanCpu(
+      65537, {rpocr::detail::kernels::BinaryOp::add, rpocr::detail::kernels::BinaryOp::mul,
+              rpocr::detail::kernels::BinaryOp::sub, rpocr::detail::kernels::BinaryOp::div},
       &chain_gpu_ms, &chain_cpu_ms);
   double batch_gpu_ms{};
   double batch_cpu_ms{};
-  const bool hybrid_batch_selects_gpu = ppocr::detail::VulkanBinaryChainBatchNoSlowerThanCpu(
-      4099, 4, {ppocr::detail::kernels::BinaryOp::add, ppocr::detail::kernels::BinaryOp::mul,
-                ppocr::detail::kernels::BinaryOp::sub, ppocr::detail::kernels::BinaryOp::div},
+  const bool hybrid_batch_selects_gpu = rpocr::detail::VulkanBinaryChainBatchNoSlowerThanCpu(
+      4099, 4, {rpocr::detail::kernels::BinaryOp::add, rpocr::detail::kernels::BinaryOp::mul,
+                rpocr::detail::kernels::BinaryOp::sub, rpocr::detail::kernels::BinaryOp::div},
       &batch_gpu_ms, &batch_cpu_ms);
   double broadcast_gpu_ms{};
   double broadcast_cpu_ms{};
   const bool hybrid_broadcast_selects_gpu =
-      ppocr::detail::VulkanBinaryBroadcastRightChainBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanBinaryBroadcastRightChainBatchNoSlowerThanCpu(
           8192, 4, 64, 512,
-          {ppocr::detail::kernels::BinaryOp::mul, ppocr::detail::kernels::BinaryOp::add},
+          {rpocr::detail::kernels::BinaryOp::mul, rpocr::detail::kernels::BinaryOp::add},
           &broadcast_gpu_ms, &broadcast_cpu_ms);
   double shared_broadcast_gpu_ms{};
   double shared_broadcast_cpu_ms{};
   const bool hybrid_shared_broadcast_selects_gpu =
-      ppocr::detail::VulkanBinaryBroadcastRightChainBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanBinaryBroadcastRightChainBatchNoSlowerThanCpu(
           8192, 4, 64, 128,
-          {ppocr::detail::kernels::BinaryOp::mul, ppocr::detail::kernels::BinaryOp::add},
+          {rpocr::detail::kernels::BinaryOp::mul, rpocr::detail::kernels::BinaryOp::add},
        &shared_broadcast_gpu_ms, &shared_broadcast_cpu_ms, true);
   double affine_gpu_ms{};
   double affine_cpu_ms{};
-  const bool hybrid_affine_selects_gpu = ppocr::detail::VulkanChannelAffineBatchNoSlowerThanCpu(
+  const bool hybrid_affine_selects_gpu = rpocr::detail::VulkanChannelAffineBatchNoSlowerThanCpu(
       8192, 4, 64, 128, &affine_gpu_ms, &affine_cpu_ms, true);
   double affine_swish_gpu_ms{};
   double affine_swish_cpu_ms{};
   const bool hybrid_affine_swish_selects_gpu =
-      ppocr::detail::VulkanChannelAffineSwishBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanChannelAffineSwishBatchNoSlowerThanCpu(
       8192, 4, 64, 128, &affine_swish_gpu_ms, &affine_swish_cpu_ms, true);
   // Report the complete fused shortcut block too. It is verified above; this
   // direct timing includes upload, dispatch and readback so it can never be
@@ -2609,17 +2609,17 @@ int main() {
   bool affine_swish_add_correct = true;
   for (int run = 0; run < fused_runs; ++run) {
     const auto cpu_begin = std::chrono::steady_clock::now();
-    ppocr::detail::kernels::BatchNormSwishBinary(
+    rpocr::detail::kernels::BatchNormSwishBinary(
         fused_cpu.data(), fused_left.data(), fused_scale.data(), fused_bias.data(),
         fused_right.data(), int(fused_batches), int(fused_channels), fused_repeat,
-        ppocr::detail::kernels::BinaryOp::add);
+        rpocr::detail::kernels::BinaryOp::add);
     affine_swish_add_cpu_ms += std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - cpu_begin).count();
     const auto gpu_begin = std::chrono::steady_clock::now();
-    affine_swish_add_correct &= ppocr::detail::VulkanChannelAffineSwishBinaryBatch(
+    affine_swish_add_correct &= rpocr::detail::VulkanChannelAffineSwishBinaryBatch(
         fused_output.data(), fused_left.data(), fused_scale.data(), fused_bias.data(),
         fused_right.data(), fused_count, fused_batches, fused_repeat, fused_channels,
-        ppocr::detail::kernels::BinaryOp::add, true);
+        rpocr::detail::kernels::BinaryOp::add, true);
     affine_swish_add_gpu_ms += std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - gpu_begin).count();
     for (std::size_t i = 0; i < fused_output.size(); ++i) {
@@ -2631,75 +2631,75 @@ int main() {
   affine_swish_add_cpu_ms /= fused_runs;
   double pointwise_gpu_ms{};
   double pointwise_cpu_ms{};
-  const bool hybrid_pointwise_selects_gpu = ppocr::detail::VulkanPointwiseConvBatchNoSlowerThanCpu(
+  const bool hybrid_pointwise_selects_gpu = rpocr::detail::VulkanPointwiseConvBatchNoSlowerThanCpu(
       4, 24, 40, 257, &pointwise_gpu_ms, &pointwise_cpu_ms, true, false);
   double pointwise_swish_gpu_ms{};
   double pointwise_swish_cpu_ms{};
   const bool hybrid_pointwise_swish_selects_gpu =
-      ppocr::detail::VulkanPointwiseConvBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanPointwiseConvBatchNoSlowerThanCpu(
           4, 24, 40, 257, &pointwise_swish_gpu_ms, &pointwise_swish_cpu_ms,
           true, false, true);
   double pointwise_hard_swish_gpu_ms{};
   double pointwise_hard_swish_cpu_ms{};
   const bool hybrid_pointwise_hard_swish_selects_gpu =
-      ppocr::detail::VulkanPointwiseConvBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanPointwiseConvBatchNoSlowerThanCpu(
           4, 24, 40, 257, &pointwise_hard_swish_gpu_ms,
           &pointwise_hard_swish_cpu_ms, true, false, false, false, false,
           1.F / 6.F, .5F, true);
   double pointwise_add_gpu_ms{};
   double pointwise_add_cpu_ms{};
   const bool hybrid_pointwise_add_selects_gpu =
-      ppocr::detail::VulkanPointwiseConvAddBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanPointwiseConvAddBatchNoSlowerThanCpu(
           4, 24, 40, 257, &pointwise_add_gpu_ms, &pointwise_add_cpu_ms, true, true);
   double pointwise_add_swish_gpu_ms{};
   double pointwise_add_swish_cpu_ms{};
   const bool hybrid_pointwise_add_swish_selects_gpu =
-      ppocr::detail::VulkanPointwiseConvAddBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanPointwiseConvAddBatchNoSlowerThanCpu(
           4, 24, 40, 257, &pointwise_add_swish_gpu_ms,
           &pointwise_add_swish_cpu_ms, true, false, true);
   double depthwise_gpu_ms{};
   double depthwise_cpu_ms{};
   const bool hybrid_depthwise_selects_gpu =
-      ppocr::detail::VulkanDepthwiseConvBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanDepthwiseConvBatchNoSlowerThanCpu(
       4, 32, 31, 29, 31, 29, 3, 3, 1, 1, 1, 1,
           &depthwise_gpu_ms, &depthwise_cpu_ms, true);
   double depthwise_swish_gpu_ms{};
   double depthwise_swish_cpu_ms{};
   const bool hybrid_depthwise_swish_selects_gpu =
-      ppocr::detail::VulkanDepthwiseConvBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanDepthwiseConvBatchNoSlowerThanCpu(
       4, 32, 31, 29, 31, 29, 3, 3, 1, 1, 1, 1,
           &depthwise_swish_gpu_ms, &depthwise_swish_cpu_ms, true, false, true);
   double depthwise_hardswish_gpu_ms{};
   double depthwise_hardswish_cpu_ms{};
   const bool hybrid_depthwise_hardswish_selects_gpu =
-      ppocr::detail::VulkanDepthwiseConvBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanDepthwiseConvBatchNoSlowerThanCpu(
       4, 32, 31, 29, 31, 29, 3, 3, 1, 1, 1, 1,
           &depthwise_hardswish_gpu_ms, &depthwise_hardswish_cpu_ms,
           true, false, false, true);
   double depthwise_pointwise_gpu_ms{};
   double depthwise_pointwise_cpu_ms{};
   const bool hybrid_depthwise_pointwise_selects_gpu =
-      ppocr::detail::VulkanDepthwisePointwiseConvBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanDepthwisePointwiseConvBatchNoSlowerThanCpu(
           4, 32, 40, 31, 29, 31, 29, 3, 3, 1, 1, 1, 1,
           &depthwise_pointwise_gpu_ms, &depthwise_pointwise_cpu_ms, true);
   double conv_gpu_ms{};
   double conv_cpu_ms{};
-  const bool hybrid_conv_selects_gpu = ppocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
+  const bool hybrid_conv_selects_gpu = rpocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
       4, 24, 40, 31, 29, 31, 29, 3, 3, 1, 1, 1, 1,
       &conv_gpu_ms, &conv_cpu_ms, true, true);
   double conv_swish_gpu_ms{};
   double conv_swish_cpu_ms{};
-  const bool hybrid_conv_swish_selects_gpu = ppocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
+  const bool hybrid_conv_swish_selects_gpu = rpocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
       4, 24, 40, 31, 29, 31, 29, 3, 3, 1, 1, 1, 1,
       &conv_swish_gpu_ms, &conv_swish_cpu_ms, true, false, true);
   double conv0_gpu_ms{};
   double conv0_cpu_ms{};
-  const bool hybrid_conv0_selects_gpu = ppocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
+  const bool hybrid_conv0_selects_gpu = rpocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
       1, 3, 16, 160, 704, 80, 352, 3, 3, 2, 2, 1, 1,
       &conv0_gpu_ms, &conv0_cpu_ms, true, true);
   double rec_stem_gpu_ms{};
   double rec_stem_cpu_ms{};
-  const bool hybrid_rec_stem_selects_gpu = ppocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
+  const bool hybrid_rec_stem_selects_gpu = rpocr::detail::VulkanConv2dBatchNoSlowerThanCpu(
       1, 3, 24, 48, 301, 24, 151, 3, 3, 2, 2, 1, 1,
       &rec_stem_gpu_ms, &rec_stem_cpu_ms, true, false);
   {
@@ -2714,7 +2714,7 @@ int main() {
       for (std::size_t i = 0; i < packed.size(); ++i)
         packed[i] = static_cast<std::uint8_t>((i * 37u) % 251u);
       std::vector<float> output(std::size_t(3) * rgb.ow * rgb.oh);
-      if (!ppocr::detail::VulkanResizeRgbToNchw(output.data(), packed.data(), packed.size(),
+      if (!rpocr::detail::VulkanResizeRgbToNchw(output.data(), packed.data(), packed.size(),
                                                rgb.sw, rgb.sh, rgb.ow, rgb.oh, false)) {
         std::cerr << "Vulkan RGB resize dispatch failed\n";
         return 1;
@@ -2779,12 +2779,12 @@ int main() {
     for (std::size_t i = 0; i < packed.size(); ++i)
       packed[i] = static_cast<std::uint8_t>((i * 37u) % 251u);
     std::vector<float> unpadded(std::size_t(3) * cw * oh);
-    if (!ppocr::detail::VulkanResizeRgbToNchw(unpadded.data(), packed.data(), packed.size(),
+    if (!rpocr::detail::VulkanResizeRgbToNchw(unpadded.data(), packed.data(), packed.size(),
                                              sw, sh, cw, oh, true)) {
       std::cerr << "Vulkan padded RGB unpadded reference failed\n";
       return 1;
     }
-    ppocr::detail::VulkanTensorArena arena;
+    rpocr::detail::VulkanTensorArena arena;
     if (!arena.available()) {
       std::cerr << "Vulkan padded RGB arena unavailable\n";
       return 1;
@@ -2878,13 +2878,13 @@ int main() {
               sampled * scales[channel] + offsets[channel];
         }
       }
-      if (!ppocr::detail::VulkanResizeRgbAndConv2d(
+      if (!rpocr::detail::VulkanResizeRgbAndConv2d(
               gpu.data(), packed.data(), packed.size(), cse.sw, cse.sh, cse.nw, cse.nh,
               weights.data(), bias.data(), cse.oc, 3, 2, 1, cse.relu)) {
         std::cerr << "Vulkan RGB+Conv2d dispatch failed (" << cse.name << ")\n";
         return 1;
       }
-      ppocr::detail::kernels::Conv2d(cpu.data(), nchw.data(), weights.data(), bias.data(), 3,
+      rpocr::detail::kernels::Conv2d(cpu.data(), nchw.data(), weights.data(), bias.data(), 3,
                                      cse.oc, cse.nh, cse.nw, oh, ow, 3, 3, 2, 2, 1, 1, cse.relu);
       float max_abs = 0.F;
       std::size_t max_i = 0;
@@ -2903,7 +2903,7 @@ int main() {
     }
     double rgb_conv_gpu_ms{};
     double rgb_conv_cpu_ms{};
-    const bool hybrid_rgb_conv_selects_gpu = ppocr::detail::VulkanResizeRgbAndConv2dNoSlowerThanCpu(
+    const bool hybrid_rgb_conv_selects_gpu = rpocr::detail::VulkanResizeRgbAndConv2dNoSlowerThanCpu(
         720, 152, 704, 160, 16, 3, 2, 1, true, &rgb_conv_gpu_ms, &rgb_conv_cpu_ms);
     std::cerr << "hybrid RGB+Conv.0 admission gpu_ms=" << rgb_conv_gpu_ms
               << " cpu_ms=" << rgb_conv_cpu_ms
@@ -2961,14 +2961,14 @@ int main() {
                     packed.data() + (std::size_t(cse.cy + y) * cse.sw + cse.cx) * 3,
                     std::size_t(cse.cw) * 3);
       }
-      if (!ppocr::detail::VulkanResizeRgbCropAndConv2d(
+      if (!rpocr::detail::VulkanResizeRgbCropAndConv2d(
               gpu.data(), crop_rgb.data(), crop_rgb.size(), cse.cw, cse.ch, 0, 0,
               cse.cw, cse.ch, cse.nw, cse.nh, weights.data(), bias.data(), cse.oc, 3, 2, 1,
               false)) {
         std::cerr << "Vulkan rec RGB+Conv2d dispatch failed (" << cse.name << ")\n";
         return 1;
       }
-      ppocr::detail::kernels::Conv2d(cpu.data(), nchw.data(), weights.data(), bias.data(), 3,
+      rpocr::detail::kernels::Conv2d(cpu.data(), nchw.data(), weights.data(), bias.data(), 3,
                                      cse.oc, cse.nh, cse.nw, oh, ow, 3, 3, 2, 2, 1, 1, false);
       float max_abs = 0.F;
       std::size_t max_i = 0;
@@ -2995,7 +2995,7 @@ int main() {
     double rec_rgb_gpu_ms{};
     double rec_rgb_cpu_ms{};
     const bool hybrid_rec_rgb_selects_gpu =
-        ppocr::detail::VulkanResizeRgbCropAndConv2dNoSlowerThanCpu(
+        rpocr::detail::VulkanResizeRgbCropAndConv2dNoSlowerThanCpu(
             720, 152, 12, 20, 301, 48, 301, 48, 24, 3, 2, 1, false, &rec_rgb_gpu_ms,
             &rec_rgb_cpu_ms);
     std::cerr << "hybrid rec RGB+Conv.0 admission gpu_ms=" << rec_rgb_gpu_ms
@@ -3037,10 +3037,10 @@ int main() {
       for (int i = 0; i < cse.oc1; ++i) b1[i] = float(i - 1) * .0625F;
       for (int i = 0; i < cse.oc2; ++i) b2[i] = float(i - 2) * .0625F;
       for (int i = 0; i < cse.ocs; ++i) bs[i] = float(i - 4) * .0625F;
-      const ppocr::detail::VulkanStemLayer c0{w0.data(), b0.data(), 3, cse.oc0, 3, 2, 1, true};
-      const ppocr::detail::VulkanStemLayer c1{w1.data(), b1.data(), cse.oc0, cse.oc1, 2, 1, 0, true};
-      const ppocr::detail::VulkanStemLayer c2{w2.data(), b2.data(), cse.oc1, cse.oc2, 2, 1, 0, true};
-      const ppocr::detail::VulkanStemLayer cs{ws.data(), bs.data(), cse.oc0 + cse.oc2, cse.ocs, 3, 2,
+      const rpocr::detail::VulkanStemLayer c0{w0.data(), b0.data(), 3, cse.oc0, 3, 2, 1, true};
+      const rpocr::detail::VulkanStemLayer c1{w1.data(), b1.data(), cse.oc0, cse.oc1, 2, 1, 0, true};
+      const rpocr::detail::VulkanStemLayer c2{w2.data(), b2.data(), cse.oc1, cse.oc2, 2, 1, 0, true};
+      const rpocr::detail::VulkanStemLayer cs{ws.data(), bs.data(), cse.oc0 + cse.oc2, cse.ocs, 3, 2,
                                              1, true};
       std::vector<float> nchw(std::size_t(3) * cse.nw * cse.nh);
       std::vector<float> t0(std::size_t(cse.oc0) * c0_h * c0_w), t1(std::size_t(cse.oc1) * c0_h * c0_w),
@@ -3071,22 +3071,22 @@ int main() {
               sampled * scales[channel] + offsets[channel];
         }
       }
-      if (!ppocr::detail::VulkanResizeRgbAndStem(gpu.data(), packed.data(), packed.size(), cse.sw,
+      if (!rpocr::detail::VulkanResizeRgbAndStem(gpu.data(), packed.data(), packed.size(), cse.sw,
                                                  cse.sh, cse.nw, cse.nh, c0, c1, c2, cs)) {
         std::cerr << "Vulkan RGB+stem dispatch failed (" << cse.name << ")\n";
         return 1;
       }
-      ppocr::detail::kernels::Conv2d(t0.data(), nchw.data(), w0.data(), b0.data(), 3, cse.oc0,
+      rpocr::detail::kernels::Conv2d(t0.data(), nchw.data(), w0.data(), b0.data(), 3, cse.oc0,
                                      cse.nh, cse.nw, c0_h, c0_w, 3, 3, 2, 2, 1, 1, true);
-      ppocr::detail::kernels::Conv2d(t1.data(), t0.data(), w1.data(), b1.data(), cse.oc0, cse.oc1,
+      rpocr::detail::kernels::Conv2d(t1.data(), t0.data(), w1.data(), b1.data(), cse.oc0, cse.oc1,
                                      c0_h, c0_w, c0_h, c0_w, 2, 2, 1, 1, 0, 0, true);
-      ppocr::detail::kernels::Conv2d(t2.data(), t1.data(), w2.data(), b2.data(), cse.oc1, cse.oc2,
+      rpocr::detail::kernels::Conv2d(t2.data(), t1.data(), w2.data(), b2.data(), cse.oc1, cse.oc2,
                                      c0_h, c0_w, c0_h, c0_w, 2, 2, 1, 1, 0, 0, true);
-      ppocr::detail::kernels::MaxPool2x2Same(pooled.data(), t0.data(), std::size_t(cse.oc0), c0_h,
+      rpocr::detail::kernels::MaxPool2x2Same(pooled.data(), t0.data(), std::size_t(cse.oc0), c0_h,
                                              c0_w);
       const float* srcs[2] = {pooled.data(), t2.data()};
       const int chans[2] = {cse.oc0, cse.oc2};
-      ppocr::detail::kernels::ConcatChannelConv2d(cpu.data(), srcs, chans, 2, ws.data(), bs.data(),
+      rpocr::detail::kernels::ConcatChannelConv2d(cpu.data(), srcs, chans, 2, ws.data(), bs.data(),
                                                   cse.ocs, c0_h, c0_w, stem_h, stem_w, 3, 3, 2, 2,
                                                   1, 1, true);
       float max_abs = 0.F;
@@ -3113,13 +3113,13 @@ int main() {
     for (int i = 0; i < 16; ++i) { b0[i] = float(i - 3) * .0625F; b2[i] = float(i - 2) * .0625F;
       bs[i] = float(i - 4) * .0625F; }
     for (int i = 0; i < 8; ++i) b1[i] = float(i - 1) * .0625F;
-    const ppocr::detail::VulkanStemLayer c0{w0.data(), b0.data(), 3, 16, 3, 2, 1, true};
-    const ppocr::detail::VulkanStemLayer c1{w1.data(), b1.data(), 16, 8, 2, 1, 0, true};
-    const ppocr::detail::VulkanStemLayer c2{w2.data(), b2.data(), 8, 16, 2, 1, 0, true};
-    const ppocr::detail::VulkanStemLayer cs{ws.data(), bs.data(), 32, 16, 3, 2, 1, true};
+    const rpocr::detail::VulkanStemLayer c0{w0.data(), b0.data(), 3, 16, 3, 2, 1, true};
+    const rpocr::detail::VulkanStemLayer c1{w1.data(), b1.data(), 16, 8, 2, 1, 0, true};
+    const rpocr::detail::VulkanStemLayer c2{w2.data(), b2.data(), 8, 16, 2, 1, 0, true};
+    const rpocr::detail::VulkanStemLayer cs{ws.data(), bs.data(), 32, 16, 3, 2, 1, true};
     double rgb_stem_gpu_ms{};
     double rgb_stem_cpu_ms{};
-    const bool hybrid_rgb_stem_selects_gpu = ppocr::detail::VulkanResizeRgbAndStemNoSlowerThanCpu(
+    const bool hybrid_rgb_stem_selects_gpu = rpocr::detail::VulkanResizeRgbAndStemNoSlowerThanCpu(
         720, 152, 704, 160, c0, c1, c2, cs, &rgb_stem_gpu_ms, &rgb_stem_cpu_ms);
     std::cerr << "hybrid RGB+stem admission gpu_ms=" << rgb_stem_gpu_ms
               << " cpu_ms=" << rgb_stem_cpu_ms
@@ -3137,7 +3137,7 @@ int main() {
       for (std::size_t i = 0; i < prgb.size(); ++i)
         prgb[i] = static_cast<std::uint8_t>((i * 37u) % 251u);
       std::vector<float> nchw(3ull * 96 * 64), cpu(16ull * mh * mw), gpu(cpu.size());
-      if (!ppocr::detail::VulkanResizeRgbAndConv2d(gpu.data(), prgb.data(), prgb.size(), 96, 48,
+      if (!rpocr::detail::VulkanResizeRgbAndConv2d(gpu.data(), prgb.data(), prgb.size(), 96, 48,
                                                    96, 64, w0.data(), b0.data(), 16, 3, 2, 1,
                                                    true)) {
         std::cerr << "standalone RGB+Conv.0 mid dispatch failed\n";
@@ -3171,7 +3171,7 @@ int main() {
               sampled * scales[channel] + offsets[channel];
         }
       }
-      ppocr::detail::kernels::Conv2d(cpu.data(), nchw.data(), w0.data(), b0.data(), 3, 16, 64, 96,
+      rpocr::detail::kernels::Conv2d(cpu.data(), nchw.data(), w0.data(), b0.data(), 3, 16, 64, 96,
                                      mh, mw, 3, 3, 2, 2, 1, 1, true);
       float max_abs = 0.F;
       std::size_t max_i = 0, bad = 0;
@@ -3202,7 +3202,7 @@ int main() {
       const int c0_w = (cse.nw + 2 - 3) / 2 + 1;
       std::vector<float> nchw(std::size_t(3) * cse.nw * cse.nh), t0(16ull * c0_h * c0_w),
           t1(8ull * c0_h * c0_w), t2(16ull * c0_h * c0_w), g0(t0.size()), g2(t2.size());
-      if (!ppocr::detail::VulkanResizeRgbAndConv012(g0.data(), g2.data(), packed.data(),
+      if (!rpocr::detail::VulkanResizeRgbAndConv012(g0.data(), g2.data(), packed.data(),
                                                     packed.size(), cse.sw, cse.sh, cse.nw, cse.nh,
                                                     c0, c1, c2)) {
         std::cerr << "Vulkan RGB+Conv.012 dispatch failed (" << cse.name << ")\n";
@@ -3236,11 +3236,11 @@ int main() {
               sampled * scales[channel] + offsets[channel];
         }
       }
-      ppocr::detail::kernels::Conv2d(t0.data(), nchw.data(), w0.data(), b0.data(), 3, 16, cse.nh,
+      rpocr::detail::kernels::Conv2d(t0.data(), nchw.data(), w0.data(), b0.data(), 3, 16, cse.nh,
                                      cse.nw, c0_h, c0_w, 3, 3, 2, 2, 1, 1, true);
-      ppocr::detail::kernels::Conv2d(t1.data(), t0.data(), w1.data(), b1.data(), 16, 8, c0_h, c0_w,
+      rpocr::detail::kernels::Conv2d(t1.data(), t0.data(), w1.data(), b1.data(), 16, 8, c0_h, c0_w,
                                      c0_h, c0_w, 2, 2, 1, 1, 0, 0, true);
-      ppocr::detail::kernels::Conv2d(t2.data(), t1.data(), w2.data(), b2.data(), 8, 16, c0_h, c0_w,
+      rpocr::detail::kernels::Conv2d(t2.data(), t1.data(), w2.data(), b2.data(), 8, 16, c0_h, c0_w,
                                      c0_h, c0_w, 2, 2, 1, 1, 0, 0, true);
       float max0 = 0.F, max2 = 0.F;
       std::size_t i0 = 0, i2 = 0;
@@ -3265,7 +3265,7 @@ int main() {
     }
     double rgb_c012_gpu_ms{};
     double rgb_c012_cpu_ms{};
-    const bool hybrid_rgb_c012_selects_gpu = ppocr::detail::VulkanResizeRgbAndConv012NoSlowerThanCpu(
+    const bool hybrid_rgb_c012_selects_gpu = rpocr::detail::VulkanResizeRgbAndConv012NoSlowerThanCpu(
         720, 152, 704, 160, c0, c1, c2, &rgb_c012_gpu_ms, &rgb_c012_cpu_ms);
     std::cerr << "hybrid RGB+Conv.012 admission gpu_ms=" << rgb_c012_gpu_ms
               << " cpu_ms=" << rgb_c012_cpu_ms
@@ -3300,7 +3300,7 @@ int main() {
         weights[i] = float(int(i % 19) - 9) * .015625F;
       for (int i = 0; i < fused.oc; ++i) bias[i] = float(i - 3) * .0625F;
       const float* srcs[] = {src0.data(), src1.data()};
-      if (!ppocr::detail::VulkanConcatConvBatch(
+      if (!rpocr::detail::VulkanConcatConvBatch(
               output.data(), srcs, chans, 2, weights.data(), bias.data(), 1, fused.oc,
               fused.ih, fused.iw, fused.oh, fused.ow, 3, 3, fused.stride, fused.stride,
               1, 1, fused.relu, fused.pool, true)) {
@@ -3367,7 +3367,7 @@ int main() {
       for (std::size_t i = 0; i < weights.size(); ++i)
         weights[i] = float(int(i % 19) - 9) * .015625F;
       for (int i = 0; i < oc; ++i) bias[i] = float(i - 3) * .0625F;
-      if (!ppocr::detail::VulkanConcatConvBatch(
+      if (!rpocr::detail::VulkanConcatConvBatch(
               output.data(), src_ptrs, chans, 4, weights.data(), bias.data(), 1, oc,
               ih, iw, oh, ow, 3, 3, 1, 1, 1, 1, true, false, true)) {
         std::cerr << "Vulkan fused ConcatConv dispatch failed (concat2-16x4)\n";
@@ -3403,13 +3403,13 @@ int main() {
   double concat_conv_gpu_ms{};
   double concat_conv_cpu_ms{};
   const int fpn_chans[] = {16, 16, 16, 16};
-  const bool hybrid_concat_conv_selects_gpu = ppocr::detail::VulkanConcatConvBatchNoSlowerThanCpu(
+  const bool hybrid_concat_conv_selects_gpu = rpocr::detail::VulkanConcatConvBatchNoSlowerThanCpu(
       fpn_chans, 4, 16, 40, 176, 40, 176, 3, 3, 1, 1, 1, 1, true, false,
       &concat_conv_gpu_ms, &concat_conv_cpu_ms, true);
   double stem_concat_gpu_ms{};
   double stem_concat_cpu_ms{};
   const int stem_chans[] = {16, 16};
-  const bool hybrid_stem_concat_selects_gpu = ppocr::detail::VulkanConcatConvBatchNoSlowerThanCpu(
+  const bool hybrid_stem_concat_selects_gpu = rpocr::detail::VulkanConcatConvBatchNoSlowerThanCpu(
       stem_chans, 2, 16, 80, 352, 40, 176, 3, 3, 2, 2, 1, 1, true, true,
       &stem_concat_gpu_ms, &stem_concat_cpu_ms, true);
   {
@@ -3431,7 +3431,7 @@ int main() {
     for (std::size_t i = 0; i < input.size(); ++i) input[i] = float(i % 97) * .03125F - 1.5F;
     for (std::size_t i = 0; i < weights.size(); ++i) weights[i] = float(i % 31) * .015625F - .25F;
     for (int i = 0; i < output_channels; ++i) bias[std::size_t(i)] = float(i - 3) * .0625F;
-    if (!ppocr::detail::VulkanConvTranspose2x2Batch(
+    if (!rpocr::detail::VulkanConvTranspose2x2Batch(
             output.data(), input.data(), weights.data(), bias.data(), batches,
             input_channels, output_channels, input_height, input_width, true)) {
       std::cerr << "Vulkan ConvTranspose2x2 batch dispatch failed\n";
@@ -3465,26 +3465,26 @@ int main() {
   double transpose_gpu_ms{};
   double transpose_cpu_ms{};
   const bool hybrid_transpose_selects_gpu =
-      ppocr::detail::VulkanConvTranspose2x2BatchNoSlowerThanCpu(
+      rpocr::detail::VulkanConvTranspose2x2BatchNoSlowerThanCpu(
           4, 32, 40, 31, 29, &transpose_gpu_ms, &transpose_cpu_ms, true);
   double transpose_add_gpu_ms{};
   double transpose_add_cpu_ms{};
   const bool hybrid_transpose_add_selects_gpu =
-      ppocr::detail::VulkanConvTranspose2x2AddBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanConvTranspose2x2AddBatchNoSlowerThanCpu(
           4, 32, 40, 31, 29, &transpose_add_gpu_ms, &transpose_add_cpu_ms, true);
   double resize_add_gpu_ms{};
   double resize_add_cpu_ms{};
   const bool hybrid_resize_add_selects_gpu =
-      ppocr::detail::VulkanNearestResize2xAddBatchNoSlowerThanCpu(
+      rpocr::detail::VulkanNearestResize2xAddBatchNoSlowerThanCpu(
           4, 24, 31, 29, &resize_add_gpu_ms, &resize_add_cpu_ms);
   double gemm_gpu_ms{};
   double gemm_cpu_ms{};
-  const bool hybrid_gemm_selects_gpu = ppocr::detail::VulkanGemmNoSlowerThanCpu(
+  const bool hybrid_gemm_selects_gpu = rpocr::detail::VulkanGemmNoSlowerThanCpu(
       64, 128, 512, &gemm_gpu_ms, &gemm_cpu_ms, true);
   double gemm_swish_gpu_ms{};
   double gemm_swish_cpu_ms{};
   const bool hybrid_gemm_swish_selects_gpu =
-      ppocr::detail::VulkanGemmSwishNoSlowerThanCpu(
+      rpocr::detail::VulkanGemmSwishNoSlowerThanCpu(
           64, 128, 512, &gemm_swish_gpu_ms, &gemm_swish_cpu_ms, true);
   std::cout << "Vulkan binary Add/Sub/Mul/Div and fused-chain smoke passed on " << info.device_name << '\n';
   std::cout << "hybrid_binary_policy gpu_ms=" << gpu_ms << " cpu_ms=" << cpu_ms

@@ -17,7 +17,7 @@
 #include "kernels.hpp"
 #endif
 
-namespace ppocr::detail::cvc {
+namespace rpocr::detail::cvc {
 namespace {
 
 inline int Floor(double v) {
@@ -460,7 +460,7 @@ void RotateCropImage(const std::uint8_t* src, int sw, int sh, const float pts[8]
   auto kernel = &BicubicRowScalar;
 #if defined(PPOCR_HAS_AVX2_KERNELS)
   // AVX2+FMA availability (also honours a forced scalar ISA).
-  static const bool avx2 = ppocr::detail::kernels::HostHasAvxDetStem();
+  static const bool avx2 = rpocr::detail::kernels::HostHasAvxDetStem();
   if (avx2) kernel = &BicubicRowAvx2;
 #endif
   constexpr int kBlock = 128;
@@ -532,4 +532,4 @@ std::array<float, 256> DetNormalizeTable(float mean, float std) {
   return t;
 }
 
-}  // namespace ppocr::detail::cvc
+}  // namespace rpocr::detail::cvc

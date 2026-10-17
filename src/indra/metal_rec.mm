@@ -9,7 +9,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace ppocr::indra {
+namespace rpocr::indra {
 namespace {
 const char* kSrc = R"MSL(
 #include <metal_stdlib>
@@ -401,4 +401,4 @@ void MetalRec::Run(const float* patches, int rows, const std::vector<int>& start
     for (int r = 0; r < rows; ++r) { ids[r] = gi[r]; conf[r] = gc[r]; }
   }
 }
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

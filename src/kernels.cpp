@@ -43,7 +43,7 @@
 #define PPOCR_NEON_IS_LSX 1
 #endif
 
-namespace ppocr::detail::kernels {
+namespace rpocr::detail::kernels {
 
 #if defined(PPOCR_HAS_LASX_KERNELS)
 void LasxGemmRows(float* dst, const float* a, const float* b, const float* bias,
@@ -7306,4 +7306,4 @@ void BuildDetectorMask(std::uint8_t* mask, const float* probability, int height,
   std::memcpy(mask, dilated.data(), count);
 }
 
-}  // namespace ppocr::detail::kernels
+}  // namespace rpocr::detail::kernels

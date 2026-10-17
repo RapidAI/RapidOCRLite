@@ -1,4 +1,4 @@
-#include "ppocr/ppocr.h"
+#include "rapidocrlite/rapidocrlite.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -15,32 +15,32 @@ static void Expect(int condition, const char* name) {
 }
 
 int main(void) {
-  ppocr_cpu_info cpu;
+  rpocr_cpu_info cpu;
   memset(&cpu, 0, sizeof(cpu));
-  ppocr_query_cpu_info(&cpu);
+  rpocr_query_cpu_info(&cpu);
   Expect(cpu.active_isa[0] != '\0', "cpu info isa");
   Expect(cpu.threads > 0, "cpu info threads");
   Expect(!(cpu.avx512 && !cpu.avx2), "avx512 implies avx2");
 
-  ppocr_options options;
-  ppocr_options_init(&options);
-  Expect(options.struct_size == (int)sizeof(ppocr_options), "options size");
+  rpocr_options options;
+  rpocr_options_init(&options);
+  Expect(options.struct_size == (int)sizeof(rpocr_options), "options size");
   Expect(options.rec_batch_size > 0, "default batch");
-  Expect(options.backend == PPOCR_BACKEND_HYBRID, "default backend");
+  Expect(options.backend == RPOCR_BACKEND_HYBRID, "default backend");
 
-  Expect(ppocr_create(NULL, "a", "b", NULL) == NULL, "null det");
-  Expect(ppocr_last_error()[0] != '\0', "null det error");
-  Expect(ppocr_create("missing-det.onnx", "missing-rec.onnx", "missing-dict.txt", &options) == NULL,
+  Expect(rpocr_create(NULL, "a", "b", NULL) == NULL, "null det");
+  Expect(rpocr_last_error()[0] != '\0', "null det error");
+  Expect(rpocr_create("missing-det.onnx", "missing-rec.onnx", "missing-dict.txt", &options) == NULL,
          "missing files");
 
-  ppocr_result result = {0};
-  Expect(ppocr_recognize(NULL, NULL, &result) == PPOCR_ERR_INVALID_ARGUMENT, "null recognize");
-  Expect(ppocr_run(NULL, NULL, PPOCR_TASK_DET, &result) == PPOCR_ERR_INVALID_ARGUMENT, "null run");
-  ppocr_image_buffer image = {0};
-  Expect(ppocr_load_ppm("missing.ppm", &image) != PPOCR_OK, "missing ppm");
+  rpocr_result result = {0};
+  Expect(rpocr_recognize(NULL, NULL, &result) == RPOCR_ERR_INVALID_ARGUMENT, "null recognize");
+  Expect(rpocr_run(NULL, NULL, RPOCR_TASK_DET, &result) == RPOCR_ERR_INVALID_ARGUMENT, "null run");
+  rpocr_image_buffer image = {0};
+  Expect(rpocr_load_ppm("missing.ppm", &image) != RPOCR_OK, "missing ppm");
 
-  ppocr_backend_info backend;
-  ppocr_query_backend_info(&backend);
+  rpocr_backend_info backend;
+  rpocr_query_backend_info(&backend);
   Expect(backend.vulkan_loader_available == 0 || backend.vulkan_loader_available == 1,
          "backend info");
 

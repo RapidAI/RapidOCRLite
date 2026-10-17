@@ -2,7 +2,7 @@
 #include <cstring>
 #include <string_view>
 #include "kern.hpp"
-namespace ppocr::indra {
+namespace rpocr::indra {
 #if !(defined(__x86_64__) || defined(_M_X64))
 const Kern* KernAvx2() { return nullptr; }
 const Kern* KernAvx512() { return nullptr; }
@@ -30,4 +30,4 @@ const Kern* SelectKern() {
   return KernScalar();
 #endif
 }
-}  // namespace ppocr::indra
+}  // namespace rpocr::indra

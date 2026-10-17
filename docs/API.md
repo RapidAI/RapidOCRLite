@@ -17,7 +17,7 @@ That produces:
 
 - `librapidocrlite.a` (`RapidOCRLite::static`)
 - `librapidocrlite.so` (`RapidOCRLite::rapidocrlite`), SONAME `librapidocrlite.so.5`
-- headers under `include/ppocr/`
+- headers under `include/rapidocrlite/`
 - `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake` (plus a compatibility `lib/cmake/ppocr/ppocrConfig.cmake` providing `ppocr::ppocr` / `ppocr::static`)
 
 ```cmake
@@ -48,40 +48,40 @@ Examples:
 ./build/ppocr_c_api_demo --cpu-info
 ```
 
-Images passed to the library are packed RGB, row-major, 8-bit. `ppocr_load_ppm`
+Images passed to the library are packed RGB, row-major, 8-bit. `rpocr_load_ppm`
 reads binary P6 PPM. JPEG/PNG decoding stays in the application (or in the
 Python package, which uses Pillow).
 
 ## C ABI
 
-`include/ppocr/ppocr.h` is a stable C ABI:
+`include/rapidocrlite/rapidocrlite.h` is a stable C ABI:
 
 - `extern "C"`
-- opaque `ppocr_ocr*`
+- opaque `rpocr_ocr*`
 - plain structs for options, images, and text boxes
-- integer status codes (`PPOCR_OK`, `PPOCR_ERR_*`)
-- `ppocr_create` / `ppocr_destroy`, `ppocr_result_free`, `ppocr_image_free`
-- thread-local `ppocr_last_error()`
-- `ppocr_options.struct_size` so new fields can be appended
+- integer status codes (`RPOCR_OK`, `RPOCR_ERR_*`)
+- `rpocr_create` / `rpocr_destroy`, `rpocr_result_free`, `rpocr_image_free`
+- thread-local `rpocr_last_error()`
+- `rpocr_options.struct_size` so new fields can be appended
 
-`ppocr_options_init` fills the same defaults as `ppocr::Options`.
-`ppocr_recognize` and `ppocr_recognize_batch` on one handle are serialized.
+`rpocr_options_init` fills the same defaults as `rpocr::Options`.
+`rpocr_recognize` and `rpocr_recognize_batch` on one handle are serialized.
 Create one handle per thread when pages should run at the same time.
-`ppocr_recognize_batch` preserves input order.
+`rpocr_recognize_batch` preserves input order.
 
-Runtime CPU selection is reported by `ppocr_query_cpu_info`. `active_isa` is
+Runtime CPU selection is reported by `rpocr_query_cpu_info`. `active_isa` is
 `avx512`, `avx2`, `neon`, or `scalar`. See `docs/PERFORMANCE.md` for the rule
 that keeps AVX-512 instructions out of an AVX2-only process.
 
 ## C++ API
 
-`include/ppocr/ppocr.hpp` is the C++ API already used by the in-tree tools:
+`include/rapidocrlite/rapidocrlite.hpp` is the C++ API already used by the in-tree tools:
 
 ```cpp
-ppocr::Options options;
-options.backend = ppocr::Backend::cpu_only;
-ppocr::OCR ocr(det_path, rec_path, dict_path, options);
-for (const ppocr::Result& result : ocr.Recognize(ppocr::LoadPPM(path))) {
+rpocr::Options options;
+options.backend = rpocr::Backend::cpu_only;
+rpocr::OCR ocr(det_path, rec_path, dict_path, options);
+for (const rpocr::Result& result : ocr.Recognize(rpocr::LoadPPM(path))) {
   // result.text, result.confidence, result.bbox, result.box
 }
 ```
@@ -147,7 +147,7 @@ pip install ./python
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | built-in PP-OCRv6 interpreter only (`EngineType.ONNXRUNTIME` or `EngineType.PPOCR_CPP`) |
 | PP-OCRv4 and v5 model zoo | PP-OCRv6 ONNX detector + recognizer |
 | angle classifier (`use_cls=True` by default) | flag is accepted and ignored, with one warning |
-| `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`); both False raises `RapidOCRError`; C ABI `ppocr_run` with `PPOCR_TASK_DET` / `PPOCR_TASK_REC` |
+| `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`); both False raises `RapidOCRError`; C ABI `rpocr_run` with `RPOCR_TASK_DET` / `RPOCR_TASK_REC` |
 | word and character boxes | `return_word_box` warns; `word_results` is empty |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]` because the native call is one timed region |
 | OpenCV drawing in `vis` | Pillow polygons |
@@ -162,26 +162,26 @@ The C++ default `Backend::hybrid` stays on CPU unless
 `PPOCR_ENABLE_HYBRID_GPU_GRAPH` is set. `Backend::gpu_only` runs the Vulkan
 graph and throws `std::runtime_error` when the device or a shader cannot
 run. It does not silently switch to CPU. The C ABI returns
-`PPOCR_ERR_UNSUPPORTED` from `ppocr_create` in that case, with the text in
-`ppocr_last_error()`.
+`RPOCR_ERR_UNSUPPORTED` from `rpocr_create` in that case, with the text in
+`rpocr_last_error()`.
 
 ```cpp
-ppocr::Options options;
-options.backend = ppocr::Backend::gpu_only;
+rpocr::Options options;
+options.backend = rpocr::Backend::gpu_only;
 options.vulkan_device_index = 0;  // -1: automatic; CPU/lavapipe are skipped
-ppocr::OCR ocr(det, rec, dict, options);
+rpocr::OCR ocr(det, rec, dict, options);
 ```
 
-The same field is `ppocr_options.vulkan_device_index`. Call
-`ppocr_request_vulkan_device(index)` before `ppocr_query_backend_info` or
-`ppocr_create` when the index is chosen outside the options struct. The
+The same field is `rpocr_options.vulkan_device_index`. Call
+`rpocr_request_vulkan_device(index)` before `rpocr_query_backend_info` or
+`rpocr_create` when the index is chosen outside the options struct. The
 choice is process-wide and is read on the first Vulkan initialization.
 `PPOCR_VULKAN_DEVICE_INDEX` is used only when the API index stays `-1`.
 `PPOCR_VULKAN_DEVICE_NAME` and `PPOCR_VULKAN_PREFER_DISCRETE` still apply to
 automatic selection.
 
 `PPOCR_VULKAN_VALIDATION=1` enables `VK_LAYER_KHRONOS_validation` and counts
-ERROR-severity messages (`ppocr_vulkan_validation_error_count`). Devices
+ERROR-severity messages (`rpocr_vulkan_validation_error_count`). Devices
 whose `maxComputeSharedMemorySize` is below 32 KiB do not create the compute
 pipeline; GPU-only then fails and hybrid stays on CPU.
 
@@ -211,17 +211,17 @@ device is destroyed from the static destructor that runs after the driver has
 already shut down, so that teardown is skipped at process exit and the OS
 reclaims the device.
 
-## Model type (`ppocr_options.model_type`, appended field)
+## Model type (`rpocr_options.model_type`, appended field)
 
 | value | behavior |
 |---|---|
-| `PPOCR_MODEL_AUTO` (0, default) | `det_model` naming a folder that contains `meta.json` loads the lite (Indra) model; anything else loads PP-OCR as before. |
-| `PPOCR_MODEL_PPOCR` (1) | PP-OCR ONNX files required; a lite folder is an error (`PPOCR_ERR_MODEL`). |
-| `PPOCR_MODEL_LITE` (2) | `det_model` must be a lite folder (else error); `rec_model` / `dictionary` may be NULL and are ignored. |
+| `RPOCR_MODEL_AUTO` (0, default) | `det_model` naming a folder that contains `meta.json` loads the lite (Indra) model; anything else loads PP-OCR as before. |
+| `RPOCR_MODEL_PPOCR` (1) | PP-OCR ONNX files required; a lite folder is an error (`RPOCR_ERR_MODEL`). |
+| `RPOCR_MODEL_LITE` (2) | `det_model` must be a lite folder (else error); `rec_model` / `dictionary` may be NULL and are ignored. |
 
-Other values give `PPOCR_ERR_INVALID_ARGUMENT`. The field is read only when `struct_size` covers it, so
+Other values give `RPOCR_ERR_INVALID_ARGUMENT`. The field is read only when `struct_size` covers it, so
 binaries built against an older header (smaller `struct_size`) get AUTO. The exported
-`ppocr_options_init` symbol writes only the old layout (safe for old binaries); the header maps
-`ppocr_options_init(o)` to `ppocr_options_init_ex(o, sizeof *o)`. C++: `ppocr::Options::model_type`
-(`ppocr::ModelType::{auto_detect, ppocr, lite}`); mismatches throw. Python: `Det/Rec model_type: lite`
-sets `PPOCR_MODEL_LITE` (both sections must agree), other configs set `PPOCR_MODEL_PPOCR`.
+`rpocr_options_init` symbol writes only the old layout (safe for old binaries); the header maps
+`rpocr_options_init(o)` to `rpocr_options_init_ex(o, sizeof *o)`. C++: `rpocr::Options::model_type`
+(`rpocr::ModelType::{auto_detect, ppocr, lite}`); mismatches throw. Python: `Det/Rec model_type: lite`
+sets `RPOCR_MODEL_LITE` (both sections must agree), other configs set `RPOCR_MODEL_PPOCR`.

@@ -5,7 +5,7 @@
 // are the uber-shader's: buffers 0..4 = A, B, C, D, E; buffer 8 = Params.
 #pragma once
 
-namespace ppocr::detail {
+namespace rpocr::detail {
 
 inline constexpr const char kMetalNativeKernels[] = R"MSL(
 #include <metal_stdlib>
@@ -341,4 +341,4 @@ kernel void rows_gemm(device const float* a [[buffer(0)]],
 }
 )MSL";
 
-}  // namespace ppocr::detail
+}  // namespace rpocr::detail

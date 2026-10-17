@@ -39,12 +39,12 @@
 // and is removed again after the implementation block below.
 using HMODULE = void*;
 #if defined(PPOCR_HAS_METAL)
-extern "C" PFN_vkGetInstanceProcAddr ppocr_metal_vk_get_instance_proc_addr(void);
-extern "C" int ppocr_metal_error_count(void);
-extern "C" int ppocr_metal_device_available(void);
-extern "C" void ppocr_metal_print_profile(void);
+extern "C" PFN_vkGetInstanceProcAddr rpocr_metal_vk_get_instance_proc_addr(void);
+extern "C" int rpocr_metal_error_count(void);
+extern "C" int rpocr_metal_device_available(void);
+extern "C" void rpocr_metal_print_profile(void);
 #endif
-namespace ppocr::detail { bool MetalDriverRequested() noexcept; }
+namespace rpocr::detail { bool MetalDriverRequested() noexcept; }
 // The Metal driver is not a shared object; this address stands in for its
 // module handle so GetProcAddress can hand out its vkGetInstanceProcAddr.
 inline HMODULE MetalModuleSentinel() noexcept {
@@ -54,8 +54,8 @@ inline HMODULE MetalModuleSentinel() noexcept {
 inline HMODULE LoadLibraryA(const char* name) noexcept {
   (void)name;
 #if defined(PPOCR_HAS_METAL)
-  if (ppocr::detail::MetalDriverRequested()) {
-    return ppocr_metal_vk_get_instance_proc_addr() ? MetalModuleSentinel() : nullptr;
+  if (rpocr::detail::MetalDriverRequested()) {
+    return rpocr_metal_vk_get_instance_proc_addr() ? MetalModuleSentinel() : nullptr;
   }
 #endif
 #if !defined(PPOCR_VULKAN_LOADER)
@@ -82,7 +82,7 @@ inline void* GetProcAddress(HMODULE module, const char* name) noexcept {
 #if defined(PPOCR_HAS_METAL)
   if (module == MetalModuleSentinel()) {
     return std::strcmp(name, "vkGetInstanceProcAddr") == 0
-        ? reinterpret_cast<void*>(ppocr_metal_vk_get_instance_proc_addr()) : nullptr;
+        ? reinterpret_cast<void*>(rpocr_metal_vk_get_instance_proc_addr()) : nullptr;
   }
 #endif
   return module ? dlsym(module, name) : nullptr;
@@ -100,7 +100,7 @@ inline int FreeLibrary(HMODULE module) noexcept {
 #include "vulkan_pointwise_tail_spv.hpp"
 #endif
 
-namespace ppocr::detail {
+namespace rpocr::detail {
 // Metal only: request the native pointwise GEMM for shapes that fill its
 // 32x32 tiles (recognizer and detector 1x1 convs).
 inline bool MetalNativePointwiseWanted(std::size_t plane, std::size_t input_channels,
@@ -151,7 +151,7 @@ bool MetalDeviceAvailable() noexcept {
 #if defined(PPOCR_HAS_METAL) && defined(PPOCR_HAS_VULKAN_KERNELS)
   // PPOCR_DISABLE_METAL=1 hides the device, e.g. to test the CPU fallback.
   if (const char* off = std::getenv("PPOCR_DISABLE_METAL"); off && off[0] && off[0] != '0') return false;
-  return ppocr_metal_device_available() != 0;
+  return rpocr_metal_device_available() != 0;
 #else
   return false;
 #endif
@@ -159,7 +159,7 @@ bool MetalDeviceAvailable() noexcept {
 
 int MetalErrorCount() noexcept {
 #if defined(PPOCR_HAS_METAL)
-  return ppocr_metal_error_count();
+  return rpocr_metal_error_count();
 #else
   return 0;
 #endif
@@ -303,7 +303,7 @@ class VulkanBinaryRuntime {
     if (!create_instance_) { CleanupUnlocked(); return false; }
 
     const VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO, nullptr,
-                                "ppocr_cpp", 1, "ppocr_cpp", 1, VK_API_VERSION_1_0};
+                                "rpocr_cpp", 1, "rpocr_cpp", 1, VK_API_VERSION_1_0};
     const char* validation_layer = "VK_LAYER_KHRONOS_validation";
     const char* debug_extension = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
     bool enable_validation = false;
@@ -5145,7 +5145,7 @@ class VulkanBinaryRuntime {
   void PrintGpuProfile(double wall_ms) noexcept {
     if (!profile_enabled_) return;
 #if defined(PPOCR_HAS_METAL)
-    if (MetalDriverRequested()) ppocr_metal_print_profile();
+    if (MetalDriverRequested()) rpocr_metal_print_profile();
 #endif
     std::lock_guard lock(mutex_);
     ProfileAccum delta;
@@ -5183,7 +5183,7 @@ class VulkanBinaryRuntime {
     total.descriptors += delta.descriptors;
     total.barriers += delta.barriers;
     total.dispatches += delta.dispatches;
-    std::cerr << "ppocr_gpu_profile scope=" << profile_scope_
+    std::cerr << "rpocr_gpu_profile scope=" << profile_scope_
               << " wall=" << wall_ms
               << " gpu_dispatch=" << delta.gpu_ms
               << " gpu_gap=" << delta.gpu_gap_ms
@@ -5214,7 +5214,7 @@ class VulkanBinaryRuntime {
     }
     label_ms_.clear();
     label_count_.clear();
-    std::cerr << "ppocr_gpu_profile_total scope=" << profile_scope_
+    std::cerr << "rpocr_gpu_profile_total scope=" << profile_scope_
               << " gpu_dispatch=" << total.gpu_ms
               << " gpu_gap=" << total.gpu_gap_ms
               << " fence=" << total.fence_ms
@@ -5614,7 +5614,7 @@ class VulkanBinaryRuntime {
     // device is available.  Select a compute-capable adapter by a stable
     // capability score, while keeping an explicit index override for
     // deployment owners who need a specific driver/device pairing.
-    // Options::vulkan_device_index / ppocr_request_vulkan_device win over the
+    // Options::vulkan_device_index / rpocr_request_vulkan_device win over the
     // environment so a caller can select lavapipe without exporting a variable
     // for the whole process. The environment remains the fallback when the
     // API index stays at its default of -1.
@@ -9580,4 +9580,4 @@ bool VulkanBinaryNoSlowerThanCpu(std::size_t count, kernels::BinaryOp operation,
 #undef PPOCR_POSIX_VULKAN_LOADER_ADAPTER
 #endif
 
-}  // namespace ppocr::detail
+}  // namespace rpocr::detail

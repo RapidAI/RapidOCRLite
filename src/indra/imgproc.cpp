@@ -438,19 +438,19 @@ void for_rows(int dh, size_t work, F f) {
 
 // Image-op threads: at least the engine's thread count; by default all cores up to 8 (as OpenCV did for
 // the reference pipeline). PPOCR_IMG_THREADS overrides.
-IMG_API void ppocr_img_set_threads(int n) {
+IMG_API void rpocr_img_set_threads(int n) {
   int hw = (int)std::thread::hardware_concurrency();
   int t = std::max(n, std::min(8, hw > 0 ? hw : 1));
   if (const char* e = std::getenv("PPOCR_IMG_THREADS")) t = std::atoi(e);
   g_threads = t < 1 ? 1 : t;
 }
 
-// Thread count for image ops issued from the calling thread only (0 = use ppocr_img_set_threads).
-IMG_API void ppocr_img_set_local_threads(int n) { t_threads = n < 0 ? 0 : n; }
-IMG_API int ppocr_img_get_threads(void) { return g_threads; }
+// Thread count for image ops issued from the calling thread only (0 = use rpocr_img_set_threads).
+IMG_API void rpocr_img_set_local_threads(int n) { t_threads = n < 0 ? 0 : n; }
+IMG_API int rpocr_img_get_threads(void) { return g_threads; }
 
 // interp: 1 = INTER_LINEAR, 3 = INTER_AREA (cv2 constants). flags: -1 = platform default.
-IMG_API int ppocr_img_resize_u8(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, int dh, int interp, int flags) {
+IMG_API int rpocr_img_resize_u8(const uint8_t* src, int sw, int sh, uint8_t* dst, int dw, int dh, int interp, int flags) {
   if (!src || !dst || sw < 1 || sh < 1 || dw < 1 || dh < 1) return -1;
   if (flags < 0) flags = kDefFlags;
   if (sw == dw && sh == dh) { std::memcpy(dst, src, (size_t)sw * sh); return 0; }
@@ -493,7 +493,7 @@ IMG_API int ppocr_img_resize_u8(const uint8_t* src, int sw, int sh, uint8_t* dst
 }
 
 // M: forward 2x3 matrix (as passed to cv2.warpAffine without WARP_INVERSE_MAP); border 0 = constant, 1 = replicate
-IMG_API int ppocr_img_warp_affine(const void* src, int sw, int sh, void* dst, int dw, int dh, const double* M0,
+IMG_API int rpocr_img_warp_affine(const void* src, int sw, int sh, void* dst, int dw, int dh, const double* M0,
                                   int is_float, int border, double bval, int uf, int flags) {
   if (!src || !dst || sw < 1 || sh < 1) return -1;
   if (flags < 0) flags = kWarpFlags;
@@ -530,7 +530,7 @@ IMG_API int ppocr_img_warp_affine(const void* src, int sw, int sh, void* dst, in
 }
 
 // cv2.getRotationMatrix2D (Point2f center); flags & 1: clang build contracts the translation terms
-IMG_API void ppocr_img_rotation_matrix(double cx, double cy, double angle, double scale, int flags, double* M) {
+IMG_API void rpocr_img_rotation_matrix(double cx, double cy, double angle, double scale, int flags, double* M) {
   if (flags < 0) flags = kDefFlags;
   float fcx = (float)cx, fcy = (float)cy;
   angle *= 3.14159265358979323846 / 180;
@@ -546,7 +546,7 @@ IMG_API void ppocr_img_rotation_matrix(double cx, double cy, double angle, doubl
 }
 
 // cv2.cvtColor(COLOR_RGB2GRAY) for packed uint8 RGB (15-bit fixed point)
-IMG_API void ppocr_img_rgb2gray(const uint8_t* rgb, int w, int h, int stride, uint8_t* dst) {
+IMG_API void rpocr_img_rgb2gray(const uint8_t* rgb, int w, int h, int stride, uint8_t* dst) {
   for_rows(h, (size_t)w * h, [&](int y0, int y1) {
     for (int y = y0; y < y1; y++) {
       const uint8_t* s = rgb + (size_t)y * stride; uint8_t* d = dst + (size_t)y * w;
@@ -557,7 +557,7 @@ IMG_API void ppocr_img_rgb2gray(const uint8_t* rgb, int w, int h, int stride, ui
 
 // 4-connectivity components of a 0/1 mask. labels [h*w] int32; stats [n*5] (left, top, width, height, area),
 // written for up to max_n labels (incl. background 0). Returns n (labels incl. background).
-IMG_API int ppocr_img_cc4(const uint8_t* mask, int w, int h, int32_t* labels, int32_t* stats, int max_n) {
+IMG_API int rpocr_img_cc4(const uint8_t* mask, int w, int h, int32_t* labels, int32_t* stats, int max_n) {
   std::vector<int32_t> par(1, 0);
   auto find = [&](int32_t a) { while (par[a] != a) { par[a] = par[par[a]]; a = par[a]; } return a; };
   for (int y = 0; y < h; y++) {
