@@ -35,7 +35,7 @@ for lib in libs:
     links = subprocess.run(["otool", "-L", str(lib)], check=True, capture_output=True, text=True).stdout
     assert "Metal.framework" in links, links
     syms = subprocess.run(["nm", "-g", str(lib)], check=True, capture_output=True, text=True).stdout
-    assert "kMetalBinaryMsl" in syms and "_ppocr_metal_device_available" in syms, lib
+    assert "kMetalBinaryMsl" in syms and "_rpocr_metal_device_available" in syms, lib
 print("metal_built_ok")
 has_device = _native.metal_available()
 print("metal_device_available", has_device)
