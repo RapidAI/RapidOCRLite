@@ -112,12 +112,12 @@ def _candidate_libraries():
     if env:
         yield Path(env)
     bundled = Path(__file__).resolve().parent
-    names = ("libppocr.so", "libppocr.dylib", "ppocr.dll")
+    names = ("librapidocrlite.so", "librapidocrlite.dylib", "rapidocrlite.dll")
     for name in names:
         yield bundled / name
-    yield from bundled.glob("libppocr.so.*")
-    yield from bundled.glob("libppocr.*.dylib")
-    found = ctypes.util.find_library("ppocr")
+    yield from bundled.glob("librapidocrlite.so.*")
+    yield from bundled.glob("librapidocrlite.*.dylib")
+    found = ctypes.util.find_library("rapidocrlite")
     if found:
         yield Path(found)
 
@@ -136,7 +136,7 @@ def load_library():
         return lib
     hint = "; ".join(errors) if errors else "library not found"
     raise ImportError(
-        "Could not load libppocr. Build it with CMake, set PPOCR_LIBRARY, "
+        "Could not load librapidocrlite. Build it with CMake, set PPOCR_LIBRARY, "
         f"or install the wheel. ({hint})"
     )
 
@@ -254,7 +254,7 @@ class NativeOCR:
             status = self.lib.ppocr_recognize(self.handle, ctypes.byref(image), ctypes.byref(result))
         else:
             if getattr(self.lib, "ppocr_run", None) is None:
-                raise RuntimeError("this libppocr has no ppocr_run; use_det/use_rec need a newer build")
+                raise RuntimeError("this librapidocrlite has no ppocr_run; use_det/use_rec need a newer build")
             status = self.lib.ppocr_run(self.handle, ctypes.byref(image), int(tasks), ctypes.byref(result))
         try:
             if status != PPOCR_OK:

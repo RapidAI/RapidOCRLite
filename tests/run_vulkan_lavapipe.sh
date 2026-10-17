@@ -87,8 +87,8 @@ env -u PPOCR_VULKAN_DEVICE_INDEX -u PPOCR_VULKAN_DEVICE_NAME \
   "$BUILD/ppocr_vulkan_robust" missing "$DET" "$REC" "$DICT"
 "$BUILD/ppocr_vulkan_robust" bad-index "$DET" "$REC" "$DICT"
 
-if [[ -n "${PPOCR_LIBRARY:-}" || -f "$BUILD/libppocr.so" ]]; then
-  export PPOCR_LIBRARY="${PPOCR_LIBRARY:-$BUILD/libppocr.so}"
+if [[ -n "${PPOCR_LIBRARY:-}" || -f "$BUILD/librapidocrlite.so" ]]; then
+  export PPOCR_LIBRARY="${PPOCR_LIBRARY:-$BUILD/librapidocrlite.so}"
   export PPOCR_TEST_DET="$DET" PPOCR_TEST_REC="$REC" PPOCR_TEST_DICT="$DICT"
   export PPOCR_TEST_IMAGE="$ROOT/python/tests/data/hello.png"
   export PYTHONPATH="$ROOT/python/src${PYTHONPATH:+:$PYTHONPATH}"

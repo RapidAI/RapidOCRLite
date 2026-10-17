@@ -9,7 +9,7 @@ Regression tests for two M4 bugs:
 
 Models come from PPOCR_TEST_SMALL_DET / _REC / _DICT, or are downloaded like
 ``RapidOCR()`` does. Metal tests skip without a Metal device; the CPU wide
-line test runs everywhere. PPOCR_LIBRARY may point at a local libppocr.
+line test runs everywhere. PPOCR_LIBRARY may point at a local librapidocrlite.
 """
 
 import json

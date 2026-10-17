@@ -195,14 +195,14 @@ jobs:
             mv prefix "$NAME"
             tar -czf "dist/${NAME}.tar.gz" "$NAME"
             zip -qry "dist/${NAME}.zip" "$NAME"
-            so=$(find "$NAME" -name "libppocr.so*" | head -1)
+            so=$(find "$NAME" -name "librapidocrlite.so*" | head -1)
             test -n "$so"
             file "$so"
             if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
               echo "SDK linked against glibc newer than 2.17" >&2
               exit 1
             fi
-            if nm "$NAME/lib/libppocr.a" "$NAME/lib/libppocr.so" 2>/dev/null | grep "_finite"; then
+            if nm "$NAME/lib/librapidocrlite.a" "$NAME/lib/librapidocrlite.so" 2>/dev/null | grep "_finite"; then
               echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
               exit 1
             fi
@@ -260,14 +260,14 @@ jobs:
             mv prefix "$NAME"
             tar -czf "dist/${NAME}.tar.gz" "$NAME"
             zip -qry "dist/${NAME}.zip" "$NAME"
-            so=$(find "$NAME" -name "libppocr.so*" | head -1)
+            so=$(find "$NAME" -name "librapidocrlite.so*" | head -1)
             test -n "$so"
             file "$so"
             if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
               echo "SDK linked against glibc newer than 2.17" >&2
               exit 1
             fi
-            if nm "$NAME/lib/libppocr.a" "$NAME/lib/libppocr.so" 2>/dev/null | grep "_finite"; then
+            if nm "$NAME/lib/librapidocrlite.a" "$NAME/lib/librapidocrlite.so" 2>/dev/null | grep "_finite"; then
               echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
               exit 1
             fi
@@ -329,14 +329,14 @@ jobs:
             mv prefix "$NAME"
             tar -czf "dist/${NAME}.tar.gz" "$NAME"
             zip -qry "dist/${NAME}.zip" "$NAME"
-            so=$(find "$NAME" -name "libppocr.so*" | head -1)
+            so=$(find "$NAME" -name "librapidocrlite.so*" | head -1)
             test -n "$so"
             file "$so"
             if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
               echo "SDK linked against glibc newer than 2.17" >&2
               exit 1
             fi
-            if nm "$NAME/lib/libppocr.a" "$NAME/lib/libppocr.so" 2>/dev/null | grep "_finite"; then
+            if nm "$NAME/lib/librapidocrlite.a" "$NAME/lib/librapidocrlite.so" 2>/dev/null | grep "_finite"; then
               echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
               exit 1
             fi
@@ -416,6 +416,7 @@ jobs:
           test -f "$SDK/README.md"
           test -f "$SDK/LICENSE"
           test -f "$SDK/include/ppocr/ppocr.h"
+          test -f "$SDK/lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake"
           test -f "$SDK/lib/cmake/ppocr/ppocrConfig.cmake"
 
       - name: Build example via find_package (CMAKE_PREFIX_PATH)
@@ -450,8 +451,8 @@ jobs:
           set -euo pipefail
           case "${{ runner.os }}" in
             Linux) ldd "$EXE" ;;
-            macOS) otool -L "$EXE"; otool -L "$SDK"/lib/libppocr.*.dylib ;;
-            Windows) objdump -p "$SDK/bin/ppocr.dll" | grep "DLL Name" || true ;;
+            macOS) otool -L "$EXE"; otool -L "$SDK"/lib/librapidocrlite.*.dylib ;;
+            Windows) objdump -p "$SDK/bin/rapidocrlite.dll" | grep "DLL Name" || true ;;
           esac
 
   attach-release:

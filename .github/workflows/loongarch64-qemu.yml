@@ -64,7 +64,7 @@ jobs:
           cmake -S . -B build-host -G Ninja -DCMAKE_BUILD_TYPE=Release \
             -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_BUILD_EXAMPLES=OFF
           cmake --build build-host -j"$(nproc)"
-          PPOCR_LIBRARY="$(ls build-host/libppocr.so | head -1)" PYTHONPATH=python/src \
+          PPOCR_LIBRARY="$(ls build-host/librapidocrlite.so | head -1)" PYTHONPATH=python/src \
           PPOCR_TEST_DET=ci-models/PP-OCRv6_det_tiny.onnx \
           PPOCR_TEST_REC=ci-models/PP-OCRv6_rec_tiny.onnx \
           PPOCR_TEST_DICT=ci-models/ppocrv6_tiny_dict.txt \

@@ -38,7 +38,7 @@ Join our [Discord](https://discord.gg/33eyQJq498)
   - Entities with more than USD 20M revenue or funding in the prior year may use them only for personal use or research.
   - Entities that offer products or services competing with Datalab may not use them.
   - The license also covers the model's Output (paragraph 8).
-- **Runtime.** Fully native: libppocr's C++ kernels run every model and the image preprocessing; the pipeline code is vendored from indra-ocr 0.3.2 (Apache-2.0, `python/src/rapidocr/_indra_vendor/`). No onnxruntime, OpenCV or indra-ocr is needed. `PPOCR_INDRA_BACKEND=ort` runs the upstream onnxruntime pipeline instead, as a test-only reference (install `indra-ocr==0.3.2` yourself).
+- **Runtime.** Fully native: librapidocrlite's C++ kernels run every model and the image preprocessing; the pipeline code is vendored from indra-ocr 0.3.2 (Apache-2.0, `python/src/rapidocr/_indra_vendor/`). No onnxruntime, OpenCV or indra-ocr is needed. `PPOCR_INDRA_BACKEND=ort` runs the upstream onnxruntime pipeline instead, as a test-only reference (install `indra-ocr==0.3.2` yourself).
 - **Same public API.** Differences from PP-OCRv6: boxes are axis-aligned rectangles, `txts` come in reading order, and `box_thresh` / `unclip_ratio` have no effect.
 
 ### 🖼️ lite vs PP-OCR examples
@@ -194,7 +194,7 @@ From a checkout of this branch (CMake ≥ 3.20, a C++20 compiler, and the Python
 pip install .
 ```
 
-That build follows `pyproject.toml`: shared `libppocr`, examples and tests off, Vulkan off. A local wheel is the same build packaged first:
+That build follows `pyproject.toml`: shared `librapidocrlite`, examples and tests off, Vulkan off. A local wheel is the same build packaged first:
 
 ```bash
 pip wheel . -w dist
@@ -229,12 +229,12 @@ CMAKE_ARGS="-DPPOCR_ENABLE_VULKAN=ON -DPPOCR_BUILD_STATIC=OFF" pip install .
 ```cmake
 cmake_minimum_required(VERSION 3.20)
 project(ocr_app C)
-find_package(ppocr REQUIRED)
+find_package(RapidOCRLite REQUIRED)
 add_executable(ocr_app main.c)
-target_link_libraries(ocr_app PRIVATE ppocr::ppocr)
+target_link_libraries(ocr_app PRIVATE RapidOCRLite::rapidocrlite)
 ```
 
-The install prefix contains `libppocr.so` (SONAME `libppocr.so.5`), headers under `include/ppocr/`, and `lib/cmake/ppocr/ppocrConfig.cmake`. Link `ppocr::static` for the static library. At run time the dynamic loader has to see `libppocr.so.5` (`LD_LIBRARY_PATH` or an rpath).
+The install prefix contains `librapidocrlite.so` (SONAME `librapidocrlite.so.5`), headers under `include/ppocr/`, and `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`. Link `RapidOCRLite::static` (`librapidocrlite.a`) for the static library. The old `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` names still work as compatibility wrappers. At run time the dynamic loader has to see `librapidocrlite.so.5` (`LD_LIBRARY_PATH` or an rpath).
 
 ### 📋 Usage
 

@@ -153,7 +153,7 @@ else()
       -U__FINITE_MATH_ONLY__ -D__FINITE_MATH_ONLY__=0)
   # -ffast-math defines __FINITE_MATH_ONLY__=1, and old glibc headers
   # (manylinux2014, glibc 2.17) then redirect expf/powf/hypot to __*_finite.
-  # glibc >= 2.31 no longer lets new programs link those, so libppocr.a was
+  # glibc >= 2.31 no longer lets new programs link those, so librapidocrlite.a was
   # unusable on current distros. Resetting only the macro keeps the fast-math
   # code generation (bit-identical results) and calls the plain functions;
   # -fno-finite-math-only would also change codegen and score bits.
@@ -298,11 +298,12 @@ if(PPOCR_BUILD_STATIC)
   if(PPOCR_METAL_LINK)
     target_link_libraries(ppocr PUBLIC ${PPOCR_METAL_LINK})
   endif()
-  set_target_properties(ppocr PROPERTIES OUTPUT_NAME ppocr EXPORT_NAME static)
+  set_target_properties(ppocr PROPERTIES OUTPUT_NAME rapidocrlite EXPORT_NAME static)
   if(WIN32)
-    set_target_properties(ppocr PROPERTIES OUTPUT_NAME ppocr_static)
+    set_target_properties(ppocr PROPERTIES OUTPUT_NAME rapidocrlite_static)
   endif()
   add_library(ppocr::static ALIAS ppocr)
+  add_library(RapidOCRLite::static ALIAS ppocr)
   list(APPEND PPOCR_INSTALL_TARGETS ppocr)
 endif()
 
@@ -320,11 +321,12 @@ if(PPOCR_BUILD_SHARED)
     target_link_libraries(ppocr_shared PRIVATE ${PPOCR_METAL_LINK})
   endif()
   set_target_properties(ppocr_shared PROPERTIES
-      OUTPUT_NAME ppocr
-      EXPORT_NAME ppocr
+      OUTPUT_NAME rapidocrlite
+      EXPORT_NAME rapidocrlite
       VERSION ${PROJECT_VERSION}
       SOVERSION ${PROJECT_VERSION_MAJOR})
   add_library(ppocr::ppocr ALIAS ppocr_shared)
+  add_library(RapidOCRLite::rapidocrlite ALIAS ppocr_shared)
   list(APPEND PPOCR_INSTALL_TARGETS ppocr_shared)
 endif()
 
@@ -477,15 +479,30 @@ endif()
 
 if(NOT SKBUILD)
   install(TARGETS ${PPOCR_INSTALL_TARGETS}
-      EXPORT ppocrTargets
+      EXPORT RapidOCRLiteTargets
       ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
       LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
       RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
       INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
   install(DIRECTORY include/ppocr DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-  install(EXPORT ppocrTargets
-      NAMESPACE ppocr::
-      DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ppocr)
+  # Library files are librapidocrlite.{so,dylib,a} / rapidocrlite.dll (+ rapidocrlite_static.lib).
+  # Primary package: find_package(RapidOCRLite) -> RapidOCRLite::rapidocrlite (shared), RapidOCRLite::static.
+  install(EXPORT RapidOCRLiteTargets
+      NAMESPACE RapidOCRLite::
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/RapidOCRLite)
+  configure_package_config_file(
+      cmake/RapidOCRLiteConfig.cmake.in
+      ${CMAKE_CURRENT_BINARY_DIR}/RapidOCRLiteConfig.cmake
+      INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/RapidOCRLite)
+  write_basic_package_version_file(
+      ${CMAKE_CURRENT_BINARY_DIR}/RapidOCRLiteConfigVersion.cmake
+      COMPATIBILITY SameMajorVersion)
+  install(FILES
+      ${CMAKE_CURRENT_BINARY_DIR}/RapidOCRLiteConfig.cmake
+      ${CMAKE_CURRENT_BINARY_DIR}/RapidOCRLiteConfigVersion.cmake
+      DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/RapidOCRLite)
+  # Source compatibility for existing CMake consumers: find_package(ppocr) still works and
+  # provides ppocr::ppocr / ppocr::static as thin wrappers over the RapidOCRLite targets.
   configure_package_config_file(
       cmake/ppocrConfig.cmake.in
       ${CMAKE_CURRENT_BINARY_DIR}/ppocrConfig.cmake

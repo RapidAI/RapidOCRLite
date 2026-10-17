@@ -8,21 +8,21 @@ Native PP-OCRv6 OCR engine (C ABI in `include/ppocr/ppocr.h`, C++ wrapper in
 | Path | Contents |
 | --- | --- |
 | `include/ppocr/` | headers |
-| `lib/` | `libppocr.so*` / `libppocr*.dylib` / `ppocr.lib` (import lib), static `libppocr.a` / `ppocr_static.lib` |
-| `bin/` | `ppocr.dll` (Windows) |
-| `lib/cmake/ppocr/` | CMake package config |
+| `lib/` | `librapidocrlite.so*` / `librapidocrlite*.dylib` / `rapidocrlite.lib` (import lib), static `librapidocrlite.a` / `rapidocrlite_static.lib` |
+| `bin/` | `rapidocrlite.dll` (Windows) |
+| `lib/cmake/RapidOCRLite/` | CMake package config (`lib/cmake/ppocr/` = compatibility wrapper) |
 
 ## CMake
 
 ```cmake
-find_package(ppocr 5 REQUIRED CONFIG)
-target_link_libraries(app PRIVATE ppocr::ppocr)   # shared
-# target_link_libraries(app PRIVATE ppocr::static) # static
+find_package(RapidOCRLite 5 REQUIRED CONFIG)
+target_link_libraries(app PRIVATE RapidOCRLite::rapidocrlite)   # shared
+# target_link_libraries(app PRIVATE RapidOCRLite::static) # static
 ```
 
 Configure with `-DCMAKE_PREFIX_PATH=<this directory>`. Windows libraries use
 the static MSVC runtime (`/MT`); set `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded`
-when linking `ppocr::static`. Linux binaries need glibc >= 2.17.
+when linking `RapidOCRLite::static`. Linux binaries need glibc >= 2.17.
 
 ## Models
 

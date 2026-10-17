@@ -1,8 +1,8 @@
 """Capture the exact native inputs the Python wrapper produces for the
 reference images (options struct, det thresholds, prepared RGB image) so a
-cross-compiled libppocr can replay them under an emulator (no Python needed
+cross-compiled librapidocrlite can replay them under an emulator (no Python needed
 on the target). Usage: capture_cases.py OUT_DIR  (PPOCR_TEST_DET/REC/DICT set,
-rapidocr importable with a native libppocr for the host)."""
+rapidocr importable with a native librapidocrlite for the host)."""
 import ctypes
 import json
 import os

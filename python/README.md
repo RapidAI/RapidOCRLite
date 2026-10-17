@@ -42,7 +42,7 @@ pip install .
 points CMake at the parent tree. It does not produce a self-contained sdist.
 
 The binding is ctypes over the C ABI (`include/ppocr/ppocr.h`), so the wheel
-ships `libppocr` and does not add a second C++ wrapper.
+ships `librapidocrlite` and does not add a second C++ wrapper.
 
 ## Vulkan
 

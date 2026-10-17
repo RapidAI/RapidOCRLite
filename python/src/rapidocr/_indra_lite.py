@@ -1,6 +1,6 @@
 """model_type="lite": bundled Indra OCR weights (python/src/rapidocr/models/lite).
 
-A thin wrapper over libppocr's C API, like the default models: ppocr_create(<lite folder>, ...) selects the
+A thin wrapper over librapidocrlite's C API, like the default models: ppocr_create(<lite folder>, ...) selects the
 C++ Indra pipeline (src/indra/lite_pipeline.cpp, ported from indra-ocr 0.3.2, Apache-2.0): deskew, line
 detection, script routing, CTC recognition with both vocabularies, line splitting, reading order. No Python
 pipeline code, onnxruntime, OpenCV or indra-ocr at runtime.

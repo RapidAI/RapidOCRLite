@@ -30,7 +30,7 @@ if not (MODELS / "PP-OCRv6_det_tiny.onnx").is_file():
     subprocess.run([sys.executable, str(ROOT / "python/tests/fetch_ci_models.py")], check=True)
 
 root = Path(rapidocr.__file__).resolve().parent
-lib = next(p for p in (root / "ppocr.dll", root / "libppocr.so", root / "libppocr.dylib") if p.is_file())
+lib = next(p for p in (root / "rapidocrlite.dll", root / "librapidocrlite.so", root / "librapidocrlite.dylib") if p.is_file())
 os.environ.update(
     PPOCR_LIBRARY=str(lib),
     PPOCR_TEST_IMAGE=str(DATA / "hello.png"),

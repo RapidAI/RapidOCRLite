@@ -1,4 +1,4 @@
-"""OpenCV-free image ops for the lite pipeline (libppocr ppocr_img_* C API, numpy fallbacks for the trivial ones).
+"""OpenCV-free image ops for the lite pipeline (librapidocrlite ppocr_img_* C API, numpy fallbacks for the trivial ones).
 
 The C functions reproduce the OpenCV 5.0 arithmetic of cv2.resize (INTER_AREA / INTER_LINEAR, uint8),
 cv2.warpAffine (INTER_LINEAR) and cv2.connectedComponentsWithStats (4-connectivity) used by the Indra

@@ -58,8 +58,8 @@ jobs:
 
       - name: Confirm the library does not link libvulkan
         run: |
-          if objdump -p build-vk/libppocr.so | grep -E 'NEEDED[[:space:]]+libvulkan'; then
-            echo "libppocr.so must dlopen libvulkan, not DT_NEEDED it" >&2
+          if objdump -p build-vk/librapidocrlite.so | grep -E 'NEEDED[[:space:]]+libvulkan'; then
+            echo "librapidocrlite.so must dlopen libvulkan, not DT_NEEDED it" >&2
             exit 1
           fi
 

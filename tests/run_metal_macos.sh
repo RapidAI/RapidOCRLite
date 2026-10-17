@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Metal checks on macOS: CPU vs Metal text/boxes, multithreaded determinism,
 # zero Metal driver errors under Metal API validation, the CPU fallback when
-# Metal is hidden, and the Python tests against this build's libppocr.
+# Metal is hidden, and the Python tests against this build's librapidocrlite.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -37,7 +37,7 @@ grep -q "metal_available=0" "$BUILD/metal-fallback.log"
 echo "+ ppocr_bench backend=metal"
 PPOCR_BACKEND=metal "$BUILD/ppocr_bench" "$DET" "$REC" "$DICT" "$HELLO_PPM" 1 3
 
-LIB="$BUILD/libppocr.dylib"
+LIB="$BUILD/librapidocrlite.dylib"
 if [[ -f "$LIB" ]]; then
   export PPOCR_LIBRARY="$LIB"
   export PPOCR_TEST_DET="$DET" PPOCR_TEST_REC="$REC" PPOCR_TEST_DICT="$DICT"

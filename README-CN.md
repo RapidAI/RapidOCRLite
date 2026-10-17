@@ -38,7 +38,7 @@
   - 上一年收入或融资超过 2000 万美元的主体，只能用于个人或研究用途。
   - 提供与 Datalab 竞争的产品或服务的主体，不得使用。
   - 输出同样受该许可证约束（第 8 条）。
-- **运行方式。** 全部原生：所有模型和图像预处理都由 libppocr 的 C++ 内核执行；流水线代码取自 indra-ocr 0.3.2（Apache-2.0，`python/src/rapidocr/_indra_vendor/`）。运行时不需要 onnxruntime、OpenCV 或 indra-ocr。`PPOCR_INDRA_BACKEND=ort` 改用上游 onnxruntime 流水线，仅作测试参照（需自行安装 `indra-ocr==0.3.2`）。
+- **运行方式。** 全部原生：所有模型和图像预处理都由 librapidocrlite 的 C++ 内核执行；流水线代码取自 indra-ocr 0.3.2（Apache-2.0，`python/src/rapidocr/_indra_vendor/`）。运行时不需要 onnxruntime、OpenCV 或 indra-ocr。`PPOCR_INDRA_BACKEND=ort` 改用上游 onnxruntime 流水线，仅作测试参照（需自行安装 `indra-ocr==0.3.2`）。
 - **公开接口不变。** 与 PP-OCRv6 的差别：框为轴对齐矩形，`txts` 按阅读顺序排列，`box_thresh` / `unclip_ratio` 不生效。
 
 ### 🖼️ lite 与 PP-OCR 效果对照（参考样例）
@@ -591,7 +591,7 @@ from rapidocr import RapidOCR
 pip install .
 ```
 
-该构建跟随 `pyproject.toml`：共享库 `libppocr`，关闭示例和测试，关闭 Vulkan。本地 wheel 是先把同一次构建打成包：
+该构建跟随 `pyproject.toml`：共享库 `librapidocrlite`，关闭示例和测试，关闭 Vulkan。本地 wheel 是先把同一次构建打成包：
 
 ```bash
 pip wheel . -w dist
@@ -626,12 +626,12 @@ CMAKE_ARGS="-DPPOCR_ENABLE_VULKAN=ON -DPPOCR_BUILD_STATIC=OFF" pip install .
 ```cmake
 cmake_minimum_required(VERSION 3.20)
 project(ocr_app C)
-find_package(ppocr REQUIRED)
+find_package(RapidOCRLite REQUIRED)
 add_executable(ocr_app main.c)
-target_link_libraries(ocr_app PRIVATE ppocr::ppocr)
+target_link_libraries(ocr_app PRIVATE RapidOCRLite::rapidocrlite)
 ```
 
-安装前缀里有 `libppocr.so`（SONAME `libppocr.so.5`）、`include/ppocr/` 下的头文件，以及 `lib/cmake/ppocr/ppocrConfig.cmake`。静态库目标是 `ppocr::static`。运行时动态加载器必须能找到 `libppocr.so.5`（`LD_LIBRARY_PATH` 或 rpath）。
+安装前缀里有 `librapidocrlite.so`（SONAME `librapidocrlite.so.5`）、`include/ppocr/` 下的头文件，以及 `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`。静态库目标是 `RapidOCRLite::static`（`librapidocrlite.a`）。旧的 `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` 仍可用（兼容包装）。运行时动态加载器必须能找到 `librapidocrlite.so.5`（`LD_LIBRARY_PATH` 或 rpath）。
 
 ### 📋 使用
 

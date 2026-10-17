@@ -15,15 +15,15 @@ cmake --install build --prefix "$PWD/install"
 
 That produces:
 
-- `libppocr.a` (`ppocr::static`)
-- `libppocr.so` (`ppocr::ppocr`), SONAME `libppocr.so.5`
+- `librapidocrlite.a` (`RapidOCRLite::static`)
+- `librapidocrlite.so` (`RapidOCRLite::rapidocrlite`), SONAME `librapidocrlite.so.5`
 - headers under `include/ppocr/`
-- `lib/cmake/ppocr/ppocrConfig.cmake`
+- `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake` (plus a compatibility `lib/cmake/ppocr/ppocrConfig.cmake` providing `ppocr::ppocr` / `ppocr::static`)
 
 ```cmake
-find_package(ppocr REQUIRED)
-target_link_libraries(app PRIVATE ppocr::ppocr)   # shared
-# or ppocr::static
+find_package(RapidOCRLite REQUIRED)
+target_link_libraries(app PRIVATE RapidOCRLite::rapidocrlite)   # shared
+# or RapidOCRLite::static
 ```
 
 Wheels and the sdist are built by `.github/workflows/build-wheels.yml`.

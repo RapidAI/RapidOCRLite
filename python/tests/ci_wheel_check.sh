@@ -34,17 +34,17 @@ LIB=$(python - << 'PY'
 import rapidocr
 from pathlib import Path
 root = Path(rapidocr.__file__).resolve().parent
-for name in ("libppocr.so.5.0.0", "libppocr.so.5", "libppocr.so",
-             "libppocr.5.0.0.dylib", "libppocr.5.dylib", "libppocr.dylib"):
+for name in ("librapidocrlite.so.5.0.0", "librapidocrlite.so.5", "librapidocrlite.so",
+             "librapidocrlite.5.0.0.dylib", "librapidocrlite.5.dylib", "librapidocrlite.dylib"):
     path = root / name
     if path.is_file():
         print(path)
         break
 else:
-    raise SystemExit("installed libppocr not found")
-libs = sorted(p.name for p in root.glob("libppocr*") if p.is_file())
+    raise SystemExit("installed librapidocrlite not found")
+libs = sorted(p.name for p in root.glob("librapidocrlite*") if p.is_file())
 if len(libs) != 1:
-    raise SystemExit(f"expected one bundled libppocr, found {libs}")
+    raise SystemExit(f"expected one bundled librapidocrlite, found {libs}")
 PY
 )
 export PPOCR_LIBRARY="$LIB"

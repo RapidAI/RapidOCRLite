@@ -1,9 +1,17 @@
 @PACKAGE_INIT@
 
+# Compatibility package: the library is librapidocrlite (find_package(RapidOCRLite) is preferred).
+# ppocr::ppocr / ppocr::static forward to RapidOCRLite::rapidocrlite / RapidOCRLite::static.
 include(CMakeFindDependencyMacro)
-# ppocr::static links Threads::Threads.
-find_dependency(Threads)
+find_dependency(RapidOCRLite @PROJECT_VERSION@ CONFIG PATHS "${CMAKE_CURRENT_LIST_DIR}/../RapidOCRLite" NO_DEFAULT_PATH)
 
-include("${CMAKE_CURRENT_LIST_DIR}/ppocrTargets.cmake")
+if(TARGET RapidOCRLite::rapidocrlite AND NOT TARGET ppocr::ppocr)
+  add_library(ppocr::ppocr INTERFACE IMPORTED)
+  set_target_properties(ppocr::ppocr PROPERTIES INTERFACE_LINK_LIBRARIES RapidOCRLite::rapidocrlite)
+endif()
+if(TARGET RapidOCRLite::static AND NOT TARGET ppocr::static)
+  add_library(ppocr::static INTERFACE IMPORTED)
+  set_target_properties(ppocr::static PROPERTIES INTERFACE_LINK_LIBRARIES RapidOCRLite::static)
+endif()
 
 check_required_components(ppocr)

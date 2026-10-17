@@ -1,7 +1,8 @@
 # Builds against an installed / extracted RapidOCRLite SDK, not this source tree:
 #   cmake -S examples/sdk_consumer -B build -DCMAKE_PREFIX_PATH=/path/to/RapidOCRLite-SDK-<plat>-<ver>
 #   cmake --build build --config Release
-# Pass -DPPOCR_SDK_LINK=static to link ppocr::static instead of ppocr::ppocr.
+# Pass -DPPOCR_SDK_LINK=static to link RapidOCRLite::static (librapidocrlite.a) instead of
+# RapidOCRLite::rapidocrlite (librapidocrlite.so / .dylib / rapidocrlite.dll).
 cmake_minimum_required(VERSION 3.20)
 project(ppocr_sdk_consumer C CXX)
 
@@ -11,11 +12,11 @@ if(MSVC)
   set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
 endif()
 
-find_package(ppocr 5 REQUIRED CONFIG)
+find_package(RapidOCRLite 5 REQUIRED CONFIG)
 
 add_executable(sdk_consumer main.c)
 if(PPOCR_SDK_LINK STREQUAL "static")
-  target_link_libraries(sdk_consumer PRIVATE ppocr::static)
+  target_link_libraries(sdk_consumer PRIVATE RapidOCRLite::static)
 else()
-  target_link_libraries(sdk_consumer PRIVATE ppocr::ppocr)
+  target_link_libraries(sdk_consumer PRIVATE RapidOCRLite::rapidocrlite)
 endif()

@@ -16,7 +16,7 @@ import rapidocr
 from rapidocr import _native
 
 root = Path(rapidocr.__file__).resolve().parent
-libs = sorted(p for p in root.glob("libppocr*.dylib") if p.is_file() and not p.is_symlink())
+libs = sorted(p for p in root.glob("librapidocrlite*.dylib") if p.is_file() and not p.is_symlink())
 assert libs, list(root.iterdir())
 for lib in libs:
     out = subprocess.run(["vtool", "-show-build", str(lib)], check=True,
