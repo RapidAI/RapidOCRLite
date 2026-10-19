@@ -6736,11 +6736,17 @@ void GemmCtcTop1(int* indices, float* probabilities, const float* left,
           float vmax = row[0];
           vDSP_maxv(row, 1, &vmax, vDSP_Length(n));
           {
+            // NEON finds the first 4-lane block holding vmax, then the scalar
+            // walk below locates the exact first occurrence. On non-aarch64
+            // (Intel Macs share the Accelerate path) best stays 0 and the
+            // scalar walk alone yields the same first-occurrence index.
+#if defined(__aarch64__)
             const float32x4_t mv = vdupq_n_f32(vmax);
             int j = 0;
             for (; j + 4 <= n; j += 4)
               if (vmaxvq_u32(vceqq_f32(vld1q_f32(row + j), mv))) break;
             best = j;
+#endif
             while (best < n - 1 && !(row[best] == vmax)) ++best;
           }
           const float maximum = row[best];
