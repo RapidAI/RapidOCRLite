@@ -93,7 +93,7 @@ test-command = "python {project}/python/tests/ci_wheel_check.py && python {proje
 # exports the former per wheel arch, and hardcoding arm64 here silently
 # mis-built the Intel wheels. MACOSX_DEPLOYMENT_TARGET is NOT set here either:
 # the config environment would override the job-level value for both arches.
-# It lives in the two jobs in build-wheels.yml (14.0 arm64 / 11.0 x86_64), and
+# It lives in the two jobs in release.yml (14.0 arm64 / 11.0 x86_64), and
 # CMake reads it from the environment (Platform/Darwin-Initialize.cmake), so it
 # also drives the wheel tag and the vtool minos check.
 [tool.cibuildwheel.macos]
@@ -102,7 +102,7 @@ before-all = "brew install glslang spirv-cross"
 environment = { CMAKE_ARGS = "-DPPOCR_BUILD_EXAMPLES=OFF -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_ENABLE_METAL=ON -DPPOCR_REQUIRE_METAL=ON", CMAKE_BUILD_PARALLEL_LEVEL = "3", SKBUILD_LOGGING_LEVEL = "INFO", SKBUILD_BUILD_VERBOSE = "true" }
 test-command = "bash {project}/python/tests/ci_wheel_check_macos.sh"
 
-# Intel wheel specifics live in the wheels-macos-x86_64 job in build-wheels.yml
+# Intel wheel specifics live in the wheels-macos-x86_64 job in release.yml
 # (MACOSX_DEPLOYMENT_TARGET=11.0 for older Macs plus the MACOS_CHECK_* knobs
 # read by ci_wheel_check_macos.sh). They are deliberately NOT a cibuildwheel
 # override here: a plain x86_64 wheel's build identifier is

@@ -101,10 +101,11 @@ Set `use_cls=False` to skip the warning. Do not pass an older OCR version.
 
 ## Wheels and publishing
 
-`.github/workflows/build-wheels.yml` builds the manylinux2014 wheels and the
-sdist. It runs on pushes and pull requests to `main`, on tags named `v5*`,
-and from the Actions “Run workflow” button. A normal push does not upload
-anything to PyPI. Publishing happens only when a `v5*` tag is pushed.
+`.github/workflows/release.yml` builds the manylinux2014 wheels and the sdist.
+It runs on pushes and pull requests to `main`, on tags named `v5*`, and from
+the Actions “Run workflow” button. Every push to `main` publishes: wheels and
+sdist go to PyPI, and wheels, sdist, SDK archives and the Java jar go to the
+GitHub Release of `v<version>`.
 
 `5.0.0a6` is a pre-release: `pip install --pre RapidOCRLite` or
 `pip install rapidocrlite==5.0.0a6`. `pip install rapidocr` installs the

@@ -455,7 +455,7 @@ There is no 4.x tag in this repository. Details and the C ABI are in [`docs/API.
 
 ### 📦 Releasing
 
-Wheel and sdist builds run from [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml) on pushes to `main`. PyPI publishing runs only when a `v5*` tag is pushed. The steps, the trusted-publisher settings, and the tag command are in [`docs/RELEASING.md`](docs/RELEASING.md).
+One workflow, [`.github/workflows/release.yml`](.github/workflows/release.yml), builds the SDK archives, the Python wheels/sdist and the Java fat jar on every push to `main` (and on `v5*` tags) and publishes them: wheels and sdist to PyPI, SDK archives, wheels and the jar to the GitHub Release of `v<version>`. The steps, the trusted-publisher settings, and the tag command are in [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ### 👥 Who use? ([more](https://github.com/RapidAI/RapidOCR/network/dependents))
 

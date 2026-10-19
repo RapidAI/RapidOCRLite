@@ -26,8 +26,8 @@ target_link_libraries(app PRIVATE RapidOCRLite::rapidocrlite)   # shared
 # or RapidOCRLite::static
 ```
 
-Wheels and the sdist are built by `.github/workflows/build-wheels.yml`.
-Publishing to PyPI is tag-only; see [`RELEASING.md`](RELEASING.md).
+Wheels and the sdist are built by `.github/workflows/release.yml`, which also
+publishes them to PyPI; see [`RELEASING.md`](RELEASING.md).
 
 `PPOCR_BUILD_SHARED` and `PPOCR_BUILD_STATIC` both default to `ON`.
 `PPOCR_ENABLE_VULKAN` defaults to `ON`. Shaders are compiled at build time

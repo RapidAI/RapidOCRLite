@@ -28,7 +28,10 @@ case "$JAVA_HOME" in
 esac
 PLATFORMS="${PLATFORMS:-win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64}"
 PACKAGE_ONLY="${PACKAGE_ONLY:-0}"
-VERSION=5.0.0a11
+# Single source of truth for the version: the root pyproject.toml. Keeps the
+# jar name, the SDK directory names and the release tag in sync on every bump.
+VERSION="${VERSION:-$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' ../pyproject.toml 2>/dev/null | head -1)}"
+VERSION="${VERSION:-5.0.0a11}"
 JAR="dist/rapidocrlite-java-$VERSION.jar"
 JNI_SRC="src/native/rapidocr_jni.cpp"
 
@@ -125,25 +128,25 @@ else
 
     if has_platform linux-x86_64; then
         zig_cross linux-x86_64 x86_64-linux-gnu linux \
-            sdk/linux_x86_64/RapidOCRLite-SDK-linux_x86_64-5.0.0a11 \
+            sdk/linux_x86_64/RapidOCRLite-SDK-linux_x86_64-$VERSION \
             librapidocrlite.so.5.0.0 librapidocrlite.so.5 \
             librapidocrlite_jni.so
     fi
     if has_platform linux-aarch64; then
         zig_cross linux-aarch64 aarch64-linux-gnu linux \
-            sdk/linux_aarch64/RapidOCRLite-SDK-linux_aarch64-5.0.0a11 \
+            sdk/linux_aarch64/RapidOCRLite-SDK-linux_aarch64-$VERSION \
             librapidocrlite.so.5.0.0 librapidocrlite.so.5 \
             librapidocrlite_jni.so
     fi
     if has_platform macos-aarch64; then
         zig_cross macos-aarch64 aarch64-macos darwin \
-            sdk/macosx_arm64/RapidOCRLite-SDK-macosx_arm64-5.0.0a11 \
+            sdk/macosx_arm64/RapidOCRLite-SDK-macosx_arm64-$VERSION \
             librapidocrlite.5.0.0.dylib librapidocrlite.5.dylib \
             librapidocrlite_jni.dylib
     fi
     if has_platform macos-x86_64; then
         zig_cross macos-x86_64 x86_64-macos darwin \
-            sdk/macosx_x86_64/RapidOCRLite-SDK-macosx_x86_64-5.0.0a11 \
+            sdk/macosx_x86_64/RapidOCRLite-SDK-macosx_x86_64-$VERSION \
             librapidocrlite.5.0.0.dylib librapidocrlite.5.dylib \
             librapidocrlite_jni.dylib
     fi
@@ -158,7 +161,7 @@ rm -rf build/classes && mkdir -p build/classes
 echo "== 3/3 package jar"
 mkdir -p build/classes/native dist
 found=0
-for plat in win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64; do
+for plat in win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64; do
     src="build/native/$plat"
     [ -d "$src" ] || continue
     mkdir -p "build/classes/native/$plat"

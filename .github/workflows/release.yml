@@ -1,0 +1,1487 @@
+name: release
+
+# One pipeline for the whole release. Every push to main (and every v5* tag
+# push, and manual dispatch) builds:
+#
+#   * the C/C++ SDK archives  -> attached to the GitHub Release
+#   * the Python wheels/sdist -> published to PyPI and attached to the Release
+#   * the Java fat jar        -> attached to the same Release
+#
+# The release target is resolved by the `meta` job: a v5* tag push publishes to
+# that tag, a main push publishes to `v<version from pyproject.toml>` (creating
+# the tag and the release when they do not exist yet). Keeping everything in a
+# single workflow is what makes the ordering deterministic: the Java jobs can
+# depend on the SDK artifacts of the very same run instead of racing a release
+# that another workflow has not uploaded yet.
+on:
+  push:
+    branches: [main]
+    tags: ["v5*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish to PyPI and the GitHub Release"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  # Never cancel a release run: a half-finished upload leaves the release with
+  # a partial asset list.
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  meta:
+    name: resolve release target
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      publish: ${{ steps.resolve.outputs.publish }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve tag / publish flag
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          DISPATCH_PUBLISH: ${{ github.event.inputs.publish }}
+        run: |
+          set -euo pipefail
+          version=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          case "$REF" in
+            refs/tags/*) tag="$REF_NAME" ;;
+            *) tag="v$version" ;;
+          esac
+          publish=false
+          case "$EVENT" in
+            push)
+              case "$REF" in
+                refs/tags/v5*) publish=true ;;
+                refs/heads/main) publish=true ;;
+              esac
+              ;;
+            workflow_dispatch)
+              [ "$DISPATCH_PUBLISH" = "true" ] && publish=true || true
+              ;;
+          esac
+          echo "tag=$tag"
+          echo "publish=$publish"
+          echo "version=$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  sdk-windows-x64:
+    name: SDK Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja
+        shell: bash
+        run: choco install ninja -y
+
+      - name: Build and package SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=ON \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build -j"$(nproc 2>/dev/null || echo 4)"
+          cmake --install build
+          NAME="RapidOCRLite-SDK-win_amd64-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          python tools/zip_dir.py "$NAME" "dist/${NAME}.zip"
+          ls -la dist
+          test -f "dist/${NAME}.zip"
+
+      - name: Lite engine regression (MSVC x64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python python/tests/fetch_ci_models.py
+          cmake -S . -B build-test -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=OFF \
+            -DPPOCR_BUILD_EXAMPLES=ON \
+            -DPPOCR_BUILD_TESTS=ON \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build-test -j"$(nproc 2>/dev/null || echo 4)" --target ppocr_lite_c_test ppocr_model_type_test ppocr_c_api_smoke
+          export PATH="$PWD/build-test:$PATH"
+          (cd build-test && ctest -R "lite_regress|model_type|c_api_smoke" --output-on-failure)
+          # timing on the regression crop (not compared)
+          printf 'crop %s\n' "$(cygpath -m "$PWD")/tests/data/lite_crop.ppm" > crop.list
+          for t in 1 4; do ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list $t lite_t$t.json | tail -1; done
+          PPOCR_FORCE_ISA=scalar ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list 4 lite_scalar.json | tail -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-win_amd64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  sdk-windows-x86:
+    name: SDK Windows x86 (win32)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x86
+
+      - name: Install Ninja
+        shell: bash
+        run: choco install ninja -y
+
+      - name: Build and package SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=ON \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build -j"$(nproc 2>/dev/null || echo 4)"
+          cmake --install build
+          NAME="RapidOCRLite-SDK-win32-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          python tools/zip_dir.py "$NAME" "dist/${NAME}.zip"
+          ls -la dist
+          test -f "dist/${NAME}.zip"
+
+      - name: Lite engine regression (MSVC x86)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python python/tests/fetch_ci_models.py
+          cmake -S . -B build-test -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=OFF \
+            -DPPOCR_BUILD_EXAMPLES=ON \
+            -DPPOCR_BUILD_TESTS=ON \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=OFF
+          cmake --build build-test -j"$(nproc 2>/dev/null || echo 4)" --target ppocr_lite_c_test ppocr_model_type_test ppocr_c_api_smoke
+          export PATH="$PWD/build-test:$PATH"
+          (cd build-test && ctest -R "lite_regress|model_type|c_api_smoke" --output-on-failure)
+          # timing on the regression crop (not compared)
+          printf 'crop %s\n' "$(cygpath -m "$PWD")/tests/data/lite_crop.ppm" > crop.list
+          for t in 1 4; do ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list $t lite_t$t.json | tail -1; done
+          PPOCR_FORCE_ISA=scalar ./build-test/ppocr_lite_c_test python/src/rapidocr/models/lite crop.list 4 lite_scalar.json | tail -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-win32
+          path: dist/*.zip
+          if-no-files-found: error
+
+  sdk-macos-arm64:
+    name: SDK macOS arm64 (Metal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install shader tools
+        run: brew install glslang spirv-cross ninja
+
+      - name: Build and package SDK
+        run: |
+          set -euo pipefail
+          VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=ON \
+            -DPPOCR_REQUIRE_METAL=ON | tee configure.log
+          grep -q "Metal backend enabled" configure.log
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+          cmake --install build
+          NAME="RapidOCRLite-SDK-macosx_arm64-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          tar -czf "dist/${NAME}.tar.gz" "$NAME"
+          ls -la dist
+          test -f "dist/${NAME}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-macosx_arm64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  sdk-macos-x86_64:
+    name: SDK macOS x86_64 (Metal)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install shader tools
+        run: brew install glslang spirv-cross ninja
+
+      - name: Build and package SDK
+        run: |
+          set -euo pipefail
+          VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=ON \
+            -DPPOCR_REQUIRE_METAL=ON | tee configure.log
+          grep -q "Metal backend enabled" configure.log
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+          cmake --install build
+          NAME="RapidOCRLite-SDK-macosx_x86_64-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          tar -czf "dist/${NAME}.tar.gz" "$NAME"
+          ls -la dist
+          test -f "dist/${NAME}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-macosx_x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+
+
+  sdk-linux-x86_64:
+    name: SDK Linux x86_64 (manylinux2014)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package SDK in manylinux2014
+        run: |
+          set -euo pipefail
+          IMAGE=quay.io/pypa/manylinux2014_x86_64:2025.03.23-1
+          docker run --rm -v "$PWD":/io -w /io "$IMAGE" bash -c '
+            set -euo pipefail
+            PYBIN=/opt/python/cp312-cp312/bin
+            test -x "$PYBIN/python"
+            VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
+            yum install -y zip
+            # ninja-build is missing on some manylinux2014_aarch64 repos; Makefiles are fine.
+            cmake -S . -B build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DPPOCR_BUILD_SHARED=ON \
+              -DPPOCR_BUILD_STATIC=ON \
+              -DPPOCR_BUILD_EXAMPLES=OFF \
+              -DPPOCR_BUILD_TESTS=OFF \
+              -DPPOCR_ENABLE_VULKAN=OFF \
+              -DPPOCR_ENABLE_METAL=OFF
+            cmake --build build -j"$(nproc)"
+            cmake --install build
+            NAME="RapidOCRLite-SDK-linux_x86_64-${VER}"
+            mkdir -p dist
+            rm -rf "$NAME"
+            mv prefix "$NAME"
+            tar -czf "dist/${NAME}.tar.gz" "$NAME"
+            zip -qry "dist/${NAME}.zip" "$NAME"
+            so=$(find "$NAME" -name "librapidocrlite.so*" | head -1)
+            test -n "$so"
+            file "$so"
+            if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
+              echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            if nm "$NAME/lib/librapidocrlite.a" "$NAME/lib/librapidocrlite.so" 2>/dev/null | grep "_finite"; then
+              echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
+              exit 1
+            fi
+            ls -la dist
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-linux_x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  sdk-linux-aarch64:
+    name: SDK Linux aarch64 (manylinux2014)
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      started: ${{ steps.mark.outputs.started }}
+    steps:
+      - name: Mark the native ARM runner as available
+        id: mark
+        run: echo "started=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package SDK in manylinux2014 aarch64
+        run: |
+          set -euo pipefail
+          IMAGE=quay.io/pypa/manylinux2014_aarch64:2025.03.23-1
+          docker run --rm -v "$PWD":/io -w /io "$IMAGE" bash -c '
+            set -euo pipefail
+            PYBIN=/opt/python/cp312-cp312/bin
+            test -x "$PYBIN/python"
+            VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
+            yum install -y zip
+            # ninja-build is missing on some manylinux2014_aarch64 repos; Makefiles are fine.
+            cmake -S . -B build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DPPOCR_BUILD_SHARED=ON \
+              -DPPOCR_BUILD_STATIC=ON \
+              -DPPOCR_BUILD_EXAMPLES=OFF \
+              -DPPOCR_BUILD_TESTS=OFF \
+              -DPPOCR_ENABLE_VULKAN=OFF \
+              -DPPOCR_ENABLE_METAL=OFF
+            cmake --build build -j"$(nproc)"
+            cmake --install build
+            NAME="RapidOCRLite-SDK-linux_aarch64-${VER}"
+            mkdir -p dist
+            rm -rf "$NAME"
+            mv prefix "$NAME"
+            tar -czf "dist/${NAME}.tar.gz" "$NAME"
+            zip -qry "dist/${NAME}.zip" "$NAME"
+            so=$(find "$NAME" -name "librapidocrlite.so*" | head -1)
+            test -n "$so"
+            file "$so"
+            if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
+              echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            if nm "$NAME/lib/librapidocrlite.a" "$NAME/lib/librapidocrlite.so" 2>/dev/null | grep "_finite"; then
+              echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
+              exit 1
+            fi
+            ls -la dist
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-linux_aarch64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  sdk-linux-aarch64-qemu:
+    name: SDK Linux aarch64 qemu
+    needs: sdk-linux-aarch64
+    if: >-
+      always() &&
+      needs.sdk-linux-aarch64.result == 'failure' &&
+      needs.sdk-linux-aarch64.outputs.started != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: QEMU for aarch64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build and package SDK in manylinux2014 aarch64 (QEMU)
+        run: |
+          set -euo pipefail
+          IMAGE=quay.io/pypa/manylinux2014_aarch64:2025.03.23-1
+          docker run --rm --platform linux/arm64 -v "$PWD":/io -w /io "$IMAGE" bash -c '
+            set -euo pipefail
+            PYBIN=/opt/python/cp312-cp312/bin
+            test -x "$PYBIN/python"
+            VER=$("$PYBIN/python" -c "import tomllib; print(tomllib.load(open(\"pyproject.toml\",\"rb\"))[\"project\"][\"version\"])")
+            yum install -y zip
+            # ninja-build is missing on some manylinux2014_aarch64 repos; Makefiles are fine.
+            cmake -S . -B build \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/io/prefix \
+              -DCMAKE_INSTALL_LIBDIR=lib \
+              -DPPOCR_BUILD_SHARED=ON \
+              -DPPOCR_BUILD_STATIC=ON \
+              -DPPOCR_BUILD_EXAMPLES=OFF \
+              -DPPOCR_BUILD_TESTS=OFF \
+              -DPPOCR_ENABLE_VULKAN=OFF \
+              -DPPOCR_ENABLE_METAL=OFF
+            cmake --build build -j"$(nproc)"
+            cmake --install build
+            NAME="RapidOCRLite-SDK-linux_aarch64-${VER}"
+            mkdir -p dist
+            rm -rf "$NAME"
+            mv prefix "$NAME"
+            tar -czf "dist/${NAME}.tar.gz" "$NAME"
+            zip -qry "dist/${NAME}.zip" "$NAME"
+            so=$(find "$NAME" -name "librapidocrlite.so*" | head -1)
+            test -n "$so"
+            file "$so"
+            if readelf -V "$so" 2>/dev/null | grep -E "GLIBC_2\.(1[89]|[2-9][0-9])"; then
+              echo "SDK linked against glibc newer than 2.17" >&2
+              exit 1
+            fi
+            if nm "$NAME/lib/librapidocrlite.a" "$NAME/lib/librapidocrlite.so" 2>/dev/null | grep "_finite"; then
+              echo "SDK references glibc __*_finite symbols (unlinkable on glibc >= 2.31)" >&2
+              exit 1
+            fi
+            ls -la dist
+          '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-linux_aarch64
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  sdk-smoke:
+    name: SDK smoke ${{ matrix.plat }} (${{ matrix.link }})
+    needs: [sdk-windows-x64, sdk-macos-arm64, sdk-macos-x86_64, sdk-linux-x86_64]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { plat: linux_x86_64, os: ubuntu-latest, ext: tar.gz, link: shared }
+          - { plat: linux_x86_64, os: ubuntu-latest, ext: tar.gz, link: static }
+          - { plat: win_amd64, os: windows-latest, ext: zip, link: shared }
+          - { plat: win_amd64, os: windows-latest, ext: zip, link: static }
+          - { plat: macosx_arm64, os: macos-14, ext: tar.gz, link: shared }
+          - { plat: macosx_arm64, os: macos-14, ext: tar.gz, link: static }
+          - { plat: macosx_x86_64, os: macos-15-intel, ext: tar.gz, link: shared }
+          - { plat: macosx_x86_64, os: macos-15-intel, ext: tar.gz, link: static }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-${{ matrix.plat }}
+          path: sdk-dist
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Models and test image
+        run: |
+          set -euo pipefail
+          python python/tests/fetch_ci_models.py
+          python -m pip install -q Pillow
+          python -c "from PIL import Image; Image.open('python/tests/data/hello.png').convert('RGB').save('hello.ppm')"
+
+      - name: Extract SDK archive and check layout
+        run: |
+          set -euo pipefail
+          ls -la sdk-dist
+          ARCHIVE=$(ls sdk-dist/RapidOCRLite-SDK-${{ matrix.plat }}-*.${{ matrix.ext }})
+          mkdir sdk
+          if [ "${{ matrix.ext }}" = zip ]; then
+            python - "$ARCHIVE" <<'PY'
+          import sys, zipfile
+          zf = zipfile.ZipFile(sys.argv[1])
+          bad = [n for n in zf.namelist() if "\\" in n]
+          assert not bad, f"backslash entries: {bad}"
+          zf.extractall("sdk")
+          PY
+          else
+            tar -xzf "$ARCHIVE" -C sdk
+          fi
+          SDK=$(cd sdk/RapidOCRLite-SDK-* && pwd)
+          echo "SDK=$SDK" >> "$GITHUB_ENV"
+          find "$SDK" | sort
+          test -f "$SDK/README.md"
+          test -f "$SDK/LICENSE"
+          test -f "$SDK/include/rapidocrlite/rapidocrlite.h"
+          test -f "$SDK/lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake"
+          test -f "$SDK/lib/cmake/ppocr/ppocrConfig.cmake"
+
+      - name: Build example via find_package (CMAKE_PREFIX_PATH)
+        run: |
+          set -euo pipefail
+          cmake -S examples/sdk_consumer -B consumer -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$SDK" -DPPOCR_SDK_LINK=${{ matrix.link }}
+          cmake --build consumer --config Release
+          EXE=$(find consumer -name 'sdk_consumer' -o -name 'sdk_consumer.exe' | head -1)
+          test -n "$EXE"
+          echo "EXE=$EXE" >> "$GITHUB_ENV"
+
+      - name: Run OCR (CPU)
+        run: |
+          set -euo pipefail
+          export PATH="$SDK/bin:$PATH"
+          "$EXE" ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt hello.ppm "Hello" cpu | tee out.txt
+          grep -q sdk_consumer_ok out.txt
+
+      - name: Run OCR (Metal)
+        # Intel macOS runners are GPU-virtualised VMs: a Metal command buffer
+        # hangs there (kIOAccelCommandBufferCallbackErrorHang ->
+        # VK_ERROR_DEVICE_LOST). arm64 runners run real GPUs and pass. The
+        # x86_64 SDK still ships the Metal backend (works on real Intel Macs);
+        # CI verifies that platform via the CPU run above.
+        if: runner.os == 'macOS' && runner.arch != 'X64'
+        run: |
+          set -euo pipefail
+          "$EXE" ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt hello.ppm "Hello" metal | tee out.txt
+          grep -q sdk_consumer_ok out.txt
+
+      - name: Check shared library dependencies
+        if: matrix.link == 'shared'
+        run: |
+          set -euo pipefail
+          case "${{ runner.os }}" in
+            Linux) ldd "$EXE" ;;
+            macOS) otool -L "$EXE"; otool -L "$SDK"/lib/librapidocrlite.*.dylib ;;
+            Windows) objdump -p "$SDK/bin/rapidocrlite.dll" | grep "DLL Name" || true ;;
+          esac
+
+  attach-release:
+    name: Attach SDKs to GitHub Release
+    needs:
+      [
+        meta,
+        sdk-windows-x64,
+        sdk-windows-x86,
+        sdk-macos-arm64,
+        sdk-macos-x86_64,
+        sdk-linux-x86_64,
+        sdk-linux-aarch64,
+        sdk-linux-aarch64-qemu,
+        sdk-smoke,
+      ]
+    if: >-
+      always() &&
+      needs.meta.outputs.publish == 'true' &&
+      needs.sdk-smoke.result == 'success' &&
+      needs.sdk-windows-x64.result == 'success' &&
+      needs.sdk-windows-x86.result == 'success' &&
+      needs.sdk-macos-arm64.result == 'success' &&
+      needs.sdk-macos-x86_64.result == 'success' &&
+      needs.sdk-linux-x86_64.result == 'success' &&
+      (needs.sdk-linux-aarch64.result == 'success' || needs.sdk-linux-aarch64-qemu.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sdk-*
+          merge-multiple: true
+          path: dist
+
+      - name: List SDK archives
+        run: |
+          ls -la dist
+          test "$(ls dist/RapidOCRLite-SDK-win32-* dist/RapidOCRLite-SDK-win_amd64-* dist/RapidOCRLite-SDK-macosx_arm64-* dist/RapidOCRLite-SDK-macosx_x86_64-* dist/RapidOCRLite-SDK-linux_x86_64-* dist/RapidOCRLite-SDK-linux_aarch64-* 2>/dev/null | wc -l)" -ge 6
+
+      - uses: actions/checkout@v4
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # A main push has no tag yet: create one on the pushed commit so the
+          # release has something to hang from. An existing tag is never moved
+          # or deleted (that would empty the release assets).
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG" "$SHA"
+            git push origin "refs/tags/$TAG"
+          fi
+          case "$TAG" in *a*|*b*|*rc*) pre=--prerelease ;; *) pre= ;; esac
+          if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
+              --title "$TAG" --generate-notes
+          fi
+          # --clobber so a re-run refreshes the assets on an existing release.
+          gh release upload "$TAG" dist/RapidOCRLite-SDK-* --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Refresh SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: bash tools/release_sha256sums.sh "$TAG"
+
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: |
+          python -m pip install -U build
+          python -m build --sdist
+          (cd dist && sha256sum ./*.tar.gz > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdist
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  wheels-x86_64:
+    name: wheels x86_64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build manylinux2014 wheels
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_ARCHS: x86_64
+
+      - name: Check manylinux2014 / manylinux_2_17 tags
+        run: bash .github/check_manylinux_tag.sh wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels-aarch64:
+    name: wheels aarch64
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      started: ${{ steps.mark.outputs.started }}
+    steps:
+      - name: Mark the native ARM runner as available
+        id: mark
+        run: echo "started=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build manylinux2014 wheels
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_ARCHS: aarch64
+
+      - name: Check manylinux2014 / manylinux_2_17 tags
+        run: bash .github/check_manylinux_tag.sh wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-aarch64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels-aarch64-qemu:
+    name: wheels aarch64 qemu
+    needs: wheels-aarch64
+    if: >-
+      always() &&
+      needs.wheels-aarch64.result == 'failure' &&
+      needs.wheels-aarch64.outputs.started != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: QEMU for aarch64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build manylinux2014 wheels
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_ARCHS: aarch64
+
+      - name: Check manylinux2014 / manylinux_2_17 tags
+        run: bash .github/check_manylinux_tag.sh wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-aarch64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels-macos-arm64:
+    name: wheels macOS arm64 (Metal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build macOS 14 arm64 wheels with Metal
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_PLATFORM: macos
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_ARCHS: arm64
+          CIBW_SKIP: "pp* *-macosx_x86_64 *-macosx_universal2"
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+      - name: Check macOS 14 arm64 tags
+        run: |
+          ls wheelhouse
+          n=$(ls wheelhouse/*.whl | wc -l)
+          test "$n" -eq 5
+          for w in wheelhouse/*.whl; do
+            case "$(basename "$w")" in
+              *-macosx_14_0_arm64.whl) ;;
+              *) echo "unexpected tag: $w" >&2; exit 1 ;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-macos-arm64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels-macos-x86_64:
+    name: wheels macOS x86_64 (Metal)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build macOS x86_64 wheels with Metal
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_PLATFORM: macos
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_ARCHS: x86_64
+          CIBW_SKIP: "pp* *-macosx_arm64 *-macosx_universal2"
+          # Deployment target and check knobs for the Intel wheels. On macOS
+          # the host environment is visible to the cibuildwheel build, and
+          # pyproject.toml no longer sets MACOSX_DEPLOYMENT_TARGET, so 11.0
+          # survives into the wheel tag and the vtool minos check. Metal stays
+          # compiled in; only the runtime Metal OCR pass is skipped, because
+          # GitHub's Intel runners hang on a Metal command buffer
+          # (see the sdk-smoke job above).
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          MACOS_CHECK_ARCH: "x86_64"
+          MACOS_CHECK_MINOS: "11.0"
+          MACOS_CHECK_METAL_OCR: "0"
+
+      - name: Check macOS x86_64 tags
+        run: |
+          ls wheelhouse
+          n=$(ls wheelhouse/*.whl | wc -l)
+          test "$n" -eq 5
+          for w in wheelhouse/*.whl; do
+            case "$(basename "$w")" in
+              *-macosx_*_x86_64.whl) ;;
+              *) echo "unexpected tag: $w" >&2; exit 1 ;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-macos-x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels-windows-x64:
+    name: wheels Windows x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build Windows x64 wheels
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_PLATFORM: windows
+          CIBW_ARCHS: AMD64
+          CIBW_SKIP: "pp* *-win32 *-win_arm64"
+          CIBW_BUILD_VERBOSITY: 1
+
+      - name: Check Windows tags
+        shell: bash
+        run: |
+          ls wheelhouse
+          test "$(ls wheelhouse/*-win_amd64.whl | wc -l)" -eq 5
+
+      # GitHub's Windows runners are usually AVX2-only, so run the AVX-512
+      # kernels under Intel SDE (Sapphire Rapids) against the reference texts.
+      # Some runners lack native AVX-512 and SDE then emulates every
+      # instruction (~100x slower): skip the timing repeats and cap the step.
+      - name: AVX-512 check under Intel SDE
+        shell: bash
+        timeout-minutes: 45
+        run: |
+          curl -sSL -o sde.tar.xz https://downloadmirror.intel.com/843185/sde-external-9.48.0-2024-11-25-win.tar.xz
+          mkdir sde && tar -xf sde.tar.xz -C sde --strip-components=1
+          python -m pip install wheelhouse/*cp312-cp312-win_amd64.whl
+          PPOCR_CHECK_ISAS=avx512 PPOCR_CHECK_TEXTS_ONLY=1 PPOCR_CHECK_REPS=0 PYTHONIOENCODING=utf-8 \
+            ./sde/sde.exe -spr -- python python/tests/ci_wheel_check.py
+          # MSVC AVX-512 float kernels + VNNI int8 on the README samples, same references as Linux
+          python -m pip install pillow
+          PPOCR_FORCE_ISA=avx512 LITE_REPS=0 PYTHONIOENCODING=utf-8 \
+            ./sde/sde.exe -spr -- python python/tests/ci_lite_examples_check.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-windows-x64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels-windows-x86:
+    name: wheels Windows x86 (win32)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build Windows x86 (win32) wheels
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_PLATFORM: windows
+          CIBW_ARCHS: x86
+          CIBW_SKIP: "pp* *-win_amd64 *-win_arm64"
+          CIBW_BUILD_VERBOSITY: 1
+
+      - name: Check Windows tags
+        shell: bash
+        run: |
+          ls wheelhouse
+          test "$(ls wheelhouse/*-win32.whl | wc -l)" -eq 5
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-windows-x86
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  dist:
+    name: SHA256SUMS
+    needs: [sdist, wheels-x86_64, wheels-aarch64, wheels-aarch64-qemu, wheels-macos-arm64, wheels-macos-x86_64, wheels-windows-x64, wheels-windows-x86]
+    if: >-
+      always() &&
+      needs.sdist.result == 'success' &&
+      needs.wheels-x86_64.result == 'success' &&
+      needs.wheels-macos-arm64.result == 'success' &&
+      needs.wheels-macos-x86_64.result == 'success' &&
+      needs.wheels-windows-x64.result == 'success' &&
+      needs.wheels-windows-x86.result == 'success' &&
+      (needs.wheels-aarch64.result == 'success' || needs.wheels-aarch64-qemu.result == 'success')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rapidocrlite-*
+          merge-multiple: true
+          path: dist
+
+      - name: Write SHA256SUMS
+        run: |
+          rm -f dist/SHA256SUMS
+          (cd dist && {
+            sha256sum ./*.whl ./*.tar.gz
+            ls ./*.zip >/dev/null 2>&1 && sha256sum ./*.zip || true
+          } | tee SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  publish:
+    name: PyPI and GitHub Release
+    needs: [meta, dist, attach-release]
+    if: >-
+      always() &&
+      needs.meta.outputs.publish == 'true' &&
+      needs.dist.result == 'success' &&
+      needs.attach-release.result == 'success'
+    runs-on: ubuntu-latest
+    environment: pypi
+    env:
+      PYPI_API_TOKEN_V5_NG: ${{ secrets.PYPI_API_TOKEN_V5_NG }}
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rapidocrlite-dist
+          path: dist
+
+      - name: Check tag matches package version
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          ls dist
+          ls "dist/rapidocrlite-$v.tar.gz"
+          bad=$(ls dist/*.whl | grep -v "/rapidocrlite-$v-" || true)
+          if [ -n "$bad" ]; then echo "version mismatch: $bad" >&2; exit 1; fi
+
+      - name: Keep only distributions in the upload directory
+        run: |
+          mkdir -p pypi
+          cp dist/*.whl dist/*.tar.gz pypi/
+          ls pypi
+
+      - name: Publish to PyPI (API token secret)
+        if: env.PYPI_API_TOKEN_V5_NG != ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: pypi
+          password: ${{ secrets.PYPI_API_TOKEN_V5_NG }}
+          skip-existing: true
+          attestations: false
+          verbose: true
+
+      - name: Publish to PyPI (Trusted Publishing)
+        if: env.PYPI_API_TOKEN_V5_NG == ''
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: pypi
+          skip-existing: true
+          attestations: false
+          verbose: true
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          generate_release_notes: true
+          prerelease: ${{ contains(needs.meta.outputs.tag, 'a') || contains(needs.meta.outputs.tag, 'b') || contains(needs.meta.outputs.tag, 'rc') }}
+
+      - uses: actions/checkout@v4
+        with:
+          path: src
+
+      - name: Refresh SHA256SUMS (wheels + sdist + SDKs)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: bash src/tools/release_sha256sums.sh "$TAG"
+
+  # ------------------------------------------------------------------ java
+  # The JNI libraries are built against the SDK archives produced by this very
+  # run (downloaded as artifacts), so there is no dependency on a release that
+  # another workflow might not have uploaded yet.
+  java-linux-x86_64:
+    name: java linux-x86_64
+    needs: [meta, sdk-linux-x86_64]
+    if: >-
+      always() && needs.meta.result == 'success' && needs.sdk-linux-x86_64.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-x86_64-linux
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
+      - name: fetch SDK archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-linux_x86_64
+          path: java/sdk/linux_x86_64
+
+      - name: extract SDK
+        run: |
+          set -euo pipefail
+          cd "java/sdk/linux_x86_64"
+          tar xzf RapidOCRLite-SDK-linux_x86_64-*.tar.gz
+          rm -f RapidOCRLite-SDK-linux_x86_64-*.tar.gz
+          ls
+      - name: build
+        run: PLATFORMS=linux-x86_64 sh java/build.sh
+      - name: smoke test
+        shell: bash
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-native-linux-x86_64
+          path: java/build/native/linux-x86_64/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-jar-linux-x86_64
+          path: java/dist/rapidocrlite-java-*.jar
+  java-linux-aarch64:
+    name: java linux-aarch64
+    needs: [meta, sdk-linux-aarch64, sdk-linux-aarch64-qemu]
+    if: >-
+      always() && needs.meta.result == 'success' && (needs.sdk-linux-aarch64.result == 'success' || needs.sdk-linux-aarch64-qemu.result == 'success')
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-aarch64-linux
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
+      - name: fetch SDK archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-linux_aarch64
+          path: java/sdk/linux_aarch64
+
+      - name: extract SDK
+        run: |
+          set -euo pipefail
+          cd "java/sdk/linux_aarch64"
+          tar xzf RapidOCRLite-SDK-linux_aarch64-*.tar.gz
+          rm -f RapidOCRLite-SDK-linux_aarch64-*.tar.gz
+          ls
+      - name: build
+        run: PLATFORMS=linux-aarch64 sh java/build.sh
+      - name: smoke test
+        shell: bash
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-native-linux-aarch64
+          path: java/build/native/linux-aarch64/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-jar-linux-aarch64
+          path: java/dist/rapidocrlite-java-*.jar
+  java-macos-aarch64:
+    name: java macos-aarch64
+    needs: [meta, sdk-macos-arm64]
+    if: >-
+      always() && needs.meta.result == 'success' && needs.sdk-macos-arm64.result == 'success'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-aarch64-macos
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
+      - name: fetch SDK archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-macosx_arm64
+          path: java/sdk/macosx_arm64
+
+      - name: extract SDK
+        run: |
+          set -euo pipefail
+          cd "java/sdk/macosx_arm64"
+          tar xzf RapidOCRLite-SDK-macosx_arm64-*.tar.gz
+          rm -f RapidOCRLite-SDK-macosx_arm64-*.tar.gz
+          ls
+      - name: build
+        run: PLATFORMS=macos-aarch64 sh java/build.sh
+      - name: smoke test
+        shell: bash
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-native-macos-aarch64
+          path: java/build/native/macos-aarch64/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-jar-macos-aarch64
+          path: java/dist/rapidocrlite-java-*.jar
+  java-macos-x86_64:
+    name: java macos-x86_64
+    needs: [meta, sdk-macos-x86_64]
+    if: >-
+      always() && needs.meta.result == 'success' && needs.sdk-macos-x86_64.result == 'success'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-x86_64-macos
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
+      - name: fetch SDK archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-macosx_x86_64
+          path: java/sdk/macosx_x86_64
+
+      - name: extract SDK
+        run: |
+          set -euo pipefail
+          cd "java/sdk/macosx_x86_64"
+          tar xzf RapidOCRLite-SDK-macosx_x86_64-*.tar.gz
+          rm -f RapidOCRLite-SDK-macosx_x86_64-*.tar.gz
+          ls
+      - name: build
+        run: PLATFORMS=macos-x86_64 sh java/build.sh
+      - name: smoke test
+        shell: bash
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-native-macos-x86_64
+          path: java/build/native/macos-x86_64/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-jar-macos-x86_64
+          path: java/dist/rapidocrlite-java-*.jar
+  java-win-x86_64:
+    name: java win-x86_64
+    needs: [meta, sdk-windows-x64]
+    if: >-
+      always() && needs.meta.result == 'success' && needs.sdk-windows-x64.result == 'success'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc
+          path-type: minimal
+      - name: fetch SDK archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-win_amd64
+          path: sdk_dl
+
+      - name: unpack SDK zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path java/sdk/win_amd64/bin, java/sdk/win_amd64/lib, java/sdk/win_amd64/include
+          Expand-Archive -Path sdk_dl/*.zip -DestinationPath sdk_extract -Force
+          $root = (Get-ChildItem -Directory sdk_extract | Select-Object -First 1).FullName
+          Copy-Item "$root/bin/rapidocrlite.dll" java/sdk/win_amd64/bin/
+          Copy-Item "$root/lib/rapidocrlite.lib" java/sdk/win_amd64/lib/
+          Copy-Item -Recurse "$root/include/rapidocrlite" java/sdk/win_amd64/include/
+      - name: build
+        shell: msys2 {0}
+        run: PLATFORMS=win-x86_64 MINGW=/mingw64 sh java/build.sh
+      - name: smoke test
+        shell: bash
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-native-win-x86_64
+          path: java/build/native/win-x86_64/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-jar-win-x86_64
+          path: java/dist/rapidocrlite-java-*.jar
+  java-package:
+    name: java fat jar (all platforms)
+    needs:
+      [
+        meta,
+        java-linux-x86_64,
+        java-linux-aarch64,
+        java-macos-aarch64,
+        java-macos-x86_64,
+        java-win-x86_64,
+      ]
+    if: >-
+      always() &&
+      needs.meta.result == 'success' &&
+      needs.java-linux-x86_64.result == 'success' &&
+      needs.java-linux-aarch64.result == 'success' &&
+      needs.java-macos-aarch64.result == 'success' &&
+      needs.java-macos-x86_64.result == 'success' &&
+      needs.java-win-x86_64.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      # download-artifact@v4 with a wildcard pattern flattens every artifact
+      # into one directory, so fetch each platform separately into its own
+      # java/build/native/<platform>/ directory (layout build.sh expects).
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-native-linux-x86_64
+          path: java/build/native/linux-x86_64
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-native-linux-aarch64
+          path: java/build/native/linux-aarch64
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-native-macos-aarch64
+          path: java/build/native/macos-aarch64
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-native-macos-x86_64
+          path: java/build/native/macos-x86_64
+      - uses: actions/download-artifact@v4
+        with:
+          name: java-native-win-x86_64
+          path: java/build/native/win-x86_64
+      - name: package fat jar
+        run: PACKAGE_ONLY=1 sh java/build.sh
+      - name: smoke test
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
+      - name: list jar contents
+        run: java -jar java/dist/rapidocrlite-java-*.jar --help || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jar-all-platforms
+          path: java/dist/rapidocrlite-java-*.jar
+
+  attach-java:
+    name: Attach Java fat jar to GitHub Release
+    needs: [meta, attach-release, java-package]
+    if: >-
+      always() &&
+      needs.meta.outputs.publish == 'true' &&
+      needs.attach-release.result == 'success' &&
+      needs.java-package.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: jar-all-platforms
+          path: dist
+
+      - name: Upload jar to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          ls -la dist
+          gh release upload "$TAG" dist/*.jar --repo "$GITHUB_REPOSITORY" --clobber
+
+      - uses: actions/checkout@v4
+
+      - name: Refresh SHA256SUMS (wheels + sdist + SDKs + jar)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: bash tools/release_sha256sums.sh "$TAG"

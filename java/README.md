@@ -141,7 +141,7 @@ PACKAGE_ONLY=1 sh build.sh         # 只打包已有 build/native/（CI 合并�
 
 从 [RapidOCRLite v5.0.0a11 release](https://github.com/RapidAI/RapidOCRLite/releases/tag/v5.0.0a11)
 下载对应平台的 SDK 解压到 `sdk/` 下（目录名须与 `build.sh` 期望的一致；CI 中由仓库根目录的
-`.github/workflows/build-java.yml` 自动完成）：
+`.github/workflows/release.yml` 自动完成）：
 
 ```bash
 # Linux x64 / arm64、macOS arm64 / x86_64：tar.gz 自带顶层目录，直接解压，勿加 --strip-components
@@ -173,21 +173,25 @@ java/
 │   └── RapidOcrDemo.java                 #   jar 的 Main-Class 演示
 ├── src/native/rapidocr_jni.cpp           # JNI 桥接层（可移植 C++，无平台专有代码）
 ├── sdk/                                  # 各平台官方 SDK（.gitignore，见"获取 SDK"）
-└── dist/                                 # 构建产物（.gitignore；CI 产出四平台 fat jar）
+└── dist/                                 # 构建产物（.gitignore；CI 产出五平台 fat jar）
 ```
 
-CI workflow 位于仓库根目录：`.github/workflows/build-java.yml`。
+CI workflow 与 SDK / wheel 同属一条流水线：仓库根目录 `.github/workflows/release.yml`
+（推送 `main` 或 `v5*` 标签即构建并发布 SDK、wheel 与本 jar）。
 
-CI（`.github/workflows/build-java.yml`）分两类 job：
+CI（`.github/workflows/release.yml`）中 Java 相关的 job 分两类：
 
 - **五个平台构建 job**（ubuntu-latest / ubuntu-24.04-arm / macos-latest×2 /
-  windows-latest）：在真实 runner 上构建对应平台原生库，跑 `--cpu` 冒烟测试，
-  并上传原生库 artifact（`native-<platform>`）；
-- **`package` job**（ubuntu-latest，`needs` 全部五个构建 job）：下载各平台原生库
-  artifact 到 `build/native/<platform>/`，以 `PACKAGE_ONLY=1 sh build.sh`
+  windows-latest）：直接下载本次运行产出的 SDK artifact（不再依赖 release 上的
+  tarball，因而不会与 SDK 上传竞争），在真实 runner 上构建对应平台原生库，跑
+  `--cpu` 冒烟测试，并上传原生库 artifact（`java-native-<platform>`）；
+- **`java-package` job**（ubuntu-latest，`needs` 全部五个构建 job）：下载各平台
+  原生库 artifact 到 `build/native/<platform>/`，以 `PACKAGE_ONLY=1 sh build.sh`
   只跑 javac + jar，**合并产出五平台全量 fat jar**（artifact
   `jar-all-platforms`），再跑一次 `--cpu` 冒烟验证多平台 jar 能正确选中
-  当前平台的资源。该 job 不需要 zig / MinGW 工具链，也不需要下载任何 SDK。
+  当前平台的资源。该 job 不需要 zig / MinGW 工具链，也不需要下载任何 SDK；
+- **`attach-java` job**：把 fat jar 上传到本次 release（与 SDK、wheel 同一个
+  GitHub Release）。
 
 arm64 Linux runner 对公开仓库免费。
 
