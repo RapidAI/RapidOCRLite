@@ -31,9 +31,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: mlugg/setup-zig@v1
-        with:
-          version: '0.17.0'
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-x86_64-linux
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
       - name: fetch SDK
         run: |
           mkdir -p java/sdk/linux_x86_64
@@ -65,9 +73,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: mlugg/setup-zig@v1
-        with:
-          version: '0.17.0'
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-aarch64-linux
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
       - name: fetch SDK
         run: |
           mkdir -p java/sdk/linux_aarch64
@@ -95,9 +111,17 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: mlugg/setup-zig@v1
-        with:
-          version: '0.17.0'
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-aarch64-macos
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
       - name: fetch SDK
         run: |
           mkdir -p java/sdk/macosx_arm64
