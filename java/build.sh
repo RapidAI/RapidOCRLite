@@ -28,7 +28,7 @@ case "$JAVA_HOME" in
 esac
 PLATFORMS="${PLATFORMS:-win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64}"
 PACKAGE_ONLY="${PACKAGE_ONLY:-0}"
-VERSION=5.0.0a10
+VERSION=5.0.0a11
 JAR="dist/rapidocrlite-java-$VERSION.jar"
 JNI_SRC="src/native/rapidocr_jni.cpp"
 
@@ -125,19 +125,19 @@ else
 
     if has_platform linux-x86_64; then
         zig_cross linux-x86_64 x86_64-linux-gnu linux \
-            sdk/linux_x86_64/RapidOCRLite-SDK-linux_x86_64-5.0.0a10 \
+            sdk/linux_x86_64/RapidOCRLite-SDK-linux_x86_64-5.0.0a11 \
             librapidocrlite.so.5.0.0 librapidocrlite.so.5 \
             librapidocrlite_jni.so
     fi
     if has_platform linux-aarch64; then
         zig_cross linux-aarch64 aarch64-linux-gnu linux \
-            sdk/linux_aarch64/RapidOCRLite-SDK-linux_aarch64-5.0.0a10 \
+            sdk/linux_aarch64/RapidOCRLite-SDK-linux_aarch64-5.0.0a11 \
             librapidocrlite.so.5.0.0 librapidocrlite.so.5 \
             librapidocrlite_jni.so
     fi
     if has_platform macos-aarch64; then
         zig_cross macos-aarch64 aarch64-macos darwin \
-            sdk/macosx_arm64/RapidOCRLite-SDK-macosx_arm64-5.0.0a10 \
+            sdk/macosx_arm64/RapidOCRLite-SDK-macosx_arm64-5.0.0a11 \
             librapidocrlite.5.0.0.dylib librapidocrlite.5.dylib \
             librapidocrlite_jni.dylib
     fi

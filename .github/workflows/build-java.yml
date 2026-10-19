@@ -1,9 +1,12 @@
 name: build java
 
+# No push trigger on purpose: this workflow consumes the SDK tarballs that
+# build-sdk uploads to the matching release, so it is a step of the release
+# pipeline. Running it on a tag push would race build-sdk (the tarballs do
+# not exist yet -> 404), and on a main push it would 404 for the not-yet-
+# created next-version release. Trigger it via workflow_dispatch once the
+# SDK assets are on the release.
 on:
-  push:
-    branches: [main]
-    tags: ["v5*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -19,7 +22,7 @@ jobs:
   # Each job builds the JNI library natively on a real runner and runs a
   # smoke test (loads the JNI bridge + engine, queries CPU info through
   # JNI_OnLoad). The official SDK tarball is fetched from the RapidOCRLite
-  # v5.0.0a10 release; zig (0.17.0) provides the Linux/macOS toolchains.
+  # v5.0.0a11 release; zig (0.17.0) provides the Linux/macOS toolchains.
   # Each job uploads its native libraries so the package job below can
   # assemble the all-platform fat jar.
 
@@ -46,15 +49,15 @@ jobs:
         run: |
           mkdir -p java/sdk/linux_x86_64
           curl -sSL -o /tmp/sdk.tar.gz \
-            https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a10/RapidOCRLite-SDK-linux_x86_64-5.0.0a10.tar.gz
-          # The tarball has a top-level RapidOCRLite-SDK-linux_x86_64-5.0.0a10/
+            https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/RapidOCRLite-SDK-linux_x86_64-5.0.0a11.tar.gz
+          # The tarball has a top-level RapidOCRLite-SDK-linux_x86_64-5.0.0a11/
           # directory — extract as-is (no --strip-components): java/build.sh
           # expects sdk/<plat>/RapidOCRLite-SDK-<plat>-<ver>/.
           tar xzf /tmp/sdk.tar.gz -C java/sdk/linux_x86_64
       - name: build
         run: PLATFORMS=linux-x86_64 sh java/build.sh
       - name: smoke test
-        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a10.jar --cpu
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a11.jar --cpu
       - uses: actions/upload-artifact@v4
         with:
           name: native-linux-x86_64
@@ -62,7 +65,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: jar-linux-x86_64
-          path: java/dist/rapidocrlite-java-5.0.0a10.jar
+          path: java/dist/rapidocrlite-java-5.0.0a11.jar
 
   linux-aarch64:
     # Free for public repositories (GitHub-hosted arm64 Linux runners).
@@ -88,12 +91,12 @@ jobs:
         run: |
           mkdir -p java/sdk/linux_aarch64
           curl -sSL -o /tmp/sdk.tar.gz \
-            https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a10/RapidOCRLite-SDK-linux_aarch64-5.0.0a10.tar.gz
+            https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/RapidOCRLite-SDK-linux_aarch64-5.0.0a11.tar.gz
           tar xzf /tmp/sdk.tar.gz -C java/sdk/linux_aarch64
       - name: build
         run: PLATFORMS=linux-aarch64 sh java/build.sh
       - name: smoke test
-        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a10.jar --cpu
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a11.jar --cpu
       - uses: actions/upload-artifact@v4
         with:
           name: native-linux-aarch64
@@ -101,7 +104,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: jar-linux-aarch64
-          path: java/dist/rapidocrlite-java-5.0.0a10.jar
+          path: java/dist/rapidocrlite-java-5.0.0a11.jar
 
   macos-aarch64:
     runs-on: macos-latest
@@ -126,12 +129,12 @@ jobs:
         run: |
           mkdir -p java/sdk/macosx_arm64
           curl -sSL -o /tmp/sdk.tar.gz \
-            https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a10/RapidOCRLite-SDK-macosx_arm64-5.0.0a10.tar.gz
+            https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/RapidOCRLite-SDK-macosx_arm64-5.0.0a11.tar.gz
           tar xzf /tmp/sdk.tar.gz -C java/sdk/macosx_arm64
       - name: build
         run: PLATFORMS=macos-aarch64 sh java/build.sh
       - name: smoke test
-        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a10.jar --cpu
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a11.jar --cpu
       - uses: actions/upload-artifact@v4
         with:
           name: native-macos-aarch64
@@ -139,7 +142,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: jar-macos-aarch64
-          path: java/dist/rapidocrlite-java-5.0.0a10.jar
+          path: java/dist/rapidocrlite-java-5.0.0a11.jar
 
   win-x86_64:
     runs-on: windows-latest
@@ -158,7 +161,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path java/sdk/win_amd64/bin, java/sdk/win_amd64/lib, java/sdk/win_amd64/include
-          curl.exe -sSL -o sdk.zip https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a10/RapidOCRLite-SDK-win_amd64-5.0.0a10.zip
+          curl.exe -sSL -o sdk.zip https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/RapidOCRLite-SDK-win_amd64-5.0.0a11.zip
           Expand-Archive -Path sdk.zip -DestinationPath sdk_extract -Force
           $root = (Get-ChildItem -Directory sdk_extract | Select-Object -First 1).FullName
           Copy-Item "$root/bin/rapidocrlite.dll" java/sdk/win_amd64/bin/
@@ -171,7 +174,7 @@ jobs:
         run: PLATFORMS=win-x86_64 MINGW=/mingw64 sh java/build.sh
       - name: smoke test
         shell: bash
-        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a10.jar --cpu
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a11.jar --cpu
       - uses: actions/upload-artifact@v4
         with:
           name: native-win-x86_64
@@ -179,7 +182,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: jar-win-x86_64
-          path: java/dist/rapidocrlite-java-5.0.0a10.jar
+          path: java/dist/rapidocrlite-java-5.0.0a11.jar
 
   # Merges the four per-platform native artifacts into the all-platform fat
   # jar. PACKAGE_ONLY=1 runs javac + jar only — no toolchains (zig/MinGW) or
@@ -216,8 +219,8 @@ jobs:
       - name: package fat jar
         run: PACKAGE_ONLY=1 sh java/build.sh
       - name: smoke test
-        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a10.jar --cpu
+        run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-5.0.0a11.jar --cpu
       - uses: actions/upload-artifact@v4
         with:
           name: jar-all-platforms
-          path: java/dist/rapidocrlite-java-5.0.0a10.jar
+          path: java/dist/rapidocrlite-java-5.0.0a11.jar
