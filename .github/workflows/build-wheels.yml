@@ -194,6 +194,7 @@ jobs:
           CIBW_BUILD_VERBOSITY: 1
           CIBW_ARCHS: arm64
           CIBW_SKIP: "pp* *-macosx_x86_64 *-macosx_universal2"
+          MACOSX_DEPLOYMENT_TARGET: "14.0"
 
       - name: Check macOS 14 arm64 tags
         run: |
@@ -241,6 +242,17 @@ jobs:
           CIBW_BUILD_VERBOSITY: 1
           CIBW_ARCHS: x86_64
           CIBW_SKIP: "pp* *-macosx_arm64 *-macosx_universal2"
+          # Deployment target and check knobs for the Intel wheels. On macOS
+          # the host environment is visible to the cibuildwheel build, and
+          # pyproject.toml no longer sets MACOSX_DEPLOYMENT_TARGET, so 11.0
+          # survives into the wheel tag and the vtool minos check. Metal stays
+          # compiled in; only the runtime Metal OCR pass is skipped, because
+          # GitHub's Intel runners hang on a Metal command buffer
+          # (see build-sdk.yml).
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          MACOS_CHECK_ARCH: "x86_64"
+          MACOS_CHECK_MINOS: "11.0"
+          MACOS_CHECK_METAL_OCR: "0"
 
       - name: Check macOS x86_64 tags
         run: |

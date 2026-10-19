@@ -90,19 +90,24 @@ test-command = "python {project}/python/tests/ci_wheel_check.py && python {proje
 # on: glslang and spirv-cross are build tools only; the wheel needs nothing
 # beyond Metal.framework at runtime. CMAKE_OSX_ARCHITECTURES /
 # CMAKE_OSX_DEPLOYMENT_TARGET are deliberately NOT in CMAKE_ARGS: cibuildwheel
-# exports them per wheel arch (and MACOSX_DEPLOYMENT_TARGET from the environment
-# below), and hardcoding arm64 here silently mis-built the Intel wheels.
+# exports the former per wheel arch, and hardcoding arm64 here silently
+# mis-built the Intel wheels. MACOSX_DEPLOYMENT_TARGET is NOT set here either:
+# the config environment would override the job-level value for both arches.
+# It lives in the two jobs in build-wheels.yml (14.0 arm64 / 11.0 x86_64), and
+# CMake reads it from the environment (Platform/Darwin-Initialize.cmake), so it
+# also drives the wheel tag and the vtool minos check.
 [tool.cibuildwheel.macos]
 archs = ["arm64", "x86_64"]
 before-all = "brew install glslang spirv-cross"
-environment = { MACOSX_DEPLOYMENT_TARGET = "14.0", CMAKE_ARGS = "-DPPOCR_BUILD_EXAMPLES=OFF -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_ENABLE_METAL=ON -DPPOCR_REQUIRE_METAL=ON", CMAKE_BUILD_PARALLEL_LEVEL = "3", SKBUILD_LOGGING_LEVEL = "INFO", SKBUILD_BUILD_VERBOSE = "true" }
+environment = { CMAKE_ARGS = "-DPPOCR_BUILD_EXAMPLES=OFF -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_ENABLE_METAL=ON -DPPOCR_REQUIRE_METAL=ON", CMAKE_BUILD_PARALLEL_LEVEL = "3", SKBUILD_LOGGING_LEVEL = "INFO", SKBUILD_BUILD_VERBOSE = "true" }
 test-command = "bash {project}/python/tests/ci_wheel_check_macos.sh"
 
-# Intel wheels target macOS 11.0 (older Macs) and verify x86_64 / minos 11.0.
-# GitHub's Intel runners are GPU-virtualised VMs where a Metal command buffer
-# hangs (see build-sdk.yml), so the runtime Metal OCR check is skipped there
-# (MACOS_CHECK_METAL_OCR=0 -> CPU run); the Metal.framework link and embedded
-# MSL kernels are still asserted by the script.
-[[tool.cibuildwheel.overrides]]
-select = "*-macosx_x86_64:*"
-environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", MACOS_CHECK_ARCH = "x86_64", MACOS_CHECK_MINOS = "11.0", MACOS_CHECK_METAL_OCR = "0" }
+# Intel wheel specifics live in the wheels-macos-x86_64 job in build-wheels.yml
+# (MACOSX_DEPLOYMENT_TARGET=11.0 for older Macs plus the MACOS_CHECK_* knobs
+# read by ci_wheel_check_macos.sh). They are deliberately NOT a cibuildwheel
+# override here: a plain x86_64 wheel's build identifier is
+# "cp312-macosx_x86_64" (the ":arch" suffix only exists for universal2), so
+# select = "*-macosx_x86_64:*" never matched anything; and even a correct
+# selector would not help, because an override's environment table REPLACES the
+# platform one (InheritRule.NONE, see cibuildwheel/options.py), silently
+# dropping CMAKE_ARGS and with it the whole Metal build.
