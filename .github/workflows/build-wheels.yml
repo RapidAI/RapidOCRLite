@@ -213,6 +213,53 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
+  wheels-macos-x86_64:
+    name: wheels macOS x86_64 (Metal)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build macOS x86_64 wheels with Metal
+        uses: pypa/cibuildwheel@v2.23.3
+        env:
+          CIBW_PLATFORM: macos
+          CIBW_BUILD_VERBOSITY: 1
+          CIBW_ARCHS: x86_64
+          CIBW_SKIP: "pp* *-macosx_arm64 *-macosx_universal2"
+
+      - name: Check macOS x86_64 tags
+        run: |
+          ls wheelhouse
+          n=$(ls wheelhouse/*.whl | wc -l)
+          test "$n" -eq 5
+          for w in wheelhouse/*.whl; do
+            case "$(basename "$w")" in
+              *-macosx_*_x86_64.whl) ;;
+              *) echo "unexpected tag: $w" >&2; exit 1 ;;
+            esac
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-wheels-macos-x86_64
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
   wheels-windows-x64:
     name: wheels Windows x64
     runs-on: windows-latest
@@ -315,12 +362,13 @@ jobs:
 
   dist:
     name: SHA256SUMS
-    needs: [sdist, wheels-x86_64, wheels-aarch64, wheels-aarch64-qemu, wheels-macos-arm64, wheels-windows-x64, wheels-windows-x86]
+    needs: [sdist, wheels-x86_64, wheels-aarch64, wheels-aarch64-qemu, wheels-macos-arm64, wheels-macos-x86_64, wheels-windows-x64, wheels-windows-x86]
     if: >-
       always() &&
       needs.sdist.result == 'success' &&
       needs.wheels-x86_64.result == 'success' &&
       needs.wheels-macos-arm64.result == 'success' &&
+      needs.wheels-macos-x86_64.result == 'success' &&
       needs.wheels-windows-x64.result == 'success' &&
       needs.wheels-windows-x86.result == 'success' &&
       (needs.wheels-aarch64.result == 'success' || needs.wheels-aarch64-qemu.result == 'success')

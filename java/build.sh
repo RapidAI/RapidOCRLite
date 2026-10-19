@@ -26,7 +26,7 @@ JAVA_HOME="${JAVA_HOME:-/c/Program Files/Eclipse Adoptium/jdk-17.0.19.10-hotspot
 case "$JAVA_HOME" in
     [A-Za-z]:\\*) command -v cygpath >/dev/null 2>&1 && JAVA_HOME=$(cygpath -u "$JAVA_HOME") ;;
 esac
-PLATFORMS="${PLATFORMS:-win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64}"
+PLATFORMS="${PLATFORMS:-win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64}"
 PACKAGE_ONLY="${PACKAGE_ONLY:-0}"
 VERSION=5.0.0a11
 JAR="dist/rapidocrlite-java-$VERSION.jar"
@@ -138,6 +138,12 @@ else
     if has_platform macos-aarch64; then
         zig_cross macos-aarch64 aarch64-macos darwin \
             sdk/macosx_arm64/RapidOCRLite-SDK-macosx_arm64-5.0.0a11 \
+            librapidocrlite.5.0.0.dylib librapidocrlite.5.dylib \
+            librapidocrlite_jni.dylib
+    fi
+    if has_platform macos-x86_64; then
+        zig_cross macos-x86_64 x86_64-macos darwin \
+            sdk/macosx_x86_64/RapidOCRLite-SDK-macosx_x86_64-5.0.0a11 \
             librapidocrlite.5.0.0.dylib librapidocrlite.5.dylib \
             librapidocrlite_jni.dylib
     fi

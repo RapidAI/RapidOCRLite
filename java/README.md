@@ -11,9 +11,7 @@
 | Linux x64 | `librapidocrlite_jni.so` | `librapidocrlite.so.5` | zig c++（libc++ 静态） |
 | Linux arm64 | `librapidocrlite_jni.so` | `librapidocrlite.so.5` | zig c++（libc++ 静态） |
 | macOS arm64 | `librapidocrlite_jni.dylib` | `librapidocrlite.5.dylib` | zig c++（libc++ 静态） |
-
-> macOS x86_64（Intel）：官方 release 未提供对应引擎 SDK，故未内置；
-> 拿到引擎库后可用 `PLATFORMS=macos-x86_64 sh build.sh` 自行打包（加载器已支持）。
+| macOS x86_64 | `librapidocrlite_jni.dylib` | `librapidocrlite.5.dylib` | zig c++（libc++ 静态） |
 
 ## 快速开始
 
@@ -101,7 +99,8 @@ rapidocrlite-java-5.0.0a11.jar（约 7.3 MB）
     ├── win-x86_64/    rapidocrlite_jni.dll + rapidocrlite.dll
     ├── linux-x86_64/  librapidocrlite_jni.so + librapidocrlite.so.5
     ├── linux-aarch64/ librapidocrlite_jni.so + librapidocrlite.so.5
-    └── macos-aarch64/ librapidocrlite_jni.dylib + librapidocrlite.5.dylib
+    ├── macos-aarch64/ librapidocrlite_jni.dylib + librapidocrlite.5.dylib
+    └── macos-x86_64/  librapidocrlite_jni.dylib + librapidocrlite.5.dylib
 ```
 
 `NativeLoader` 按 `os.name` + `os.arch` 检测平台（`win-x86_64` / `linux-x86_64` /
@@ -145,13 +144,15 @@ PACKAGE_ONLY=1 sh build.sh         # 只打包已有 build/native/（CI 合并�
 `.github/workflows/build-java.yml` 自动完成）：
 
 ```bash
-# Linux x64 / arm64、macOS arm64：tar.gz 自带顶层目录，直接解压，勿加 --strip-components
-mkdir -p sdk/linux_x86_64 sdk/linux_aarch64 sdk/macosx_arm64
+# Linux x64 / arm64、macOS arm64 / x86_64：tar.gz 自带顶层目录，直接解压，勿加 --strip-components
+mkdir -p sdk/linux_x86_64 sdk/linux_aarch64 sdk/macosx_arm64 sdk/macosx_x86_64
 curl -sSL -o /tmp/sdk.tar.gz \
   https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/RapidOCRLite-SDK-linux_x86_64-5.0.0a11.tar.gz
 tar xzf /tmp/sdk.tar.gz -C sdk/linux_x86_64
-# linux_aarch64 / macosx_arm64 同理：RapidOCRLite-SDK-linux_aarch64-5.0.0a11.tar.gz
-# → sdk/linux_aarch64，RapidOCRLite-SDK-macosx_arm64-5.0.0a11.tar.gz → sdk/macosx_arm64
+# linux_aarch64 / macosx_arm64 / macosx_x86_64 同理：
+#   RapidOCRLite-SDK-linux_aarch64-5.0.0a11.tar.gz → sdk/linux_aarch64
+#   RapidOCRLite-SDK-macosx_arm64-5.0.0a11.tar.gz  → sdk/macosx_arm64
+#   RapidOCRLite-SDK-macosx_x86_64-5.0.0a11.tar.gz → sdk/macosx_x86_64
 
 # Windows x64：zip 解包后，把其中 bin/lib/include 复制到 sdk/win_amd64/
 curl -sSL -o sdk.zip \
@@ -179,12 +180,12 @@ CI workflow 位于仓库根目录：`.github/workflows/build-java.yml`。
 
 CI（`.github/workflows/build-java.yml`）分两类 job：
 
-- **四个平台构建 job**（ubuntu-latest / ubuntu-24.04-arm / macos-latest /
+- **五个平台构建 job**（ubuntu-latest / ubuntu-24.04-arm / macos-latest×2 /
   windows-latest）：在真实 runner 上构建对应平台原生库，跑 `--cpu` 冒烟测试，
   并上传原生库 artifact（`native-<platform>`）；
-- **`package` job**（ubuntu-latest，`needs` 全部四个构建 job）：下载各平台原生库
+- **`package` job**（ubuntu-latest，`needs` 全部五个构建 job）：下载各平台原生库
   artifact 到 `build/native/<platform>/`，以 `PACKAGE_ONLY=1 sh build.sh`
-  只跑 javac + jar，**合并产出四平台全量 fat jar**（artifact
+  只跑 javac + jar，**合并产出五平台全量 fat jar**（artifact
   `jar-all-platforms`），再跑一次 `--cpu` 冒烟验证多平台 jar 能正确选中
   当前平台的资源。该 job 不需要 zig / MinGW 工具链，也不需要下载任何 SDK。
 

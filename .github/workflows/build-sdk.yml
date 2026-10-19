@@ -200,6 +200,49 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
 
+  sdk-macos-x86_64:
+    name: SDK macOS x86_64 (Metal)
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install shader tools
+        run: brew install glslang spirv-cross ninja
+
+      - name: Build and package SDK
+        run: |
+          set -euo pipefail
+          VER=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$PWD/prefix" \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_STATIC=ON \
+            -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF \
+            -DPPOCR_ENABLE_METAL=ON \
+            -DPPOCR_REQUIRE_METAL=ON | tee configure.log
+          grep -q "Metal backend enabled" configure.log
+          cmake --build build -j"$(sysctl -n hw.ncpu)"
+          cmake --install build
+          NAME="RapidOCRLite-SDK-macosx_x86_64-${VER}"
+          mkdir -p dist
+          mv prefix "$NAME"
+          tar -czf "dist/${NAME}.tar.gz" "$NAME"
+          ls -la dist
+          test -f "dist/${NAME}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rapidocrlite-sdk-macosx_x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
 
 
   sdk-linux-x86_64:
@@ -397,7 +440,7 @@ jobs:
 
   sdk-smoke:
     name: SDK smoke ${{ matrix.plat }} (${{ matrix.link }})
-    needs: [sdk-windows-x64, sdk-macos-arm64, sdk-linux-x86_64]
+    needs: [sdk-windows-x64, sdk-macos-arm64, sdk-macos-x86_64, sdk-linux-x86_64]
     strategy:
       fail-fast: false
       matrix:
@@ -408,6 +451,8 @@ jobs:
           - { plat: win_amd64, os: windows-latest, ext: zip, link: static }
           - { plat: macosx_arm64, os: macos-14, ext: tar.gz, link: shared }
           - { plat: macosx_arm64, os: macos-14, ext: tar.gz, link: static }
+          - { plat: macosx_x86_64, os: macos-15-intel, ext: tar.gz, link: shared }
+          - { plat: macosx_x86_64, os: macos-15-intel, ext: tar.gz, link: static }
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -501,13 +546,14 @@ jobs:
 
   attach-release:
     name: Attach SDKs to GitHub Release
-    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64, sdk-linux-x86_64, sdk-linux-aarch64, sdk-linux-aarch64-qemu, sdk-smoke]
+    needs: [sdk-windows-x64, sdk-windows-x86, sdk-macos-arm64, sdk-macos-x86_64, sdk-linux-x86_64, sdk-linux-aarch64, sdk-linux-aarch64-qemu, sdk-smoke]
     if: >-
       always() &&
       needs.sdk-smoke.result == 'success' &&
       needs.sdk-windows-x64.result == 'success' &&
       needs.sdk-windows-x86.result == 'success' &&
       needs.sdk-macos-arm64.result == 'success' &&
+      needs.sdk-macos-x86_64.result == 'success' &&
       needs.sdk-linux-x86_64.result == 'success' &&
       (needs.sdk-linux-aarch64.result == 'success' || needs.sdk-linux-aarch64-qemu.result == 'success') &&
       (
@@ -527,7 +573,7 @@ jobs:
       - name: List SDK archives
         run: |
           ls -la dist
-          test "$(ls dist/RapidOCRLite-SDK-win32-* dist/RapidOCRLite-SDK-win_amd64-* dist/RapidOCRLite-SDK-macosx_arm64-* dist/RapidOCRLite-SDK-linux_x86_64-* dist/RapidOCRLite-SDK-linux_aarch64-* 2>/dev/null | wc -l)" -ge 5
+          test "$(ls dist/RapidOCRLite-SDK-win32-* dist/RapidOCRLite-SDK-win_amd64-* dist/RapidOCRLite-SDK-macosx_arm64-* dist/RapidOCRLite-SDK-macosx_x86_64-* dist/RapidOCRLite-SDK-linux_x86_64-* dist/RapidOCRLite-SDK-linux_aarch64-* 2>/dev/null | wc -l)" -ge 6
 
       - name: Upload to GitHub Release
         env:
