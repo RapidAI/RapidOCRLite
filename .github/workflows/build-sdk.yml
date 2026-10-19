@@ -527,7 +527,12 @@ jobs:
           grep -q sdk_consumer_ok out.txt
 
       - name: Run OCR (Metal)
-        if: runner.os == 'macOS'
+        # Intel macOS runners are GPU-virtualised VMs: a Metal command buffer
+        # hangs there (kIOAccelCommandBufferCallbackErrorHang ->
+        # VK_ERROR_DEVICE_LOST). arm64 runners run real GPUs and pass. The
+        # x86_64 SDK still ships the Metal backend (works on real Intel Macs);
+        # CI verifies that platform via the CPU run above.
+        if: runner.os == 'macOS' && runner.arch != 'X64'
         run: |
           set -euo pipefail
           "$EXE" ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
