@@ -635,6 +635,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # checkout first: actions/checkout can clean the workspace, which would
+      # wipe artifacts downloaded before it.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           pattern: sdk-*
@@ -645,8 +649,6 @@ jobs:
         run: |
           ls -la dist
           test "$(ls dist/RapidOCRLite-SDK-win32-* dist/RapidOCRLite-SDK-win_amd64-* dist/RapidOCRLite-SDK-macosx_arm64-* dist/RapidOCRLite-SDK-macosx_x86_64-* dist/RapidOCRLite-SDK-linux_x86_64-* dist/RapidOCRLite-SDK-linux_aarch64-* 2>/dev/null | wc -l)" -ge 6
-
-      - uses: actions/checkout@v4
 
       - name: Upload to GitHub Release
         env:
@@ -669,6 +671,9 @@ jobs:
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
               --title "$TAG" --generate-notes
           fi
+          # A release left as a draft by an earlier manual attempt would keep
+          # the assets invisible; publishing it is idempotent.
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           # --clobber so a re-run refreshes the assets on an existing release.
           gh release upload "$TAG" dist/RapidOCRLite-SDK-* --repo "$GITHUB_REPOSITORY" --clobber
 
