@@ -1307,7 +1307,10 @@ jobs:
     needs: [meta, sdk-macos-x86_64]
     if: >-
       always() && needs.meta.result == 'success' && needs.sdk-macos-x86_64.result == 'success'
-    runs-on: macos-latest
+    # Must be an Intel runner: the jar built here only carries macos-x86_64
+    # resources, and the smoke test loads them by the host architecture, so it
+    # fails on an arm64 runner ("cannot load ... for macos-aarch64").
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
