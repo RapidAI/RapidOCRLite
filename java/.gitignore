@@ -1,0 +1,4 @@
+# Build products and downloaded SDKs (see README "获取 SDK")
+/build/
+/dist/
+/sdk/
