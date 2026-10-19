@@ -10,7 +10,13 @@ engines={
 FONT=ImageFont.truetype('/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',14)
 out={}
 for fn in sys.argv[1:]:
-    name=os.path.splitext(fn)[0]; img=np.asarray(Image.open(fn).convert('RGB'))
+    name=os.path.splitext(fn)[0]
+    # RapidOCR 3.x treats ndarray input as BGR (OpenCV convention) and swaps
+    # R/B internally (LoadImage.convert_img), so the engine actually sees
+    # rgb[:, :, ::-1]. The baselines in results/ were generated with this
+    # true-RGB input; pre-swapping the channels here would change every
+    # baseline. See https://github.com/RapidAI/RapidOCRLite/issues/1
+    img=np.asarray(Image.open(fn).convert('RGB'))
     for k,e in engines.items():
         e(img, use_cls=False)
         ts=[]

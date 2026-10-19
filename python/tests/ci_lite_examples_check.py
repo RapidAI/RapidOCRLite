@@ -6,6 +6,12 @@ score (saved with 4 decimals) within 1e-4. Prints the
 number of identical images and the per-image time; exits 1 on any difference.
 
 PPOCR_FORCE_ISA (scalar / avx2 / avx512) selects the float kernels as usual.
+
+Color convention: images are passed as true-RGB ndarrays, and RapidOCR 3.x
+treats ndarray input as BGR (OpenCV convention), swapping R/B internally
+(LoadImage.convert_img). The baselines in results/ therefore describe the
+R/B-swapped image as the engine sees it. Keep this exact input convention
+when regenerating the baselines; see issue #1.
 """
 import json
 import os
@@ -38,6 +44,8 @@ def run(threads):
     same, bad = 0, []
     for fn in NAMES:
         want = json.loads((EX / "results" / (Path(fn).stem + "_lite.json")).read_text(encoding="utf-8"))["lines"]
+        # True-RGB ndarray; the engine swaps R/B internally (BGR convention),
+        # matching how the baselines in results/ were generated (issue #1).
         img = np.asarray(Image.open(EX / "images" / fn).convert("RGB"))
         r = eng(img, use_cls=False)
         ts = []
