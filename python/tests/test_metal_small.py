@@ -14,6 +14,7 @@ line test runs everywhere. PPOCR_LIBRARY may point at a local librapidocrlite.
 
 import json
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -138,6 +139,10 @@ def test_metal_small_matches_cpu(wide_line, wide_lines):
 
     if not _native.metal_available():
         pytest.skip("no Metal device")
+    # GitHub's Intel macOS runners are GPU-virtualised VMs where a Metal
+    # command buffer hangs (see test_metal.py); real Intel Macs run Metal.
+    if sys.platform == "darwin" and platform.machine() == "x86_64" and os.environ.get("CI"):
+        pytest.skip("Metal command buffers hang on GitHub Intel macOS VMs")
     images = _images(wide_line)
     metal = _run("metal", images, wide_lines)
     cpu = _run("cpu", images, wide_lines)

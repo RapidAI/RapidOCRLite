@@ -1,6 +1,7 @@
 """Metal versus CPU text on macOS, and the CPU fallback when Metal is absent."""
 
 import os
+import platform
 import subprocess
 import sys
 
@@ -8,6 +9,19 @@ import pytest
 
 from rapidocr import RapidOCR
 from rapidocr.output import RapidOCROutput
+
+
+def _metal_unusable():
+    # GitHub's Intel macOS runners are GPU-virtualised VMs: metal_available()
+    # reports a device, but a Metal command buffer hangs there
+    # (kIOAccelCommandBufferCallbackErrorHang -> VK_ERROR_DEVICE_LOST), the
+    # same way build-sdk's Metal smoke fails on macos-15-intel. Real Intel
+    # Macs run Metal fine, so only skip on CI.
+    return (
+        sys.platform == "darwin"
+        and platform.machine() == "x86_64"
+        and bool(os.environ.get("CI"))
+    )
 
 
 def _models():
@@ -63,6 +77,8 @@ for text, box in zip(result.txts or (), result.boxes if result.boxes is not None
 
 def test_metal_option_is_accepted_everywhere():
     _models()
+    if _metal_unusable():
+        pytest.skip("Metal command buffers hang on GitHub Intel macOS VMs")
     from rapidocr import _native
 
     completed = _run("metal")
@@ -77,6 +93,8 @@ def test_metal_option_is_accepted_everywhere():
 @pytest.mark.skipif(sys.platform != "darwin", reason="Metal runs on macOS only")
 def test_metal_matches_cpu_text():
     _models()
+    if _metal_unusable():
+        pytest.skip("Metal command buffers hang on GitHub Intel macOS VMs")
     from rapidocr import _native
 
     if not _native.metal_available():
@@ -94,6 +112,8 @@ def test_metal_matches_cpu_text():
 
 def test_metal_output_type():
     det, rec, dictionary, image = _models()
+    if _metal_unusable():
+        pytest.skip("Metal command buffers hang on GitHub Intel macOS VMs")
     engine = RapidOCR(
         params={
             "Det.model_path": det,
