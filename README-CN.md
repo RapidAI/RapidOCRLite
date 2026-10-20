@@ -460,7 +460,7 @@ RapidOCR 是面向小模型、离线部署的开源 OCR。5.x 保留 3.x 应用�
 
 - C++ PP-OCRv6 检测与识别。库不链接 ONNX Runtime、Paddle Inference 或 OpenCV。
 - 同一个二进制在运行时分派到 AVX-512、AVX2+FMA 或 AArch64 NEON。`PPOCR_FORCE_ISA=scalar|avx2|avx512|neon` 只选择当前 CPU 合法的路径。只有 AVX2 的机器不会执行 AVX-512 目标文件。
-- LoongArch（loongarch64，Linux）：LSX（la64v1.0 基线）通过 `src/neon_lsx_shim.hpp` 复用 NEON 代码路径；仅当 `getauxval(AT_HWCAP)` 报告 LASX 时才进入 LASX GEMM（FMA、4 行分块）、深度卷积、GELU、CTC argmax、逐元素、融合 ExpandGeluProjectAdd，门控的融合 depthwise+pointwise 3x3/5x5，以及门控的融合 depthwise+ExpandGelu 3x3 内核（`PPOCR_FORCE_ISA=lasx|lsx|scalar`）。用 `cmake/toolchains/loongarch64-linux-gnu.cmake` 交叉编译，只在 QEMU 用户模式下验证（CI 任务 `loongarch64 qemu`：文本与 `expected_cpu_texts.json` 一致，原始分数与 x86 相差约 4e-5 以内；LASX 内核的运算顺序与 LSX 不同，分数与 LSX 可能相差约 1e-6，文本不变）。没有真机性能数据；CI 只产出 C/C++ SDK 压缩包，不出 wheel（manylinux 尚无 loongarch64 镜像）。
+- LoongArch（loongarch64，Linux）：LSX（la64v1.0 基线）通过 `src/neon_lsx_shim.hpp` 复用 NEON 代码路径；仅当 `getauxval(AT_HWCAP)` 报告 LASX 时才进入 LASX GEMM（FMA、4 行分块）、深度卷积、GELU、CTC argmax、逐元素、融合 ExpandGeluProjectAdd，门控的融合 depthwise+pointwise 3x3/5x5，以及门控的融合 depthwise+ExpandGelu 3x3 内核（`PPOCR_FORCE_ISA=lasx|lsx|scalar`）。用 `cmake/toolchains/loongarch64-linux-gnu.cmake` 交叉编译，只在 QEMU 用户模式下验证（CI 任务 `loongarch64 qemu`：文本与 `expected_cpu_texts.json` 一致，原始分数与 x86 相差约 4e-5 以内；LASX 内核的运算顺序与 LSX 不同，分数与 LSX 可能相差约 1e-6，文本不变）。没有真机性能数据；CI 产出 C/C++ SDK 压缩包，以及只发布到 GitHub Release 的 `manylinux_2_38_loongarch64` CPython 3.9–3.13 wheel（PyPI 不接受 loongarch64 标签）；这些 wheel 在 QEMU（Debian loong64）中做安装和 OCR 测试，文本与 x86 参考结果一致。
 - 可选 Vulkan 计算。源码构建在存在 `third_party/Vulkan-Headers` 和 `glslangValidator` 时嵌入 SPIR-V（`PPOCR_ENABLE_VULKAN` 默认 `ON`）。加载器通过 `dlopen` / `LoadLibrary` 打开 `libvulkan.so.1` 或 `vulkan-1.dll`，因此 Vulkan 不是 `DT_NEEDED` 依赖。发布的 wheel 传入 `-DPPOCR_ENABLE_VULKAN=OFF`。
 - C ABI（`include/rapidocrlite/rapidocrlite.h`）、C++ API（`include/rapidocrlite/rapidocrlite.hpp`）和 Python 包 `rapidocr`。Python 用 ctypes 调用 C ABI。
 - Python 调用形式跟随 3.x：`RapidOCR(params={"Section.key": value})`，然后使用 `result.txts`、`result.scores`、`result.boxes`、`result.elapse`、`to_json()`、`to_markdown()` 和 `vis()`。
@@ -583,6 +583,13 @@ pip install --pre RapidOCRLite
 
 ```python
 from rapidocr import RapidOCR
+```
+
+**LoongArch64（Linux，glibc ≥ 2.38）。** PyPI 目前不接受任何 loongarch64 平台标签，所以 `manylinux_2_38_loongarch64` wheel（CPython 3.9–3.13）只附在 GitHub Release 上，不会上传 PyPI。这些 wheel 只在 QEMU 用户模式模拟器中验证过（没有真机测试，也没有性能数据）。从 Release 地址安装，文件名中的 Python 版本和标签按实际情况选择：
+
+```bash
+pip install numpy Pillow PyYAML requests tqdm   # 或用发行版的 python3-* 包
+pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/rapidocrlite-5.0.0a11-cp312-cp312-manylinux_2_38_loongarch64.whl
 ```
 
 在本分支的检出目录安装（需要 CMake ≥ 3.20、C++20 编译器，以及 `pyproject.toml` 里的 Python 依赖）：

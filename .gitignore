@@ -26,3 +26,5 @@ __pycache__/
 *.suo
 .DS_Store
 Thumbs.db
+/wheelhouse-loongarch64/
+/wheelhouse-loongarch64-test/

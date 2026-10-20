@@ -103,9 +103,20 @@ Set `use_cls=False` to skip the warning. Do not pass an older OCR version.
 
 `.github/workflows/build-wheels.yml` builds the manylinux2014 wheels and the sdist.
 It runs on pushes and pull requests to `main`, on tags named `v5*`, and from
-the Actions “Run workflow” button. Every push to `main` publishes: wheels and
+the Actions “Run workflow” button. Only a `v5*` tag push publishes: wheels and
 sdist go to PyPI, and wheels, sdist, SDK archives and the Java jar go to the
-GitHub Release of `v<version>`.
+GitHub Release of that tag. Pushes to `main` and PRs only build and test.
+
+LoongArch64 wheels (`manylinux_2_38_loongarch64`, CPython 3.9–3.13, glibc ≥ 2.38)
+are attached to the GitHub Release only: PyPI does not accept loongarch64
+platform tags. They are verified under QEMU user-mode emulation only (no
+real-hardware testing, no performance numbers). Install from the release URL,
+choosing the file for your Python version and release tag:
+
+```bash
+pip install numpy Pillow PyYAML requests tqdm
+pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/rapidocrlite-5.0.0a11-cp312-cp312-manylinux_2_38_loongarch64.whl
+```
 
 `5.0.0a6` is a pre-release: `pip install --pre RapidOCRLite` or
 `pip install rapidocrlite==5.0.0a6`. `pip install rapidocr` installs the

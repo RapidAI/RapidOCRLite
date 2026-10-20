@@ -88,6 +88,28 @@ linux-aarch64 / macos-aarch64 / macos-x86_64) is attached to the same
 release. The `linux_loongarch64` SDK is built by `loongarch64-qemu.yml`, called
 from the same run, and attached by the same job.
 
+**LoongArch64 wheels (GitHub Release only).** PyPI (warehouse) rejects every
+loongarch64 platform tag (`manylinux_*`, `musllinux_*` and `linux_*`), so the
+`wheels-loongarch64` job builds them for the GitHub Release only.
+`tools/build_loongarch64_wheels.sh` cross-builds the library once with
+`cmake/toolchains/loongarch64-linux-gnu.cmake` (GCC 14, libstdc++/libgcc
+linked statically), runs `auditwheel repair` (the result must be
+`manylinux_2_38_loongarch64`; the glibc 2.38 floor comes from the
+`__isoc23_*` symbols), and retags it for cp39–cp313 with an identical payload.
+`tools/test_loongarch64_wheels.sh` then runs in a Debian loong64 container
+under QEMU (binfmt): it install-checks the cp313 wheel with `python3.13`, and
+runs the OCR checks on a retag of the same payload for Debian's default
+`python3`, because Debian's numpy is built only for that version. The checks
+are the sample texts against `expected_cpu_texts.json` (the x86 reference) under
+`lasx`, `lsx` and `scalar`, the lite README samples and the CLI. The
+verification is emulator-only: no real-hardware runs, no performance numbers.
+The artifact is called `loongarch64-wheels`, deliberately outside the
+`rapidocrlite-*` pattern that feeds the PyPI `dist` directory, and the publish
+job fails if a loongarch64 wheel ever reaches the PyPI upload directory. On a
+`v5*` tag, `attach-loongarch64-wheels` uploads them to the release after
+`publish` and refreshes `SHA256SUMS`. On `main` and PRs they are only built and
+tested. A loongarch64 failure does not block the PyPI upload.
+
 5. The `ubuntu-24.04-arm` label has to be offered to this repository. Public
    repositories normally have it. If GitHub never assigns a runner, the
    QEMU job builds aarch64 instead.
@@ -103,7 +125,8 @@ git push origin v5.0.0a12
 ```
 
 That one tag builds everything and publishes: wheels and sdist to PyPI, and
-SDK archives (including linux_loongarch64), wheels, sdist, the Java jar and
+SDK archives (including linux_loongarch64), wheels (plus the GitHub-only
+`manylinux_2_38_loongarch64` wheels), sdist, the Java jar and
 `SHA256SUMS` to the GitHub Release (prerelease when the tag contains `a`, `b`
 or `rc`). Re-running the run (or Actions → Run workflow on the tag with
 `publish` checked) refreshes the assets; files already on PyPI are skipped.

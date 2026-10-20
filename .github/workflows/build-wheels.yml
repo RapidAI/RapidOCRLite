@@ -846,6 +846,71 @@ jobs:
           path: wheelhouse/*.whl
           if-no-files-found: error
 
+  # LoongArch64 wheels: PyPI rejects every loongarch64 platform tag (warehouse
+  # only knows x86_64/i686/aarch64/armv7l/ppc64/ppc64le/s390x/riscv64), so these
+  # go to the GitHub Release only (attach-loongarch64-wheels). The artifact name
+  # deliberately does NOT start with "rapidocrlite-": the dist job collects
+  # rapidocrlite-* into the PyPI upload directory.
+  wheels-loongarch64:
+    name: wheels loongarch64 (cross + QEMU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the loongarch64 cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            g++-14-loongarch64-linux-gnu ninja-build cmake
+          for t in gcc g++; do
+            if ! command -v loongarch64-linux-gnu-$t >/dev/null; then
+              sudo ln -s "$(command -v loongarch64-linux-gnu-$t-14)" /usr/local/bin/loongarch64-linux-gnu-$t
+            fi
+          done
+          loongarch64-linux-gnu-g++ --version
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Cross-build manylinux_2_38_loongarch64 wheels (cp39-cp313)
+        run: bash tools/build_loongarch64_wheels.sh wheelhouse-loongarch64 wheelhouse-loongarch64-test
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: loong64
+
+      - name: Install + OCR under QEMU (Debian loong64)
+        timeout-minutes: 120
+        run: |
+          # Community loong64 Debian base image, pinned by digest; packages come
+          # from the official Debian archive (loong64 is a release arch in forky).
+          docker run --rm --platform linux/loong64 -v "$PWD:/src" -w /src \
+            ghcr.io/loong64/debian@sha256:7716b9efd1390e3fb60ecef145c055c29c9e0107cc8f6e6a243dd28ee5b35d78 \
+            bash -c 'set -e
+              rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
+              printf "Types: deb\nURIs: http://deb.debian.org/debian\nSuites: forky\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n" \
+                > /etc/apt/sources.list.d/debian.sources
+              bash tools/test_loongarch64_wheels.sh wheelhouse-loongarch64 wheelhouse-loongarch64-test'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loongarch64-wheels
+          path: wheelhouse-loongarch64/*.whl
+          if-no-files-found: error
+
   wheels-macos-arm64:
     name: wheels macOS arm64 (Metal)
     runs-on: macos-14
@@ -1126,6 +1191,8 @@ jobs:
           mkdir -p pypi
           cp dist/*.whl dist/*.tar.gz pypi/
           ls pypi
+          # loongarch64 wheels are GitHub-Release-only (PyPI rejects the tag).
+          if ls pypi | grep -q loongarch64; then echo "loongarch64 wheel in the PyPI upload dir" >&2; exit 1; fi
 
       - name: Publish to PyPI (API token secret)
         if: env.PYPI_API_TOKEN_V5_NG != ''
@@ -1166,6 +1233,44 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.meta.outputs.tag }}
         run: bash src/tools/release_sha256sums.sh "$TAG"
+
+  attach-loongarch64-wheels:
+    name: Attach loongarch64 wheels to GitHub Release
+    # attach-java also refreshes SHA256SUMS; running after it keeps the
+    # loongarch64 wheels in the final file.
+    needs: [meta, publish, wheels-loongarch64, attach-java]
+    if: >-
+      always() &&
+      needs.meta.outputs.publish == 'true' &&
+      needs.publish.result == 'success' &&
+      needs.wheels-loongarch64.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: loongarch64-wheels
+          path: la-wheels
+
+      - name: Upload to GitHub Release (not PyPI)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          v="${TAG#v}"
+          ls -la la-wheels
+          test "$(ls la-wheels/rapidocrlite-$v-cp3*-manylinux_2_38_loongarch64.whl | wc -l)" -eq 5
+          gh release upload "$TAG" la-wheels/*.whl --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Refresh SHA256SUMS
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.meta.outputs.tag }}
+        run: bash tools/release_sha256sums.sh "$TAG"
 
   # ------------------------------------------------------------------ java
   # The JNI libraries are built against the SDK archives produced by this very

@@ -63,7 +63,7 @@ If this project helps your work, a ⭐ Star helps it reach the next person.
 
 - C++ PP-OCRv6 detector and recognizer. The library does not link ONNX Runtime, Paddle Inference, or OpenCV.
 - One binary dispatches at runtime to AVX-512, AVX2+FMA, or AArch64 NEON. `PPOCR_FORCE_ISA=scalar|avx2|avx512|neon` selects a legal path for measurements. An AVX2-only machine never executes the AVX-512 object file.
-- LoongArch (loongarch64, Linux): LSX (the la64v1.0 baseline) runs the NEON code paths through `src/neon_lsx_shim.hpp`; LASX GEMM (FMA, 4-row), depthwise, GELU, CTC argmax, elementwise, fused ExpandGeluProjectAdd, gated fused depthwise+pointwise 3x3/5x5, and gated fused depthwise+ExpandGelu 3x3 are entered only when `getauxval(AT_HWCAP)` reports LASX (`PPOCR_FORCE_ISA=lasx|lsx|scalar`). Cross-built with `cmake/toolchains/loongarch64-linux-gnu.cmake` and verified only under QEMU user mode (CI job `loongarch64 qemu`: text identical to `expected_cpu_texts.json`, raw scores within about 4e-5 of x86; LASX kernels round in a different order than LSX, so scores can differ from LSX by about 1e-6, text unchanged). No real-hardware benchmarks; CI ships a C/C++ SDK tarball, no wheels (manylinux has no loongarch64 images yet).
+- LoongArch (loongarch64, Linux): LSX (the la64v1.0 baseline) runs the NEON code paths through `src/neon_lsx_shim.hpp`; LASX GEMM (FMA, 4-row), depthwise, GELU, CTC argmax, elementwise, fused ExpandGeluProjectAdd, gated fused depthwise+pointwise 3x3/5x5, and gated fused depthwise+ExpandGelu 3x3 are entered only when `getauxval(AT_HWCAP)` reports LASX (`PPOCR_FORCE_ISA=lasx|lsx|scalar`). Cross-built with `cmake/toolchains/loongarch64-linux-gnu.cmake` and verified only under QEMU user mode (CI job `loongarch64 qemu`: text identical to `expected_cpu_texts.json`, raw scores within about 4e-5 of x86; LASX kernels round in a different order than LSX, so scores can differ from LSX by about 1e-6, text unchanged). No real-hardware benchmarks; CI ships a C/C++ SDK tarball and `manylinux_2_38_loongarch64` CPython 3.9–3.13 wheels on the GitHub Release only (PyPI rejects loongarch64 tags); the wheels are install- and OCR-tested under QEMU (Debian loong64) against the x86 reference texts.
 - Optional Vulkan compute. Source builds embed SPIR-V when `third_party/Vulkan-Headers` and `glslangValidator` are present (`PPOCR_ENABLE_VULKAN` defaults to `ON`). The loader is `dlopen` / `LoadLibrary` of `libvulkan.so.1` or `vulkan-1.dll`, so Vulkan is not a `DT_NEEDED` dependency. Published wheels pass `-DPPOCR_ENABLE_VULKAN=OFF`.
 - C ABI (`include/rapidocrlite/rapidocrlite.h`), C++ API (`include/rapidocrlite/rapidocrlite.hpp`), and the Python package `rapidocr`. Python calls the C ABI with ctypes.
 - The Python call shape follows 3.x: `RapidOCR(params={"Section.key": value})`, then `result.txts`, `result.scores`, `result.boxes`, `result.elapse`, `to_json()`, `to_markdown()`, and `vis()`.
@@ -186,6 +186,13 @@ pip install --pre RapidOCRLite
 
 ```python
 from rapidocr import RapidOCR
+```
+
+**LoongArch64 (Linux, glibc ≥ 2.38).** PyPI does not accept any loongarch64 platform tag yet, so the `manylinux_2_38_loongarch64` wheels (CPython 3.9–3.13) are attached to the GitHub Release only, never uploaded to PyPI. They are verified under QEMU user-mode emulation only (no real-hardware testing, no performance numbers). Install one from its release URL; pick the file that matches your Python version and the release tag:
+
+```bash
+pip install numpy Pillow PyYAML requests tqdm   # or your distro's python3-* packages
+pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a11/rapidocrlite-5.0.0a11-cp312-cp312-manylinux_2_38_loongarch64.whl
 ```
 
 From a checkout of this branch (CMake ≥ 3.20, a C++20 compiler, and the Python dependencies in `pyproject.toml`):
@@ -455,7 +462,7 @@ There is no 4.x tag in this repository. Details and the C ABI are in [`docs/API.
 
 ### 📦 Releasing
 
-One workflow, [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml), builds the SDK archives, the Python wheels/sdist and the Java fat jar on every push to `main`; an annotated `v5*` tag publishes them: wheels and sdist to PyPI, SDK archives (incl. linux_loongarch64), wheels and the jar to that tag's GitHub Release. The steps, the trusted-publisher settings, and the tag command are in [`docs/RELEASING.md`](docs/RELEASING.md).
+One workflow, [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml), builds the SDK archives, the Python wheels/sdist and the Java fat jar on every push to `main`; an annotated `v5*` tag publishes them: wheels and sdist to PyPI, SDK archives (incl. linux_loongarch64), wheels (plus the GitHub-only loongarch64 wheels) and the jar to that tag's GitHub Release. The steps, the trusted-publisher settings, and the tag command are in [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ### 👥 Who use? ([more](https://github.com/RapidAI/RapidOCR/network/dependents))
 
