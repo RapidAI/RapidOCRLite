@@ -5,6 +5,7 @@
 #   win-x86_64     MinGW-w64 g++           (needs MINGW, static runtime)
 #   linux-x86_64   zig c++ -target x86_64-linux-gnu
 #   linux-aarch64  zig c++ -target aarch64-linux-gnu
+#   linux-loongarch64  zig c++ -target loongarch64-linux-gnu
 #   macos-aarch64  zig c++ -target aarch64-macos
 #
 # Requires JDK 17 (JAVA_HOME). MINGW/ZIG are auto-located. A platform whose
@@ -26,7 +27,7 @@ JAVA_HOME="${JAVA_HOME:-/c/Program Files/Eclipse Adoptium/jdk-17.0.19.10-hotspot
 case "$JAVA_HOME" in
     [A-Za-z]:\\*) command -v cygpath >/dev/null 2>&1 && JAVA_HOME=$(cygpath -u "$JAVA_HOME") ;;
 esac
-PLATFORMS="${PLATFORMS:-win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64}"
+PLATFORMS="${PLATFORMS:-win-x86_64 linux-x86_64 linux-aarch64 linux-loongarch64 macos-aarch64 macos-x86_64}"
 PACKAGE_ONLY="${PACKAGE_ONLY:-0}"
 # Single source of truth for the version: the root pyproject.toml. Keeps the
 # jar name, the SDK directory names and the release tag in sync on every bump.
@@ -138,6 +139,12 @@ else
             librapidocrlite.so.5.0.0 librapidocrlite.so.5 \
             librapidocrlite_jni.so
     fi
+    if has_platform linux-loongarch64; then
+        zig_cross linux-loongarch64 loongarch64-linux-gnu linux \
+            sdk/linux_loongarch64/RapidOCRLite-SDK-linux_loongarch64-$VERSION \
+            librapidocrlite.so.5.0.0 librapidocrlite.so.5 \
+            librapidocrlite_jni.so
+    fi
     if has_platform macos-aarch64; then
         zig_cross macos-aarch64 aarch64-macos darwin \
             sdk/macosx_arm64/RapidOCRLite-SDK-macosx_arm64-$VERSION \
@@ -161,7 +168,7 @@ rm -rf build/classes && mkdir -p build/classes
 echo "== 3/3 package jar"
 mkdir -p build/classes/native dist
 found=0
-for plat in win-x86_64 linux-x86_64 linux-aarch64 macos-aarch64 macos-x86_64; do
+for plat in win-x86_64 linux-x86_64 linux-aarch64 linux-loongarch64 macos-aarch64 macos-x86_64; do
     src="build/native/$plat"
     [ -d "$src" ] || continue
     mkdir -p "build/classes/native/$plat"

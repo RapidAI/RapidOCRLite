@@ -1374,6 +1374,100 @@ jobs:
         with:
           name: java-jar-linux-aarch64
           path: java/dist/rapidocrlite-java-*.jar
+  java-linux-loongarch64:
+    name: java linux-loongarch64 (cross + QEMU)
+    # Cross-built with zig against the QEMU-tested loongarch64 SDK. The same jar
+    # (x86_64 + loongarch64 natives) OCRs a sample on the x86_64 host and under
+    # QEMU loong64 (Debian openjdk); the recognized text must match exactly.
+    needs: [meta, sdk-linux-x86_64, sdk-loongarch64]
+    if: >-
+      always() && needs.meta.result == 'success' &&
+      needs.sdk-linux-x86_64.result == 'success' &&
+      needs.sdk-loongarch64.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: setup zig
+        env:
+          ZIG_TARGET: zig-x86_64-linux
+        run: |
+          ZIG_VER=0.17.0
+          curl -sSL -o /tmp/zig.tar.xz \
+            "https://ziglang.org/download/${ZIG_VER}/${ZIG_TARGET}-${ZIG_VER}.tar.xz"
+          mkdir -p "$RUNNER_TEMP/zig"
+          tar xf /tmp/zig.tar.xz -C "$RUNNER_TEMP/zig" --strip-components=1
+          echo "$RUNNER_TEMP/zig" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/zig/zig" version
+      - name: fetch x86_64 SDK archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-linux_x86_64
+          path: java/sdk/linux_x86_64
+      - name: fetch loongarch64 SDK archive
+        uses: actions/download-artifact@v4
+        with:
+          name: sdk-linux_loongarch64
+          path: java/sdk/linux_loongarch64
+      - name: extract SDKs
+        run: |
+          set -euo pipefail
+          for p in linux_x86_64 linux_loongarch64; do
+            (cd "java/sdk/$p" && tar xzf RapidOCRLite-SDK-$p-*.tar.gz && rm -f RapidOCRLite-SDK-$p-*.tar.gz && ls)
+          done
+      - name: build
+        run: PLATFORMS="linux-x86_64 linux-loongarch64" sh java/build.sh
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+      - name: x86_64 reference OCR
+        run: |
+          set -euo pipefail
+          java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar \
+            --ppocr ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt docs/lite_examples/images/ch_en_num.jpg | tee ocr-x86_64.txt
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: loong64
+      - name: OCR under QEMU (Debian loong64 openjdk)
+        timeout-minutes: 40
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/loong64 -v "$PWD:/src" -w /src \
+            ghcr.io/loong64/debian@sha256:7716b9efd1390e3fb60ecef145c055c29c9e0107cc8f6e6a243dd28ee5b35d78 \
+            bash -c 'set -e
+              rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
+              printf "Types: deb\nURIs: http://deb.debian.org/debian\nSuites: forky\nComponents: main\nSigned-By: /usr/share/keyrings/debian-archive-keyring.gpg\n" \
+                > /etc/apt/sources.list.d/debian.sources
+              apt-get update -q
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends openjdk-21-jre-headless
+              java -version
+              java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu \
+                --ppocr ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+                ci-models/ppocrv6_tiny_dict.txt docs/lite_examples/images/ch_en_num.jpg' | tee ocr-loongarch64.txt
+          grep -q "isa=lasx" ocr-loongarch64.txt
+          # text lines + line count must match exactly (timing differs)
+          grep '^  \[' ocr-x86_64.txt > a.txt
+          grep '^  \[' ocr-loongarch64.txt > b.txt
+          test -s a.txt
+          diff a.txt b.txt
+          echo "loongarch64 jar OCR matches x86_64 ($(wc -l < a.txt) lines)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: java-native-linux-loongarch64
+          path: java/build/native/linux-loongarch64/
+          if-no-files-found: error
   java-macos-aarch64:
     name: java macos-aarch64
     needs: [meta, sdk-macos-arm64]
@@ -1528,6 +1622,7 @@ jobs:
         meta,
         java-linux-x86_64,
         java-linux-aarch64,
+        java-linux-loongarch64,
         java-macos-aarch64,
         java-macos-x86_64,
         java-win-x86_64,
@@ -1537,6 +1632,7 @@ jobs:
       needs.meta.result == 'success' &&
       needs.java-linux-x86_64.result == 'success' &&
       needs.java-linux-aarch64.result == 'success' &&
+      needs.java-linux-loongarch64.result == 'success' &&
       needs.java-macos-aarch64.result == 'success' &&
       needs.java-macos-x86_64.result == 'success' &&
       needs.java-win-x86_64.result == 'success'
@@ -1560,6 +1656,10 @@ jobs:
           path: java/build/native/linux-aarch64
       - uses: actions/download-artifact@v4
         with:
+          name: java-native-linux-loongarch64
+          path: java/build/native/linux-loongarch64
+      - uses: actions/download-artifact@v4
+        with:
           name: java-native-macos-aarch64
           path: java/build/native/macos-aarch64
       - uses: actions/download-artifact@v4
@@ -1575,7 +1675,12 @@ jobs:
       - name: smoke test
         run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
       - name: list jar contents
-        run: java -jar java/dist/rapidocrlite-java-*.jar --help || true
+        run: |
+          set -euo pipefail
+          jar tf java/dist/rapidocrlite-java-*.jar | grep '^native/' | sort
+          for p in win-x86_64 linux-x86_64 linux-aarch64 linux-loongarch64 macos-aarch64 macos-x86_64; do
+            jar tf java/dist/rapidocrlite-java-*.jar | grep -q "^native/$p/" || { echo "jar lacks native/$p" >&2; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: jar-all-platforms

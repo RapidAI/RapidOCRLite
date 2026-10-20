@@ -10,6 +10,7 @@
 | Windows x64 | `rapidocrlite_jni.dll` | `rapidocrlite.dll` | MinGW-w64 g++（运行时全静态） |
 | Linux x64 | `librapidocrlite_jni.so` | `librapidocrlite.so.5` | zig c++（libc++ 静态） |
 | Linux arm64 | `librapidocrlite_jni.so` | `librapidocrlite.so.5` | zig c++（libc++ 静态） |
+| Linux loongarch64 | `librapidocrlite_jni.so` | `librapidocrlite.so.5` | zig c++（libc++ 静态；仅 QEMU 模拟器验证） |
 | macOS arm64 | `librapidocrlite_jni.dylib` | `librapidocrlite.5.dylib` | zig c++（libc++ 静态） |
 | macOS x86_64 | `librapidocrlite_jni.dylib` | `librapidocrlite.5.dylib` | zig c++（libc++ 静态） |
 
@@ -99,12 +100,13 @@ rapidocrlite-java-5.0.0a12.jar（约 7.3 MB）
     ├── win-x86_64/    rapidocrlite_jni.dll + rapidocrlite.dll
     ├── linux-x86_64/  librapidocrlite_jni.so + librapidocrlite.so.5
     ├── linux-aarch64/ librapidocrlite_jni.so + librapidocrlite.so.5
+    ├── linux-loongarch64/ librapidocrlite_jni.so + librapidocrlite.so.5
     ├── macos-aarch64/ librapidocrlite_jni.dylib + librapidocrlite.5.dylib
     └── macos-x86_64/  librapidocrlite_jni.dylib + librapidocrlite.5.dylib
 ```
 
 `NativeLoader` 按 `os.name` + `os.arch` 检测平台（`win-x86_64` / `linux-x86_64` /
-`linux-aarch64` / `macos-aarch64` / `macos-x86_64`），加载顺序：
+`linux-aarch64` / `linux-loongarch64`（`os.arch` 为 `loongarch64`）/ `macos-aarch64` / `macos-x86_64`），加载顺序：
 
 1. 系统属性 `-Drapidocr.lite.native=<库文件或目录>` 显式指定；
 2. 从 jar 提取当前平台的引擎库 + JNI 库到临时目录，**先 `System.load` 引擎库**，再加载
@@ -151,6 +153,7 @@ curl -sSL -o /tmp/sdk.tar.gz \
 tar xzf /tmp/sdk.tar.gz -C sdk/linux_x86_64
 # linux_aarch64 / macosx_arm64 / macosx_x86_64 同理：
 #   RapidOCRLite-SDK-linux_aarch64-5.0.0a12.tar.gz → sdk/linux_aarch64
+#   RapidOCRLite-SDK-linux_loongarch64-5.0.0a12.tar.gz → sdk/linux_loongarch64
 #   RapidOCRLite-SDK-macosx_arm64-5.0.0a12.tar.gz  → sdk/macosx_arm64
 #   RapidOCRLite-SDK-macosx_x86_64-5.0.0a12.tar.gz → sdk/macosx_x86_64
 
@@ -187,7 +190,7 @@ CI（`.github/workflows/build-wheels.yml`）中 Java 相关的 job 分两类：
   `--cpu` 冒烟测试，并上传原生库 artifact（`java-native-<platform>`）；
 - **`java-package` job**（ubuntu-latest，`needs` 全部五个构建 job）：下载各平台
   原生库 artifact 到 `build/native/<platform>/`，以 `PACKAGE_ONLY=1 sh build.sh`
-  只跑 javac + jar，**合并产出五平台全量 fat jar**（artifact
+  只跑 javac + jar，**合并产出六平台全量 fat jar**（artifact
   `jar-all-platforms`），再跑一次 `--cpu` 冒烟验证多平台 jar 能正确选中
   当前平台的资源。该 job 不需要 zig / MinGW 工具链，也不需要下载任何 SDK；
 - **`attach-java` job**：把 fat jar 上传到本次 release（与 SDK、wheel 同一个
@@ -221,6 +224,14 @@ arm64 Linux runner 对公开仓库免费。
 | JNI 导出 | Linux：10 个 `Java_*`；macOS：导出 trie 含 10 个 `Java_*` + `JNI_OnLoad/OnUnload` |
 | 引擎符号交叉校验（tools/check_abi.py） | 10/10 `rpocr_*` 引用全部可被引擎库解析 |
 | 运行时冒烟 | 由 CI 四平台 runner 执行（见上） |
+
+**Linux loongarch64——仅 QEMU 用户模式模拟器验证（无真机测试、无性能数据）：**
+
+CI job `java linux-loongarch64 (cross + QEMU)` 用 zig（`-target loongarch64-linux-gnu`）
+交叉编译 JNI 库，同一个 jar 先在 x86_64 runner 上识别 `docs/lite_examples/images/ch_en_num.jpg`
+（PP-OCRv6 tiny 模型），再在 QEMU loong64（`ghcr.io/loong64/debian`，按 digest 固定，
+Debian `openjdk-21-jre-headless`）中识别同一张图：`isa=lasx`，15 行文本、置信度与坐标
+与 x86_64 输出逐行一致。
 
 ## 注意事项
 

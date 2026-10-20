@@ -13,6 +13,7 @@ import java.util.Locale;
  *
  * <p>The JAR carries one {@code /native/<platform>/} directory per supported
  * platform ({@code win-x86_64}, {@code linux-x86_64}, {@code linux-aarch64},
+ * {@code linux-loongarch64},
  * {@code macos-aarch64}, {@code macos-x86_64}); each holds the JNI library
  * plus the matching RapidOCRLite engine library.
  *
@@ -37,6 +38,7 @@ final class NativeLoader {
         {"win-x86_64",      "rapidocrlite_jni.dll",    "rapidocrlite.dll"},
         {"linux-x86_64",    "librapidocrlite_jni.so",  "librapidocrlite.so.5"},
         {"linux-aarch64",   "librapidocrlite_jni.so",  "librapidocrlite.so.5"},
+        {"linux-loongarch64", "librapidocrlite_jni.so", "librapidocrlite.so.5"},
         {"macos-aarch64",   "librapidocrlite_jni.dylib", "librapidocrlite.5.dylib"},
         {"macos-x86_64",    "librapidocrlite_jni.dylib", "librapidocrlite.5.dylib"},
     };
@@ -50,6 +52,8 @@ final class NativeLoader {
         String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
         boolean x64 = arch.equals("amd64") || arch.equals("x86_64");
         boolean arm64 = arch.equals("aarch64") || arch.equals("arm64");
+        // OpenJDK reports "loongarch64" (some vendor builds: "loong64").
+        boolean la64 = arch.equals("loongarch64") || arch.equals("loong64");
         if (os.contains("win")) {
             return x64 ? "win-x86_64" : null;
         }
@@ -59,6 +63,9 @@ final class NativeLoader {
             }
             if (arm64) {
                 return "linux-aarch64";
+            }
+            if (la64) {
+                return "linux-loongarch64";
             }
             return null;
         }
