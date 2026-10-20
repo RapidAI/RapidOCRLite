@@ -32,7 +32,7 @@ PACKAGE_ONLY="${PACKAGE_ONLY:-0}"
 # Single source of truth for the version: the root pyproject.toml. Keeps the
 # jar name, the SDK directory names and the release tag in sync on every bump.
 VERSION="${VERSION:-$(sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' ../pyproject.toml 2>/dev/null | head -1)}"
-VERSION="${VERSION:-5.0.0a12}"
+VERSION="${VERSION:-5.0.0a13}"
 JAR="dist/rapidocrlite-java-$VERSION.jar"
 JNI_SRC="src/native/rapidocr_jni.cpp"
 

@@ -13,7 +13,7 @@ import java.util.List;
  * Runnable demo packaged as the jar's Main-Class.
  *
  * <pre>
- * java -jar rapidocrlite-java-5.0.0a12.jar [--lite <dir> | --ppocr <det> <rec> <dict>]
+ * java -jar rapidocrlite-java-5.0.0a13.jar [--lite <dir> | --ppocr <det> <rec> <dict>]
  *                                          [--cpu] [image-or-url ...]
  * </pre>
  *
