@@ -150,3 +150,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - 2026-10-16 19:10 Release 5.0.0a9: version bump; loongarch64 qemu attaches RapidOCRLite-SDK-linux_loongarch64 tarball on v5* tags.
 - 2026-10-17 21:20 Release 5.0.0a10: version bump (lite model type, MSVC lite, librapidocrlite / rpocr_* C API).
 - 2026-10-19 21:20 Release 5.0.0a11: version bump; first release with the Java binding inside (java/ fat jar on the release, build-java.yml dispatch-driven after build-sdk uploads the SDK tarballs).
+- 2026-10-20 14:30 Release 5.0.0a12: version bump; first release with manylinux_2_38_loongarch64 wheels (cp39-cp313, GitHub Release only, QEMU-verified).

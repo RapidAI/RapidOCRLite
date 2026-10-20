@@ -4,7 +4,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "rapidocrlite"
-version = "5.0.0a11"
+version = "5.0.0a12"
 description = "RapidOCRLite: lightweight, fast PP-OCRv6 native engine, API-compatible with RapidOCR; import name rapidocr"
 readme = "README.md"
 requires-python = ">=3.9"
