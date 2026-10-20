@@ -101,7 +101,7 @@ Set `use_cls=False` to skip the warning. Do not pass an older OCR version.
 
 ## Wheels and publishing
 
-`.github/workflows/release.yml` builds the manylinux2014 wheels and the sdist.
+`.github/workflows/build-wheels.yml` builds the manylinux2014 wheels and the sdist.
 It runs on pushes and pull requests to `main`, on tags named `v5*`, and from
 the Actions “Run workflow” button. Every push to `main` publishes: wheels and
 sdist go to PyPI, and wheels, sdist, SDK archives and the Java jar go to the

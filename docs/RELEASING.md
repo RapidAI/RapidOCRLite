@@ -2,19 +2,24 @@
 
 The PyPI distribution name is `RapidOCRLite`. The import name is still `rapidocr`.
 
-Everything is released by one workflow: `.github/workflows/release.yml`. It
+Everything is released by one workflow: `.github/workflows/build-wheels.yml`
+(workflow name `release`; the file keeps this name because it is the
+registered PyPI Trusted Publisher). It
 builds the C/C++ SDK archives, the Python wheels + sdist and the Java fat jar,
 then publishes them: SDK archives and the jar go to the GitHub Release, the
 wheels and sdist go to PyPI **and** to the same Release. The former
-`build-sdk.yml` / `build-wheels.yml` / `build-java.yml` workflows were merged
+`build-sdk.yml` / `build-java.yml` workflows and the LoongArch SDK job
+(`loongarch64-qemu.yml`, now a reusable workflow it calls) were merged
 into it so the ordering is deterministic (the Java jobs consume the SDK
 archives of the very same run instead of racing a release upload).
 
-**Release target.** A push to `main` and a push of a `v5*` tag both publish.
-On a tag push the release is that tag; on a `main` push the release is
-`v<version from pyproject.toml>`, and the workflow creates that tag (on the
-pushed commit) and the release if they do not exist yet. An existing tag is
-never moved or deleted — deleting a tag empties the release assets.
+**Release target.** Only a push of an annotated `v5*` tag publishes, to the
+release of that tag. The tag must equal `v` + the `pyproject.toml` version.
+The `attach-release` job creates the release when it is missing (and turns a
+draft into a published release); PyPI, the wheels and the Java jar wait for it,
+so nothing races. Pushes to `main`, PRs and manual runs from a branch only
+build and test. The workflow never creates, moves or deletes tags. Separate
+`java-*` tags are no longer needed: the jar goes on the `v5*` release.
 
 It builds CPython 3.9–3.13 wheels inside the official manylinux2014 images
 (devtoolset GCC 10, glibc 2.17 / `manylinux_2_17`) and an sdist with
@@ -61,7 +66,7 @@ requests `id-token: write` and uses the GitHub Environment named `pypi`.
    publisher), open Publishing → Add a new pending
    publisher (or an ordinary publisher if the project already exists).
 2. Owner: `RapidAI`. Repository: `RapidOCRLite`. Workflow name:
-   `release.yml`. Environment name: `pypi`.
+   `build-wheels.yml`. Environment name: `pypi`.
 3. On GitHub, open Settings → Environments and create an environment named
    `pypi`. A required reviewer is optional. Do not put a PyPI password or
    API token in the repository files. A pending publisher is the only way
@@ -75,14 +80,13 @@ requests `id-token: write` and uses the GitHub Environment named `pypi`.
    marks alpha/beta/rc tags as prerelease.
 
 Native C/C++ SDK archives (`RapidOCRLite-SDK-{win32,win_amd64,macosx_arm64,linux_x86_64,linux_aarch64}-<version>`)
-are built by `.github/workflows/release.yml` (MSVC Win32/x64, macOS-14 arm64,
+are built by `.github/workflows/build-wheels.yml` (MSVC Win32/x64, macOS-14 arm64,
 macOS-15-intel x86_64, and manylinux2014 x86_64/aarch64). They are attached
-to the GitHub Release of the resolved tag, on a `v5*` tag push and on every
-push to `main`. The Java fat jar (`rapidocrlite-java-<version>.jar`, built
+to the GitHub Release of the resolved tag, on a `v5*` tag push. The Java fat jar (`rapidocrlite-java-<version>.jar`, built
 from the same run's SDK archives for win-x86_64 / linux-x86_64 /
 linux-aarch64 / macos-aarch64 / macos-x86_64) is attached to the same
-release. LoongArch SDKs are attached by `loongarch64-qemu.yml`, which follows
-the same tag rule.
+release. The `linux_loongarch64` SDK is built by `loongarch64-qemu.yml`, called
+from the same run, and attached by the same job.
 
 5. The `ubuntu-24.04-arm` label has to be offered to this repository. Public
    repositories normally have it. If GitHub never assigns a runner, the
@@ -90,33 +94,25 @@ the same tag rule.
 
 ## Trigger a release
 
-Set the version in `pyproject.toml`, then push it to `main`:
+Set the version in `pyproject.toml`, push it to `main`, wait for CI to be
+green, then push an annotated tag:
 
 ```bash
-git push origin main
+git tag -a v5.0.0a12 -m "v5.0.0a12"
+git push origin v5.0.0a12
 ```
 
-or create the tag explicitly (same release; useful when `main` already carries
-the version and only the assets have to be refreshed):
-
-```bash
-git tag v5.0.0a6
-git push origin v5.0.0a6
-```
-
-A `main` push builds everything and publishes to the release of `v<version>`;
-the workflow creates that tag and the release when they are missing, so no
-manual tagging is required any more. It publishes `dist/*.whl` and the sdist to
-PyPI, then attaches wheels, sdist, SDK archives, the Java jar and `SHA256SUMS`
-to the GitHub Release (prerelease when the tag contains `a`, `b`, or `rc`).
-Files already on PyPI are skipped (`skip-existing`), so repeated `main` pushes
-are safe.
+That one tag builds everything and publishes: wheels and sdist to PyPI, and
+SDK archives (including linux_loongarch64), wheels, sdist, the Java jar and
+`SHA256SUMS` to the GitHub Release (prerelease when the tag contains `a`, `b`
+or `rc`). Re-running the run (or Actions → Run workflow on the tag with
+`publish` checked) refreshes the assets; files already on PyPI are skipped.
 
 ## PyPI credentials
 
-The `publish` job runs on a push to `main` and on a pushed `v5*` tag, in GitHub
+The `publish` job runs only for a pushed `v5*` tag, in GitHub
 environment `pypi`. If repository secret `PYPI_API_TOKEN_V5_NG` is set, it uploads
 with that token; otherwise it uses PyPI Trusted Publishing (owner `RapidAI`,
-repository `RapidOCRLite`, workflow `release.yml`, environment `pypi`). The
+repository `RapidOCRLite`, workflow `build-wheels.yml`, environment `pypi`). The
 resolved tag must equal `v` + the package version (e.g. `v5.0.0a6`), or the job
 stops before uploading.

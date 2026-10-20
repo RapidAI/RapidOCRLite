@@ -852,7 +852,7 @@ C++ 默认值在 `include/rapidocrlite/rapidocrlite.hpp` 的 `rpocr::Options` �
 
 ### 📦 发布
 
-推送到 `main`（或 `v5*` 标签）会触发唯一的发布流水线 [`.github/workflows/release.yml`](.github/workflows/release.yml)：构建 SDK 压缩包、Python wheel/sdist 和 Java fat jar，并全部发布——wheel 与 sdist 推送到 PyPI，SDK、wheel 和 jar 上传到 `v<version>` 对应的 GitHub Release。步骤、可信发布者设置和打标签命令见 [`docs/RELEASING.md`](docs/RELEASING.md)。
+推送到 `main` 只构建测试；推送带注释的 `v5*` 标签才会通过唯一的发布流水线发布。流水线为 [`.github/workflows/build-wheels.yml`](.github/workflows/build-wheels.yml)：构建 SDK 压缩包、Python wheel/sdist 和 Java fat jar，并全部发布——wheel 与 sdist 推送到 PyPI，SDK、wheel 和 jar 上传到 该标签对应的 GitHub Release。步骤、可信发布者设置和打标签命令见 [`docs/RELEASING.md`](docs/RELEASING.md)。
 
 ### 👥 谁在使用？([更多](https://github.com/RapidAI/RapidOCR/network/dependents))
 

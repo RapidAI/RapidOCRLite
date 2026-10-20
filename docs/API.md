@@ -26,7 +26,7 @@ target_link_libraries(app PRIVATE RapidOCRLite::rapidocrlite)   # shared
 # or RapidOCRLite::static
 ```
 
-Wheels and the sdist are built by `.github/workflows/release.yml`, which also
+Wheels and the sdist are built by `.github/workflows/build-wheels.yml`, which also
 publishes them to PyPI; see [`RELEASING.md`](RELEASING.md).
 
 `PPOCR_BUILD_SHARED` and `PPOCR_BUILD_STATIC` both default to `ON`.

@@ -141,7 +141,7 @@ PACKAGE_ONLY=1 sh build.sh         # 只打包已有 build/native/（CI 合并�
 
 从 [RapidOCRLite v5.0.0a11 release](https://github.com/RapidAI/RapidOCRLite/releases/tag/v5.0.0a11)
 下载对应平台的 SDK 解压到 `sdk/` 下（目录名须与 `build.sh` 期望的一致；CI 中由仓库根目录的
-`.github/workflows/release.yml` 自动完成）：
+`.github/workflows/build-wheels.yml` 自动完成）：
 
 ```bash
 # Linux x64 / arm64、macOS arm64 / x86_64：tar.gz 自带顶层目录，直接解压，勿加 --strip-components
@@ -176,10 +176,10 @@ java/
 └── dist/                                 # 构建产物（.gitignore；CI 产出五平台 fat jar）
 ```
 
-CI workflow 与 SDK / wheel 同属一条流水线：仓库根目录 `.github/workflows/release.yml`
-（推送 `main` 或 `v5*` 标签即构建并发布 SDK、wheel 与本 jar）。
+CI workflow 与 SDK / wheel 同属一条流水线：仓库根目录 `.github/workflows/build-wheels.yml`
+（推送 `main` 只构建；推送 `v5*` 标签即构建并发布 SDK、wheel 与本 jar，无需单独的 `java-*` 标签）。
 
-CI（`.github/workflows/release.yml`）中 Java 相关的 job 分两类：
+CI（`.github/workflows/build-wheels.yml`）中 Java 相关的 job 分两类：
 
 - **五个平台构建 job**（ubuntu-latest / ubuntu-24.04-arm / macos-latest×2 /
   windows-latest）：直接下载本次运行产出的 SDK artifact（不再依赖 release 上的

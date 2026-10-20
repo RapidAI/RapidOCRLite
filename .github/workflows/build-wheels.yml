@@ -1,15 +1,21 @@
 name: release
 
-# One pipeline for the whole release. Every push to main (and every v5* tag
-# push, and manual dispatch) builds:
+# NOTE: this file must stay named build-wheels.yml - it is the workflow name
+# registered as the PyPI Trusted Publisher for project rapidocrlite
+# (environment `pypi`). Renaming it breaks PyPI publishing.
+#
+# One pipeline for the whole release. Every push to main, PR and v5* tag push
+# builds everything; only an (annotated) v5* tag push publishes:
 #
 #   * the C/C++ SDK archives  -> attached to the GitHub Release
 #   * the Python wheels/sdist -> published to PyPI and attached to the Release
 #   * the Java fat jar        -> attached to the same Release
 #
 # The release target is resolved by the `meta` job: a v5* tag push publishes to
-# that tag, a main push publishes to `v<version from pyproject.toml>` (creating
-# the tag and the release when they do not exist yet). Keeping everything in a
+# that tag (the release is created when missing, never left as a draft). Main
+# pushes and PRs only build and test. A manual dispatch on a v5* tag ref can
+# re-publish that tag. The workflow never creates, moves or deletes tags, and
+# separate java-* tags are not needed. Keeping everything in a
 # single workflow is what makes the ordering deterministic: the Java jobs can
 # depend on the SDK artifacts of the very same run instead of racing a release
 # that another workflow has not uploaded yet.
@@ -22,9 +28,9 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Publish to PyPI and the GitHub Release"
+        description: "Publish to PyPI and the GitHub Release (only when run on a v5* tag)"
         type: boolean
-        default: true
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -65,13 +71,24 @@ jobs:
             push)
               case "$REF" in
                 refs/tags/v5*) publish=true ;;
-                refs/heads/main) publish=true ;;
               esac
               ;;
             workflow_dispatch)
-              [ "$DISPATCH_PUBLISH" = "true" ] && publish=true || true
+              case "$REF" in
+                refs/tags/v5*) [ "$DISPATCH_PUBLISH" = "true" ] && publish=true || true ;;
+              esac
               ;;
           esac
+          if [ "$publish" = true ]; then
+            git fetch --no-tags --force origin "+refs/tags/$tag:refs/tags/$tag"
+            if [ "$(git cat-file -t "refs/tags/$tag")" != tag ]; then
+              echo "::warning::$tag is a lightweight tag; release tags should be annotated (git tag -a)"
+            fi
+            if [ "v$version" != "$tag" ]; then
+              echo "::error::tag $tag does not match pyproject.toml version $version" >&2
+              exit 1
+            fi
+          fi
           echo "tag=$tag"
           echo "publish=$publish"
           echo "version=$version"
@@ -607,6 +624,10 @@ jobs:
             Windows) objdump -p "$SDK/bin/rapidocrlite.dll" | grep "DLL Name" || true ;;
           esac
 
+  sdk-loongarch64:
+    name: SDK linux_loongarch64 (QEMU)
+    uses: ./.github/workflows/loongarch64-qemu.yml
+
   attach-release:
     name: Attach SDKs to GitHub Release
     needs:
@@ -619,6 +640,7 @@ jobs:
         sdk-linux-x86_64,
         sdk-linux-aarch64,
         sdk-linux-aarch64-qemu,
+        sdk-loongarch64,
         sdk-smoke,
       ]
     if: >-
@@ -630,6 +652,7 @@ jobs:
       needs.sdk-macos-arm64.result == 'success' &&
       needs.sdk-macos-x86_64.result == 'success' &&
       needs.sdk-linux-x86_64.result == 'success' &&
+      needs.sdk-loongarch64.result == 'success' &&
       (needs.sdk-linux-aarch64.result == 'success' || needs.sdk-linux-aarch64-qemu.result == 'success')
     runs-on: ubuntu-latest
     permissions:
@@ -648,24 +671,17 @@ jobs:
       - name: List SDK archives
         run: |
           ls -la dist
-          test "$(ls dist/RapidOCRLite-SDK-win32-* dist/RapidOCRLite-SDK-win_amd64-* dist/RapidOCRLite-SDK-macosx_arm64-* dist/RapidOCRLite-SDK-macosx_x86_64-* dist/RapidOCRLite-SDK-linux_x86_64-* dist/RapidOCRLite-SDK-linux_aarch64-* 2>/dev/null | wc -l)" -ge 6
+          test "$(ls dist/RapidOCRLite-SDK-win32-* dist/RapidOCRLite-SDK-win_amd64-* dist/RapidOCRLite-SDK-macosx_arm64-* dist/RapidOCRLite-SDK-macosx_x86_64-* dist/RapidOCRLite-SDK-linux_x86_64-* dist/RapidOCRLite-SDK-linux_aarch64-* dist/RapidOCRLite-SDK-linux_loongarch64-* 2>/dev/null | wc -l)" -ge 7
 
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.meta.outputs.tag }}
-          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          # A main push has no tag yet: create one on the pushed commit so the
-          # release has something to hang from. An existing tag is never moved
-          # or deleted (that would empty the release assets).
-          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git tag "$TAG" "$SHA"
-            git push origin "refs/tags/$TAG"
-          fi
+          # Only tag runs publish, so the tag exists. This job is the single
+          # place that creates the release; publish and attach-java depend on
+          # it, so nothing races to create it.
           case "$TAG" in *a*|*b*|*rc*) pre=--prerelease ;; *) pre= ;; esac
           if ! gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
