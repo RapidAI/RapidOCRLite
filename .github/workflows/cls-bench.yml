@@ -1,0 +1,124 @@
+name: cls bench
+
+# Orientation classifier (use_cls) overhead: build BASE_REF and this commit
+# (CPU library), time both with use_cls on / off on the SWHL sets, print the
+# per-operator profile of the cls graph, and on macOS arm64 (NEON) check
+# text / rec / cls labels against pip-installed rapidocr main. Results go to
+# the step summary and the cls-bench-<os> artifact.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "include/**"
+      - "python/src/**"
+      - "tools/cls_parity/**"
+      - ".github/workflows/cls-bench.yml"
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: "baseline commit"
+        default: "454c852"
+
+concurrency:
+  group: cls-bench-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BASE_REF: ${{ github.event.inputs.base_ref || '454c852' }}
+  RAPIDOCR_MAIN_REF: 8ac45f4e731f50c37a1f5f9cf89294e08c1b2c15
+
+jobs:
+  bench:
+    name: cls bench ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Toolchain
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build cmake g++; else brew install ninja || true; fi
+
+      - name: Build base and head
+        run: |
+          git worktree add ../base "$BASE_REF"
+          (cd ../base && git submodule update --init --recursive)
+          NJ=$( (nproc || sysctl -n hw.ncpu) 2>/dev/null )
+          for d in "$PWD" "$PWD/../base"; do
+            cmake -S "$d" -B "$d/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+              -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON \
+              -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_EXAMPLES=OFF -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_ENABLE_METAL=OFF
+            cmake --build "$d/build" -j"$NJ"
+          done
+          ls build/librapidocrlite.* ../base/build/librapidocrlite.*
+
+      - name: Python environments
+        run: |
+          python -m venv /tmp/lite
+          /tmp/lite/bin/pip install -q numpy Pillow PyYAML requests tqdm datasets
+          python -m venv /tmp/main
+          /tmp/main/bin/pip install -q "rapidocr @ git+https://github.com/RapidAI/RapidOCR@${RAPIDOCR_MAIN_REF}#subdirectory=python" onnxruntime datasets
+
+      - name: Benchmark
+        run: |
+          mkdir -p bench
+          LIBEXT=so; [ "$RUNNER_OS" = macOS ] && LIBEXT=dylib
+          run() {  # label srcdir [env...]
+            label=$1; dir=$2; shift 2
+            env "$@" PYTHONPATH="$dir/python/src" PPOCR_LIBRARY="$dir/build/librapidocrlite.$LIBEXT" \
+              /tmp/lite/bin/python tools/cls_parity/bench.py "$label" "bench/$label.json" --model-root /tmp/models-lite | tee -a bench/summary.txt
+          }
+          run base "$PWD/../base"
+          run head "$PWD"
+          run base_again "$PWD/../base"
+          run head_again "$PWD"
+          if [ "$RUNNER_OS" = Linux ]; then
+            run base_avx2 "$PWD/../base" PPOCR_FORCE_ISA=avx2
+            run head_avx2 "$PWD" PPOCR_FORCE_ISA=avx2
+          fi
+          /tmp/main/bin/python tools/cls_parity/bench.py rapidocr_main bench/main.json --model-root /tmp/models-main | tee -a bench/summary.txt
+
+      - name: cls graph operator profile
+        run: |
+          LIBEXT=so; [ "$RUNNER_OS" = macOS ] && LIBEXT=dylib
+          for v in base head; do
+            dir=$PWD; [ $v = base ] && dir=$PWD/../base
+            echo "### $v" >> bench/profile.txt
+            PPOCR_DUMP_FUSED_OPS=1 PPOCR_PROFILE=1 PYTHONPATH="$dir/python/src" PPOCR_LIBRARY="$dir/build/librapidocrlite.$LIBEXT" \
+              /tmp/lite/bin/python tools/cls_parity/bench.py prof_$v bench/prof_$v.json --pages 4 --crops 20 --rounds 1 --model-root /tmp/models-lite 2>> bench/profile.txt || true
+          done
+          tail -c 60000 bench/profile.txt
+
+      - name: Parity vs rapidocr main on this runner (text, rec, cls labels)
+        run: |
+          LIBEXT=so; [ "$RUNNER_OS" = macOS ] && LIBEXT=dylib
+          /tmp/main/bin/pip install -q numpy
+          /tmp/main/bin/python tools/cls_parity/eval_acc.py bench/main_cls1.json --use-cls 1 --limit-det 80 --model-root /tmp/models-main
+          PYTHONPATH=python/src PPOCR_LIBRARY=$PWD/build/librapidocrlite.$LIBEXT /tmp/lite/bin/python tools/cls_parity/eval_acc.py bench/lite_cls1.json --use-cls 1 --limit-det 80 --model-root /tmp/models-lite
+          /tmp/main/bin/python tools/cls_parity/compare.py bench/main_cls1.json bench/lite_cls1.json --strict --no-box | tee -a bench/summary.txt
+
+      - name: Summary
+        if: always()
+        run: |
+          { echo '```'; cat bench/summary.txt || true; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cls-bench-${{ matrix.os }}
+          path: bench/

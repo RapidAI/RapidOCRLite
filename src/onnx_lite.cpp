@@ -2648,6 +2648,83 @@ void LowerConstantNodes(GraphData& g) {
   g.nodes = std::move(kept);
 }
 
+// PaddlePaddle's MobileNetV3 export (ch_ppocr_mobile_v2.0_cls) spells
+// HardSwish as Add(x, 3) -> Clip(0, 6) -> Mul(x, .) -> Div(., 6) and keeps
+// SE biases as Reshape(initializer, constant shape). Neither shape matches
+// the PP-OCRv6 fusions, so every block ran 4 full-map elementwise passes
+// plus an unfolded BatchNorm. Rewrite them to the canonical forms the
+// fusions already know: HardSigmoid(1/6, 1/2) + Mul (then BN/Conv folding
+// yields FusedConvHardSwish / FusedDepthwiseHardSwish) and a constant
+// [1,C,1,1] initializer (then the Conv channel-bias fold fires).
+// PPOCR_DISABLE_MBV3_CANONICAL=1 keeps the exporter graph.
+Tensor Reshape(const Tensor& a, const Tensor& spec);
+void CanonicalizeMobileNetV3(GraphData& g) {
+  if (std::getenv("PPOCR_DISABLE_MBV3_CANONICAL") != nullptr) return;
+  std::unordered_map<std::string, std::size_t> consumers;
+  std::unordered_set<std::string> outputs(g.outputs.begin(), g.outputs.end());
+  for (const auto& node : g.nodes) for (const auto& name : node.in) if (!name.empty()) ++consumers[name];
+  const auto scalar = [&](const std::string& name, float expected) {
+    const auto it = g.initializers.find(name);
+    return it != g.initializers.end() && it->second.data.size() == 1 &&
+        it->second.data[0] == expected;
+  };
+  const auto internal = [&](const Node& n) {
+    return n.out.size() == 1 && consumers[n.out[0]] == 1 && !outputs.contains(n.out[0]);
+  };
+  std::vector<Node> kept;
+  kept.reserve(g.nodes.size());
+  int folded = 0;
+  for (std::size_t i = 0; i < g.nodes.size();) {
+    const auto& a = g.nodes[i];
+    if (a.op == "Reshape" && a.in.size() == 2 && a.out.size() == 1 &&
+        g.initializers.contains(a.in[0]) && g.initializers.contains(a.in[1]) &&
+        !outputs.contains(a.out[0])) {
+      Tensor t = Reshape(g.initializers.at(a.in[0]), g.initializers.at(a.in[1]));
+      g.initializers.insert_or_assign(a.out[0], std::move(t));
+      ++i;
+      continue;
+    }
+    if (i + 3 < g.nodes.size() && a.op == "Add" && a.in.size() == 2 && internal(a)) {
+      const auto& clip = g.nodes[i + 1];
+      const auto& mul = g.nodes[i + 2];
+      const auto& div = g.nodes[i + 3];
+      const std::string& x = scalar(a.in[1], 3.F) ? a.in[0] : a.in[1];
+      const std::string& three = scalar(a.in[1], 3.F) ? a.in[1] : a.in[0];
+      const bool ok = scalar(three, 3.F) && !g.initializers.contains(x) &&
+          clip.op == "Clip" && clip.in.size() == 3 && clip.in[0] == a.out[0] &&
+          scalar(clip.in[1], 0.F) && scalar(clip.in[2], 6.F) && internal(clip) &&
+          mul.op == "Mul" && mul.in.size() == 2 && internal(mul) &&
+          ((mul.in[0] == x && mul.in[1] == clip.out[0]) ||
+           (mul.in[1] == x && mul.in[0] == clip.out[0])) &&
+          div.op == "Div" && div.in.size() == 2 && div.in[0] == mul.out[0] &&
+          scalar(div.in[1], 6.F) && div.out.size() == 1;
+      if (ok) {
+        Node hs;
+        hs.op = "HardSigmoid";
+        hs.name = clip.name;
+        hs.in = {x};
+        hs.out = {clip.out[0]};
+        hs.attr["alpha"].f = 1.F / 6.F;
+        hs.attr["beta"].f = .5F;
+        Node m;
+        m.op = "Mul";
+        m.name = div.name;
+        m.in = {x, clip.out[0]};
+        m.out = div.out;
+        kept.push_back(std::move(hs));
+        kept.push_back(std::move(m));
+        ++folded;
+        i += 4;
+        continue;
+      }
+    }
+    kept.push_back(a);
+    ++i;
+  }
+  g.nodes = std::move(kept);
+  (void)folded;
+}
+
 void ParseGraph(const std::uint8_t* data, std::size_t size, GraphData& g) {
   Reader r{data, size};
   while (!r.eof()) {
@@ -2670,6 +2747,7 @@ GraphData ParseModel(const std::string& file) {
   LowerConstantNodes(g);
   std::unordered_set<std::string> init; for (const auto& [name, _] : g.initializers) init.insert(name);
   g.inputs.erase(std::remove_if(g.inputs.begin(), g.inputs.end(), [&](const auto& n) { return init.contains(n); }), g.inputs.end());
+  CanonicalizeMobileNetV3(g);
   EliminateInternalIdentity(g);
   EliminateAdjacentInverseTranspose(g);
   EliminateInternalIdentity(g);
