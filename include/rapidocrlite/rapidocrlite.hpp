@@ -35,6 +35,13 @@ struct Result {
   float confidence{};
   std::array<int, 4> bbox{};                 // x, y, width, height
   std::array<std::array<int, 2>, 4> box{};   // TL, TR, BR, BL
+  // Text-line orientation (rapidocr main TextClassifier). -1: the classifier
+  // did not run for this line. Otherwise the arg-max class index (0 = "0",
+  // 1 = "180" with the default label list) and its softmax probability. The
+  // line was rotated 180 degrees before recognition when cls_label == 1 and
+  // cls_score > Options::cls_thresh.
+  int cls_label = -1;
+  float cls_score = 0.F;
 };
 
 // Execution policy for PP-OCRv6. CPU is always available. GPU-only never
@@ -176,6 +183,24 @@ struct Options {
   // Appended: model family (see ModelType). lite: det_model is the lite folder,
   // rec_model / dictionary are ignored; rec_parallelism sets its thread count.
   ModelType model_type = ModelType::auto_detect;
+  // Text-line orientation classification (0/180), rapidocr main Global.use_cls.
+  // On by default; it runs only when cls_model names a classifier ONNX file
+  // (ch_ppocr_mobile_v2.0_cls_mobile or a PP-LCNet textline_ori model).
+  // The PPOCR_USE_CLS environment variable (0/1) overrides use_cls and
+  // PPOCR_CLS_MODEL supplies cls_model when it is empty. The classifier runs
+  // on the CPU crops of the cpu_only and hybrid paths; the gpu_only / Metal
+  // graphs and the lite (Indra) model do not classify (cls_label stays -1).
+  bool use_cls = true;
+  std::string cls_model;
+  // rapidocr main Cls defaults (PP-OCRv4 = ch_ppocr_mobile_v2.0_cls_mobile):
+  // 48x192 input, batches of 6, rotate when "180" scores above 0.9, and
+  // classify the centre of long lines at the model aspect ratio (#748).
+  // PP-OCRv5 PP-LCNet textline_ori: 80x160 and cls_crop_long_lines = false.
+  float cls_thresh = 0.9F;
+  int cls_batch_size = 6;
+  int cls_height = 48;
+  int cls_width = 192;
+  bool cls_crop_long_lines = true;
 };
 
 // PP-OCRv6 detector + recognizer with a deliberately narrow built-in ONNX
@@ -211,6 +236,17 @@ class RPOCR_API OCR {
   // modes run on the CPU graph (also with Backend::metal); Backend::gpu_only
   // throws for them.
   [[nodiscard]] std::vector<Result> Run(const Image& image, bool use_det, bool use_rec) const;
+  // Same with an explicit per-call use_cls (the 3-argument form uses
+  // Options::use_cls). use_det=false, use_rec=false, use_cls=true classifies
+  // the whole image: one result with the image box, empty text and the
+  // cls_label / cls_score fields set. use_rec=false with use_det=true returns
+  // detector boxes and, with use_cls, each box's orientation.
+  [[nodiscard]] std::vector<Result> Run(const Image& image, bool use_det, bool use_rec,
+                                        bool use_cls) const;
+  // True when a classifier model is loaded and use_cls is in effect by
+  // default for this handle (after PPOCR_USE_CLS).
+  [[nodiscard]] bool ClsEnabled() const noexcept;
+  [[nodiscard]] bool ClsLoaded() const noexcept;
   // Runs a batch of independent page images. Results preserve input order;
   // each nested vector is identical to calling Recognize() for that image.
   // This is intentionally a page-level scheduler rather than padding unlike

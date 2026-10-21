@@ -1106,8 +1106,16 @@ struct OCR::Impl {
   // decisions merely because it happens to run successfully.
   bool enable_hybrid_gpu_graph{};
   // CPU recognizer for one page: rapidocr 3.10 crops, batching and resize.
+  // use_cls runs the text-line orientation classifier on the crops first
+  // (rapidocr main TextClassifier) and rotates "180" lines before recognition.
   std::vector<Result> RecognizeCrops(const Image& image, const std::vector<Box>& boxes,
-                                     bool use_det, bool profile_e2e);
+                                     bool use_det, bool profile_e2e, bool use_cls = false);
+  // Orientation classifier (CPU graph). Empty unless a cls model was given.
+  detail::OnnxLite cls;
+  bool cls_loaded{};
+  // Handle default for use_cls (Options::use_cls after PPOCR_USE_CLS).
+  bool cls_default{};
+  void LoadClassifier(const Options& o);
   // Indra lite pipeline (det_model is a lite folder); det / rec stay empty.
   std::shared_ptr<indra::LiteEngine> lite;
   Impl(std::shared_ptr<indra::LiteEngine> l, Options o) : opt(o), lite(std::move(l)) {}
@@ -1719,6 +1727,7 @@ OCR::OCR(const std::string& det_model,const std::string& rec_model,std::string d
       impl_->backend_note = std::move(note);
     }
     impl_->dict = ReadDict(dictionary_path);
+    impl_->LoadClassifier(options);
     return;
   }
   impl_=std::make_unique<Impl>(det_model,rec_model,options);
@@ -1728,6 +1737,7 @@ OCR::OCR(const std::string& det_model,const std::string& rec_model,std::string d
     Fail("GPU-only was requested, but the complete PP-OCRv6 Vulkan graph is unavailable");
   }
   impl_->dict=ReadDict(dictionary_path);
+  impl_->LoadClassifier(options);
 }
 Backend OCR::ActiveBackend() const noexcept {
   return impl_->metal ? Backend::metal : impl_->opt.backend;
@@ -1747,6 +1757,131 @@ void OCR::SetDetectionThresholds(float det_threshold, float det_box_threshold,
   impl_->opt.det_box_threshold = det_box_threshold;
   impl_->opt.det_unclip_ratio = det_unclip_ratio;
 }
+namespace {
+// Packed-RGB crop owned by one recognition call.
+struct CropImage { std::vector<std::uint8_t> rgb; int w{}, h{}; };
+struct ClsOutcome { int label{-1}; float score{}; };
+
+// cv2.rotate(img, cv2.ROTATE_180) on packed RGB.
+void Rotate180(CropImage& crop) {
+  const std::size_t pixels = std::size_t(crop.w) * std::size_t(crop.h);
+  std::uint8_t* p = crop.rgb.data();
+  for (std::size_t a = 0, b = pixels; a + 1 < b; ++a) {
+    --b;
+    for (int c = 0; c < 3; ++c) std::swap(p[a * 3 + c], p[b * 3 + c]);
+  }
+}
+
+bool EnvFlag(const char* name, bool fallback) {
+  const char* v = std::getenv(name);
+  if (!v || !*v) return fallback;
+  const std::string_view s{v};
+  if (s == "0" || s == "false" || s == "False" || s == "FALSE" || s == "off" || s == "no") return false;
+  return true;
+}
+
+// rapidocr main ch_ppocr_cls.TextClassifier.__call__ (head 8ac45f4, #748):
+// lines sorted by w/h, batches of cls_batch_num, every line cv2.resize'd
+// (INTER_LINEAR) to (min(cls_w, ceil(cls_h * w/h)), cls_h), scaled to
+// [-1, 1] in float32 and right-padded with zeros to cls_w. With the v2.0
+// model (cls_crop_long_lines) a line wider than ceil(h * cls_w / cls_h) is
+// first cut to its horizontal centre at that width. Arg-max over the softmax
+// gives the label; label 1 ("180") above cls_thresh rotates the crop 180.
+// Each line's tensor is independent of its batch, so the batch order only
+// affects speed.
+void ClassifyCrops(const detail::OnnxLite& cls, const Options& opt, std::vector<CropImage>& crops,
+                   std::vector<ClsOutcome>& out) {
+  const std::size_t n = crops.size();
+  out.assign(n, ClsOutcome{});
+  if (n == 0) return;
+  const int ch = std::max(1, opt.cls_height), cw = std::max(1, opt.cls_width);
+  std::vector<std::size_t> order(n);
+  std::iota(order.begin(), order.end(), std::size_t{0});
+  std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+    return crops[a].w / static_cast<double>(crops[a].h) < crops[b].w / static_cast<double>(crops[b].h);
+  });
+  const auto lut = detail::cvc::RecNormalizeTable(0.5F, 0.5F);
+  const std::size_t max_batch = static_cast<std::size_t>(std::max(1, opt.cls_batch_size));
+  const std::size_t workers = static_cast<std::size_t>(std::max(1, opt.batch_preprocess_parallelism));
+  const std::size_t stride = std::size_t(3) * ch * cw;
+  const std::string& output_name = cls.outputs().empty() ? std::string{} : cls.outputs().front();
+  for (std::size_t first = 0; first < n; first += max_batch) {
+    const std::size_t count = std::min(max_batch, n - first);
+    Tensor input{{static_cast<std::int64_t>(count), 3, ch, cw},
+                 std::vector<float>(count * stride, 0.F)};
+    RunIndexed(count, std::min(count, workers), [&](std::size_t k) {
+      const CropImage& crop = crops[order[first + k]];
+      int w = crop.w;
+      const int h = crop.h;
+      const std::uint8_t* src = crop.rgb.data();
+      if (opt.cls_crop_long_lines) {
+        const int keep_w = static_cast<int>(std::ceil(h * cw / static_cast<double>(ch)));
+        if (w > keep_w) {
+          const int left = (w - keep_w) / 2;
+          src += std::size_t(left) * 3;
+          w = keep_w;
+        }
+      }
+      const int resized_w = detail::cvc::RecResizedWidth(w, h, ch, cw);
+      thread_local std::vector<std::uint8_t> resized;
+      resized.resize(std::size_t(resized_w) * ch * 3);
+      detail::cvc::ResizeLinear8u(src, w, h, std::size_t(crop.w) * 3, 3, resized.data(),
+                                  resized_w, ch, std::size_t(resized_w) * 3);
+      float* const blue = input.data.data() + k * stride;
+      float* const green = blue + std::size_t(ch) * cw;
+      float* const red = green + std::size_t(ch) * cw;
+      for (int y = 0; y < ch; ++y) {
+        const std::uint8_t* rgb = resized.data() + std::size_t(y) * resized_w * 3;
+        const std::size_t row = std::size_t(y) * cw;
+        for (int x = 0; x < resized_w; ++x, rgb += 3) {
+          blue[row + x] = lut[rgb[2]];
+          green[row + x] = lut[rgb[1]];
+          red[row + x] = lut[rgb[0]];
+        }
+      }
+    });
+    std::unordered_map<std::string, Tensor> feed;
+    feed.emplace("x", std::move(input));
+    auto result = cls.Run(std::move(feed));
+    const Tensor* prob = nullptr;
+    if (const auto it = result.find(output_name); it != result.end()) prob = &it->second;
+    if (!prob) {
+      for (const auto& [_, t] : result) {
+        if (t.shape.size() == 2 && t.shape[0] == static_cast<std::int64_t>(count)) { prob = &t; break; }
+      }
+    }
+    if (!prob || prob->shape.size() != 2 || prob->shape[0] != static_cast<std::int64_t>(count) ||
+        prob->shape[1] < 1) {
+      Fail("classifier output [N, classes] not found");
+    }
+    const std::size_t classes = static_cast<std::size_t>(prob->shape[1]);
+    for (std::size_t k = 0; k < count; ++k) {
+      const float* row = prob->data.data() + k * classes;
+      std::size_t best = 0;
+      for (std::size_t c = 1; c < classes; ++c) if (row[c] > row[best]) best = c;  // np.argmax: first max
+      const std::size_t index = order[first + k];
+      out[index] = {static_cast<int>(best), row[best]};
+      if (best == 1 && row[best] > opt.cls_thresh) Rotate180(crops[index]);
+    }
+  }
+}
+}  // namespace
+
+void OCR::Impl::LoadClassifier(const Options& o) {
+  cls_default = EnvFlag("PPOCR_USE_CLS", o.use_cls);
+  std::string path = o.cls_model;
+  if (path.empty()) {
+    if (const char* env = std::getenv("PPOCR_CLS_MODEL")) path = env;
+  }
+  if (path.empty()) return;
+  // CPU graph regardless of backend: the classifier is small and the CPU
+  // kernels give the same result on every ISA.
+  cls = detail::OnnxLite(path, Backend::cpu_only);
+  cls_loaded = true;
+}
+bool OCR::ClsEnabled() const noexcept { return impl_ && impl_->cls_loaded && impl_->cls_default; }
+bool OCR::ClsLoaded() const noexcept { return impl_ && impl_->cls_loaded; }
+
 // rapidocr 3.10 recognition front end (TextRecognizer.__call__ after
 // get_rotate_crop_image): crops sorted by w/h, consecutive groups of
 // rec_batch_num, each padded to int(48 * max(320/48, max w/h)), every crop
@@ -1754,10 +1889,18 @@ void OCR::SetDetectionThresholds(float det_threshold, float det_box_threshold,
 // cv_compat reproduces OpenCV's crop and resize bit for bit, so the input
 // tensors equal 3.10's. use_det=false recognizes the whole image unrotated.
 std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vector<Box>& boxes,
-                                              bool use_det, bool profile_e2e) {
-  struct Crop { std::vector<std::uint8_t> rgb; int w{}, h{}; };
+                                              bool use_det, bool profile_e2e, bool use_cls) {
   const std::size_t n = boxes.size();
-  std::vector<Crop> crops(use_det ? n : 0);
+  const bool classify = use_cls && cls_loaded && n > 0;
+  // The classifier may rotate a line, so it needs its own copy of the
+  // whole image when use_det=false.
+  const bool own_crops = use_det || classify;
+  std::vector<CropImage> crops(own_crops ? n : 0);
+  if (!use_det && classify) {
+    crops[0].rgb = image.rgb;
+    crops[0].w = image.width;
+    crops[0].h = image.height;
+  }
   const auto crop_t0 = profile_e2e ? std::chrono::steady_clock::now()
                                    : std::chrono::steady_clock::time_point{};
   if (use_det) {
@@ -1772,11 +1915,22 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
                                    crops[i].rgb, crops[i].w, crops[i].h);
     });
   }
+  std::vector<ClsOutcome> orientation;
+  if (classify) {
+    const auto cls_t0 = profile_e2e ? std::chrono::steady_clock::now()
+                                    : std::chrono::steady_clock::time_point{};
+    ClassifyCrops(cls, opt, crops, orientation);
+    if (profile_e2e) {
+      std::cerr << "e2e_ms cls=" << std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - cls_t0).count()
+                << " lines=" << n << '\n';
+    }
+  }
   const auto crop_rgb = [&](std::size_t i) {
-    return use_det ? crops[i].rgb.data() : image.rgb.data();
+    return own_crops ? crops[i].rgb.data() : image.rgb.data();
   };
-  const auto crop_w = [&](std::size_t i) { return use_det ? crops[i].w : image.width; };
-  const auto crop_h = [&](std::size_t i) { return use_det ? crops[i].h : image.height; };
+  const auto crop_w = [&](std::size_t i) { return own_crops ? crops[i].w : image.width; };
+  const auto crop_h = [&](std::size_t i) { return own_crops ? crops[i].h : image.height; };
   std::vector<std::size_t> order(n);
   std::iota(order.begin(), order.end(), std::size_t{0});
   std::stable_sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
@@ -1977,10 +2131,17 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
               << " rec=" << std::chrono::duration<double, std::milli>(now - rec_begin).count()
               << " boxes=" << n << " rec_batches=" << batches.size() << '\n';
   }
+  for (std::size_t i = 0; i < orientation.size(); ++i) {
+    out[i].cls_label = orientation[i].label;
+    out[i].cls_score = orientation[i].score;
+  }
   return out;
 }
 
 std::vector<Result> OCR::Recognize(const Image& image) const { return Run(image, true, true); }
+std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) const {
+  return Run(image, use_det, use_rec, impl_->cls_default);
+}
 
 namespace {
 std::vector<Result> LiteResults(const std::vector<indra::LiteLine>& lines) {
@@ -2000,14 +2161,44 @@ std::vector<Result> LiteResults(const std::vector<indra::LiteLine>& lines) {
 }
 }  // namespace
 
-std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) const {
-  if (!use_det && !use_rec) Fail("use_det and use_rec cannot both be false");
+std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec,
+                             bool use_cls) const {
+  if (!use_det && !use_rec && !(use_cls && !impl_->lite))
+    Fail("use_det and use_rec cannot both be false");
   if (impl_->lite) {
     if (image.empty()) Fail("empty image");
     return LiteResults(impl_->lite->Run(image.rgb.data(), image.width, image.height,
                                         (use_det ? 1 : 0) | (use_rec ? 2 : 0)));
   }
+  if (!use_det && !use_rec) {
+    // Classification only (rapidocr main use_det=False, use_rec=False,
+    // use_cls=True): the whole image is one line.
+    if (!impl_->cls_loaded) Fail("use_cls=true needs a classifier model (cls_model)");
+    if (image.empty()) Fail("invalid RGB image");
+    std::lock_guard lock(impl_->recognize_mutex);
+    detail::kernels::FloatModeGuard float_mode;
+    std::vector<CropImage> crops(1);
+    crops[0] = {image.rgb, image.width, image.height};
+    std::vector<ClsOutcome> orientation;
+    ClassifyCrops(impl_->cls, impl_->opt, crops, orientation);
+    Box whole;
+    const float w = float(image.width), h = float(image.height);
+    whole.p = {Point{0.F, 0.F}, Point{w, 0.F}, Point{w, h}, Point{0.F, h}};
+    auto r = MakeResult(whole, std::string{}, 0.F);
+    r.cls_label = orientation[0].label;
+    r.cls_score = orientation[0].score;
+    return {std::move(r)};
+  }
+  const bool classify = use_cls && impl_->cls_loaded;
   const bool full = use_det && use_rec;
+  const bool gpu_graph = impl_->opt.backend == Backend::gpu_only;
+  if (classify && gpu_graph) {
+    static std::once_flag logged_cls;
+    std::call_once(logged_cls, [] {
+      std::fprintf(stderr, "ppocr: the GPU-only / Metal graph does not run the text-line "
+                           "orientation classifier; use the cpu or hybrid backend for use_cls\n");
+    });
+  }
   // Metal runs the full det+rec pipeline on the GPU. Detection-only and
   // recognition-only requests use the CPU graph of the same models (same
   // text as Backend::cpu_only); strict Vulkan gpu_only still refuses them.
@@ -2044,7 +2235,7 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) con
   // route after a failed optional GPU segment.  Strict gpu_only above is not:
   // it returns before this block and every Vulkan failure propagates to the
   // caller without a CPU inference retry.
-  if (full && impl_->enable_hybrid_gpu_graph) {
+  if (full && impl_->enable_hybrid_gpu_graph && !classify) {
     int graph_state = 0;
     {
       std::lock_guard lock(impl_->hybrid_gpu_graph_mutex);
@@ -2166,10 +2357,30 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec) con
     std::vector<Result> detected;
     detected.reserve(boxes.size());
     for (const auto& box : boxes) detected.push_back(MakeResult(box, std::string{}, box.score));
+    if (classify && !boxes.empty()) {
+      std::vector<CropImage> crops(boxes.size());
+      RunIndexed(boxes.size(),
+                 static_cast<std::size_t>(std::max(1, impl_->opt.batch_preprocess_parallelism)),
+                 [&](std::size_t i) {
+        float pts[8];
+        for (int k = 0; k < 4; ++k) {
+          pts[2 * k] = boxes[i].p[static_cast<std::size_t>(k)].x;
+          pts[2 * k + 1] = boxes[i].p[static_cast<std::size_t>(k)].y;
+        }
+        detail::cvc::RotateCropImage(image.rgb.data(), image.width, image.height, pts,
+                                     crops[i].rgb, crops[i].w, crops[i].h);
+      });
+      std::vector<ClsOutcome> orientation;
+      ClassifyCrops(impl_->cls, impl_->opt, crops, orientation);
+      for (std::size_t i = 0; i < detected.size(); ++i) {
+        detected[i].cls_label = orientation[i].label;
+        detected[i].cls_score = orientation[i].score;
+      }
+    }
     ReclaimHostHeap();
     return detected;
   }
-  auto out = impl_->RecognizeCrops(image, boxes, use_det, profile_e2e);
+  auto out = impl_->RecognizeCrops(image, boxes, use_det, profile_e2e, classify);
   ReclaimHostHeap();
   return out;
 }
@@ -2401,7 +2612,8 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
   // Recognition follows Recognize() page by page (rapidocr 3.10 batching is
   // per page), so every nested result equals the standalone call.
   for (std::size_t page = 0; page < images.size(); ++page) {
-    output[page] = impl_->RecognizeCrops(images[page], page_boxes[page], true, false);
+    output[page] = impl_->RecognizeCrops(images[page], page_boxes[page], true, false,
+                                         impl_->cls_default);
   }
   ReclaimHostHeap();
   return output;

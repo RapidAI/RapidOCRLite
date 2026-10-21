@@ -81,6 +81,25 @@ typedef struct rpocr_options {
      rec_model must be ONNX files. Appended field: callers built against an
      older header pass a smaller struct_size and get AUTO. */
   int model_type;
+  /* Appended (5.0.0a14): text-line orientation classification (0/180), the
+     rapidocr main Global.use_cls step between detection and recognition.
+     rpocr_options_init sets use_cls = 1 and the rapidocr main PP-OCRv4 Cls
+     defaults below; the classifier runs only when cls_model names an ONNX
+     file (ch_ppocr_mobile_v2.0_cls_mobile.onnx, or a PP-OCRv5 PP-LCNet
+     textline_ori model with cls_height 80, cls_width 160,
+     cls_crop_long_lines 0). Callers built against an older header pass a
+     smaller struct_size and get use_cls = 0 (previous behavior). The
+     PPOCR_USE_CLS environment variable (0/1) overrides use_cls and
+     PPOCR_CLS_MODEL supplies cls_model when it is NULL. Only the CPU and
+     hybrid backends classify; the GPU-only / Metal graphs and the lite model
+     leave lines unclassified. */
+  int use_cls;
+  float cls_thresh;        /* rotate when label "180" scores above it (0.9) */
+  int cls_batch_size;      /* 6 */
+  int cls_height;          /* 48 */
+  int cls_width;           /* 192 */
+  int cls_crop_long_lines; /* 1: classify the centre of long lines (v2.0 model) */
+  const char* cls_model;   /* copied by rpocr_create; may be NULL */
 } rpocr_options;
 
 #define RPOCR_MODEL_AUTO 0
@@ -167,12 +186,30 @@ RPOCR_API int rpocr_recognize(rpocr_ocr* ocr, const rpocr_image* image,
 /* Task flags for rpocr_run, matching rapidocr 3.x use_det / use_rec. */
 #define RPOCR_TASK_DET 1
 #define RPOCR_TASK_REC 2
+/* rapidocr main use_cls. rpocr_run / rpocr_recognize follow the handle's
+   use_cls (rpocr_options) and treat this bit as "also classify";
+   rpocr_run_ex takes the bit literally (absent = no classification). */
+#define RPOCR_TASK_CLS 4
 /* tasks = DET|REC is rpocr_recognize. DET only: boxes with empty text and the
    DB box score as confidence. REC only: the whole image is one text line and
    the single result's box is the image rectangle. The partial modes run on
    the CPU graph; with RPOCR_BACKEND_GPU they return RPOCR_ERR_UNSUPPORTED. */
 RPOCR_API int rpocr_run(rpocr_ocr* ocr, const rpocr_image* image, int tasks,
                         rpocr_result* result);
+/* tasks: any non-empty combination of RPOCR_TASK_DET / _REC / _CLS, where
+   RPOCR_TASK_CLS alone classifies the whole image (one result, image box,
+   empty text). Unlike rpocr_run, use_cls is exactly (tasks & RPOCR_TASK_CLS).
+   Read each line's orientation with rpocr_result_cls. */
+RPOCR_API int rpocr_run_ex(rpocr_ocr* ocr, const rpocr_image* image, int tasks,
+                           rpocr_result* result);
+/* Orientation of result item `index`: label -1 when the classifier did not
+   run for it, else the class index (0 = "0", 1 = "180") and its probability.
+   The line was rotated before recognition when label == 1 and
+   score > cls_thresh. Works on every result this library returns. */
+RPOCR_API int rpocr_result_cls(const rpocr_result* result, size_t index, int* label,
+                               float* score);
+/* 1 when this handle has a classifier model loaded, 0 otherwise. */
+RPOCR_API int rpocr_cls_loaded(const rpocr_ocr* ocr);
 /* outs must point at count result objects. Input order is preserved. */
 RPOCR_API int rpocr_recognize_batch(rpocr_ocr* ocr, const rpocr_image* images,
                                     size_t count, rpocr_result* outs);

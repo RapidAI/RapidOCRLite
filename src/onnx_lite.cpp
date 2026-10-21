@@ -267,6 +267,8 @@ struct Attribute {
   std::string s;
   std::vector<std::int64_t> ints;
   std::vector<float> floats;
+  // TENSOR attribute (Constant's `value`); lowered to an initializer at load.
+  std::shared_ptr<Tensor> t;
 };
 struct Node {
   std::string op, name;
@@ -274,6 +276,7 @@ struct Node {
   std::unordered_map<std::string, Attribute> attr;
 };
 
+Tensor ParseTensor(const std::vector<std::uint8_t>& b, std::string& name);
 Attribute ParseAttribute(const std::vector<std::uint8_t>& b, std::string& name) {
   Reader r{b}; Attribute a;
   while (!r.eof()) {
@@ -282,6 +285,7 @@ Attribute ParseAttribute(const std::vector<std::uint8_t>& b, std::string& name) 
     else if (field == 2) { if (wire != 5) Fail("bad float attribute"); const auto x = r.Fixed32(); std::memcpy(&a.f, &x, 4); }
     else if (field == 3) a.i = static_cast<std::int64_t>(r.Varint());
     else if (field == 4) { auto x = r.Bytes(); a.s.assign(x.begin(), x.end()); }
+    else if (field == 5) { auto x = r.Bytes(); std::string unused; a.t = std::make_shared<Tensor>(ParseTensor(x, unused)); }
     else if (field == 7) {
       if (wire == 2) { auto x = r.Bytes(); auto v = PackedFloats(x); a.floats.insert(a.floats.end(), v.begin(), v.end()); }
       else if (wire == 5) { const auto x = r.Fixed32(); float v{}; std::memcpy(&v, &x, 4); a.floats.push_back(v); }
@@ -298,6 +302,7 @@ Attribute ParseAttribute(const std::vector<std::uint8_t>& b, std::string& name) 
 
 Tensor ParseTensor(const std::vector<std::uint8_t>& b, std::string& name) {
   Reader r{b}; std::vector<std::int64_t> shape; int type{}; std::vector<std::uint8_t> raw; std::vector<float> floats;
+  std::vector<std::int64_t> ints;  // int32_data / int64_data (non-raw integer constants)
   while (!r.eof()) {
     const auto [field, wire] = r.Tag();
     if (field == 1) {
@@ -311,6 +316,11 @@ Tensor ParseTensor(const std::vector<std::uint8_t>& b, std::string& name) {
       else if (wire == 5) { const auto x = r.Fixed32(); float v{}; std::memcpy(&v, &x, 4); floats.push_back(v); }
       else Fail("bad tensor float data");
     }
+    else if (field == 5 || field == 7) {
+      if (wire == 2) { auto x = r.Bytes(); auto v = PackedInts(x); ints.insert(ints.end(), v.begin(), v.end()); }
+      else if (wire == 0) ints.push_back(static_cast<std::int64_t>(r.Varint()));
+      else Fail("bad tensor integer data");
+    }
     else if (field == 8) { auto x = r.Bytes(); name.assign(x.begin(), x.end()); }
     else if (field == 9) raw = r.Bytes();
     else r.Skip(wire);
@@ -321,6 +331,14 @@ Tensor ParseTensor(const std::vector<std::uint8_t>& b, std::string& name) {
     else t.data = std::move(floats);
   } else if (type == 6 || type == 7) {  // INT32 / INT64 shape constants
     const std::size_t unit = type == 6 ? 4 : 8;
+    if (raw.empty() && !ints.empty()) {
+      for (const auto v : ints) {
+        // int32_data stores sign-extended varints; int64_data two's complement.
+        t.data.push_back(static_cast<float>(type == 6 ? static_cast<std::int32_t>(v) : v));
+      }
+      if (Elements(t.shape) != t.data.size()) Fail("initializer size mismatch");
+      return t;
+    }
     if (raw.size() % unit) Fail("bad raw integer data");
     t.data.resize(raw.size() / unit);
     for (std::size_t i = 0; i < t.data.size(); ++i) {
@@ -2594,6 +2612,42 @@ void FuseSEGateFromFusedOps(GraphData& graph) {
   graph.nodes = std::move(fused);
 }
 
+// Paddle2ONNX exports of the PP-OCR v2.0 angle classifier carry every weight
+// and shape literal as a Constant node instead of an initializer. Turn them
+// into initializers so the Conv/BatchNorm folding and the executor see the
+// same graph form as the PP-OCRv6 detector and recognizer. Opset<10 Slice
+// keeps starts/ends/axes as attributes; give it the opset-10 inputs.
+void LowerConstantNodes(GraphData& g) {
+  std::vector<Node> kept;
+  kept.reserve(g.nodes.size());
+  int literal = 0;
+  for (auto& node : g.nodes) {
+    if (node.op == "Constant" && node.out.size() == 1) {
+      const auto value = node.attr.find("value");
+      if (value == node.attr.end() || !value->second.t) Fail("Constant without a tensor value");
+      g.initializers.insert_or_assign(node.out[0], *value->second.t);
+      continue;
+    }
+    if (node.op == "Slice" && node.in.size() == 1 && node.attr.contains("starts") &&
+        node.attr.contains("ends")) {
+      const auto add = [&](const char* key) {
+        const auto& ints = node.attr.at(key).ints;
+        Tensor t{{std::int64_t(ints.size())}, {}};
+        for (const auto v : ints) t.data.push_back(static_cast<float>(v));
+        std::string name = "__ppocr_slice_" + std::string(key) + "_" + std::to_string(literal);
+        g.initializers.insert_or_assign(name, std::move(t));
+        node.in.push_back(std::move(name));
+      };
+      add("starts");
+      add("ends");
+      if (node.attr.contains("axes")) add("axes");
+      ++literal;
+    }
+    kept.push_back(std::move(node));
+  }
+  g.nodes = std::move(kept);
+}
+
 void ParseGraph(const std::uint8_t* data, std::size_t size, GraphData& g) {
   Reader r{data, size};
   while (!r.eof()) {
@@ -2613,6 +2667,7 @@ GraphData ParseModel(const std::string& file) {
   std::vector<std::uint8_t> b((std::istreambuf_iterator<char>(in)), {}); Reader r{b}; GraphData g;
   while (!r.eof()) { const auto [field, wire] = r.Tag(); if (field == 7) { const auto [data, size] = r.Span(); ParseGraph(data, size, g); } else if (field == 8) { auto x = r.Bytes(); Reader orr{x}; std::string domain; int version{}; while (!orr.eof()) { auto [f,w]=orr.Tag(); if(f==1){auto s=orr.Bytes();domain.assign(s.begin(),s.end());} else if(f==2)version=int(orr.Varint()); else orr.Skip(w); } if(domain.empty())g.opset=version; } else r.Skip(wire); }
   if (g.nodes.empty() || g.outputs.empty()) Fail("model has no executable graph");
+  LowerConstantNodes(g);
   std::unordered_set<std::string> init; for (const auto& [name, _] : g.initializers) init.insert(name);
   g.inputs.erase(std::remove_if(g.inputs.begin(), g.inputs.end(), [&](const auto& n) { return init.contains(n); }), g.inputs.end());
   EliminateInternalIdentity(g);
@@ -5456,6 +5511,18 @@ Tensor Execute(const Node& n, const std::vector<const Tensor*>& in, int opset,
   } if(n.op=="FusedConvGelu"){return Conv(n,in,false,false,false,.2F,.5F,nullptr,backend,immutable_parameters,false,false,true);} if(n.op=="FusedDepthwiseExpandGeluProjectAdd")return DepthwiseExpandGeluProjectAddOp(n,in); if(n.op=="FusedExpandGeluProjectAdd")return ExpandGeluProjectAddOp(n,in); if(n.op=="FusedMaxPoolConcatConv")return MaxPoolConcatConv(n,in,false,backend,immutable_parameters); if(n.op=="FusedMaxPoolConcatConvRelu")return MaxPoolConcatConv(n,in,true,backend,immutable_parameters); if(n.op=="FusedMaxPoolConcat")return MaxPoolConcat(n,in); if(n.op=="FusedConvMaxPoolConcat")return ConvMaxPoolConcat(n,in); if(n.op=="FusedConcatConv")return ConcatConv(n,in,false,backend,immutable_parameters); if(n.op=="FusedConcatConvRelu")return ConcatConv(n,in,true,backend,immutable_parameters); if(n.op=="FusedDepthwisePointwiseConv")return DepthwisePointwiseConv(n,in,backend,immutable_parameters); if(n.op=="FusedDepthwisePointwiseConvGelu")return DepthwisePointwiseConv(n,in,backend,immutable_parameters,DwPwActivation::gelu); if(n.op=="FusedDepthwisePointwiseConvHardSwish")return DepthwisePointwiseConv(n,in,backend,immutable_parameters,DwPwActivation::hard_swish); if(n.op=="FusedDepthwisePointwiseConvRelu")return DepthwisePointwiseConv(n,in,backend,immutable_parameters,DwPwActivation::relu); if(n.op=="FusedPointwiseDepthwiseConv")return PointwiseDepthwiseConvOp(n,in,false,backend,immutable_parameters); if(n.op=="FusedPointwiseDepthwiseConvRelu")return PointwiseDepthwiseConvOp(n,in,true,backend,immutable_parameters); if(n.op=="FusedPointwiseConvAdd")return PointwiseConvAdd(n,in,backend,immutable_parameters); if(n.op=="FusedPointwiseConvAddRelu")return PointwiseConvAddRelu(n,in,backend,immutable_parameters); if(n.op=="FusedPointwiseConvAddSwish")return PointwiseConvAddSwish(n,in,backend,immutable_parameters); if(n.op=="FusedConvTranspose2x2Add")return ConvTranspose2x2Add(n,in,backend,immutable_parameters); if(n.op=="FusedSEGateMul")return SqueezeExcitationGateMul(n,in); if(n.op=="FusedConvTransposeRelu"){static const bool fused_act=std::getenv("PPOCR_DISABLE_CONVTRANSPOSE_PLANE_ACT")==nullptr; if(fused_act) return ConvTranspose(n,in,backend,immutable_parameters,1); Tensor o=ConvTranspose(n,in,backend,immutable_parameters); kernels::Relu(o.data.data(),o.data.data(),o.data.size()); return o;} if(n.op=="FusedConvTransposeSigmoid"){static const bool fused_act=std::getenv("PPOCR_DISABLE_CONVTRANSPOSE_PLANE_ACT")==nullptr; if(fused_act) return ConvTranspose(n,in,backend,immutable_parameters,2); Tensor o=ConvTranspose(n,in,backend,immutable_parameters); kernels::Sigmoid(o.data.data(),o.data.data(),o.data.size()); return o;} if(n.op=="FusedConvSigmoid")return Conv(n,in,false,true,false,.2F,.5F,nullptr,backend,immutable_parameters); if(n.op=="FusedConvHardSigmoid")return Conv(n,in,false,false,true,Attr(n,"__ppocr_fused_alpha").f,Attr(n,"__ppocr_fused_beta").f,nullptr,backend,immutable_parameters); if(n.op=="FusedConvHardSwish")return PointwiseConvHardSwish(n,in,backend,immutable_parameters); if(n.op=="FusedConvSwish")return Conv(n,in,false,false,false,.2F,.5F,nullptr,backend,immutable_parameters,true); if(n.op=="Conv")return Conv(n,in,false,false,false,.2F,.5F,nullptr,backend,immutable_parameters); if(n.op=="ConvTranspose")return ConvTranspose(n,in,backend,immutable_parameters); if(n.op=="FusedMatMulBias")return MatMul(*in[0],*in[1],in[2],backend,immutable_parameters); if(n.op=="FusedMatMulBiasSwish")return MatMulBiasSwish(*in[0],*in[1],*in[2],backend,immutable_parameters); if(n.op=="MatMul")return MatMul(*in[0],*in[1],nullptr,backend,immutable_parameters); if(n.op=="FusedLayerNorm")return LayerNorm(n,in); if(n.op=="MaxPool")return Pool(n,*in[0],false); if(n.op=="AveragePool")return Pool(n,*in[0],true); if(n.op=="GlobalAveragePool")return GlobalAveragePool(*in[0]); if(n.op=="FusedBatchNormGelu")return BatchNormGelu(n,in); if(n.op=="FusedBatchNormSwish")return BatchNormSwish(n,in); if(n.op=="FusedBatchNormHardSwish"){Tensor o=*in[0]; const auto channels=std::size_t(o.shape[1]); const auto spatial=o.data.size()/(std::size_t(o.shape[0])*channels); kernels::BatchNormAffine(o.data.data(), in[0]->data.data(), in[1]->data.data(), in[2]->data.data(), int(o.shape[0]), int(channels), spatial); kernels::HardSwish(o.data.data(), o.data.data(), o.data.size()); return o;} if(n.op=="FusedBatchNormSwishAdd")return BatchNormSwishAdd(n,in); if(n.op=="BatchNormalization")return BatchNorm(n,in);
   if(n.op=="FusedGelu"){Tensor o=*in[0];const auto logical=o.shape.empty()?o.data.size():o.data.size()/std::size_t(o.shape[0]);kernels::Gelu(o.data.data(),in[0]->data.data(),o.data.size(),logical);return o;} if(n.op=="FusedHardSwish"){Tensor o=*in[0];kernels::HardSwish(o.data.data(),in[0]->data.data(),o.data.size());return o;} if(n.op=="FusedScaleShift"){Tensor o=*in[0];kernels::ScaleShift(o.data.data(),in[0]->data.data(),o.data.size(),Attr(n,"scale").f,Attr(n,"shift").f);return o;} if(n.op=="Relu"){Tensor o=*in[0];kernels::Relu(o.data.data(),in[0]->data.data(),o.data.size());return o;} if(n.op=="Sigmoid"){Tensor o=*in[0];kernels::Sigmoid(o.data.data(),in[0]->data.data(),o.data.size());return o;} if(n.op=="Erf")return Unary(*in[0],[](float x){return std::erf(x);}); if(n.op=="Sqrt")return Unary(*in[0],[](float x){return std::sqrt(x);}); if(n.op=="Pow"&&in[1]->data.size()==1&&in[1]->data[0]==2.F){Tensor o=*in[0];kernels::Square(o.data.data(),in[0]->data.data(),o.data.size());return o;} if(n.op=="Pow")return Binary(*in[0],*in[1],[](float a,float b){return std::pow(a,b);}); if(n.op=="HardSigmoid"){const auto alpha=n.attr.contains("alpha")?Attr(n,"alpha").f:.2F,beta=n.attr.contains("beta")?Attr(n,"beta").f:.5F;return Unary(*in[0],[=](float x){return std::clamp(alpha*x+beta,0.F,1.F);});}
   if(n.op=="Add")return Binary(*in[0],*in[1],kernels::BinaryOp::add);if(n.op=="Sub")return Binary(*in[0],*in[1],kernels::BinaryOp::sub);if(n.op=="Mul")return Binary(*in[0],*in[1],kernels::BinaryOp::mul);if(n.op=="Div")return Binary(*in[0],*in[1],kernels::BinaryOp::div);
+  if(n.op=="Clip"){
+    // opset>=11: optional min/max inputs; opset<11: min/max attributes.
+    float lo=-std::numeric_limits<float>::infinity(),hi=std::numeric_limits<float>::infinity();
+    if(in.size()>1&&in[1]&&!in[1]->data.empty())lo=in[1]->data[0]; else if(n.attr.contains("min"))lo=Attr(n,"min").f;
+    if(in.size()>2&&in[2]&&!in[2]->data.empty())hi=in[2]->data[0]; else if(n.attr.contains("max"))hi=Attr(n,"max").f;
+    Tensor o=*in[0];for(auto&x:o.data)x=x<lo?lo:(x>hi?hi:x);return o;}
+  if(n.op=="Cast"){
+    // Tensors hold float; integer targets truncate toward zero like a C cast.
+    const auto to=AttrInt(n,"to",1);Tensor o=*in[0];
+    if(to==2||to==3||to==4||to==5||to==6||to==7||to==12||to==13)for(auto&x:o.data)x=std::trunc(x);
+    else if(to==9)for(auto&x:o.data)x=x!=0.F?1.F:0.F;
+    return o;}
   if(n.op=="Transpose")return Transpose(n,*in[0]); if(n.op=="Reshape")return Reshape(*in[0],*in[1]); if(n.op=="Concat")return Concat(n,in); if(n.op=="Softmax")return Softmax(n,*in[0],opset); if(n.op=="ReduceMean")return ReduceMean(n,in); if(n.op=="Shape")return Shape(*in[0]); if(n.op=="Slice")return Slice(*in[0],in); if(n.op=="FusedQkvSlice")return QkvSlice(n,*in[0]); if(n.op=="Squeeze")return Squeeze(n,in,false); if(n.op=="Unsqueeze")return Squeeze(n,in,true); if(n.op=="Resize")return Resize(n,in); if(n.op=="FusedNearestResizeAdd")return NearestResizeAdd(n,in,backend); if(n.op=="FusedConcatConvDualTranspose")return ConcatConvDualTranspose(n,in,backend,immutable_parameters); if(n.op=="FusedConvTransposeChain")return ConvTransposeChainOp(n,in,backend,immutable_parameters); if(n.op=="FusedDepthwiseHardSwish")return Conv(n,in,false,false,false,.2F,.5F,nullptr,backend,immutable_parameters,false,true);
   Fail("unsupported PP-OCRv6 operator " + n.op);
 }

@@ -78,7 +78,43 @@ rpocr::Options ToOptions(const rpocr_options* options) {
     case RPOCR_MODEL_LITE: out.model_type = rpocr::ModelType::lite; break;
     default: out.model_type = rpocr::ModelType::auto_detect; break;
   }
+  // Orientation classifier fields: each counts only when struct_size covers
+  // it. An older caller does not know use_cls and keeps it off.
+  const int given = options->struct_size > 0 ? options->struct_size : static_cast<int>(sizeof(rpocr_options));
+  const auto covers = [&](std::size_t offset, std::size_t size) {
+    return given >= static_cast<int>(offset + size);
+  };
+  out.use_cls = covers(offsetof(rpocr_options, use_cls), sizeof(int)) && local.use_cls != 0;
+  if (covers(offsetof(rpocr_options, cls_thresh), sizeof(float))) out.cls_thresh = local.cls_thresh;
+  if (covers(offsetof(rpocr_options, cls_batch_size), sizeof(int)) && local.cls_batch_size > 0)
+    out.cls_batch_size = local.cls_batch_size;
+  if (covers(offsetof(rpocr_options, cls_height), sizeof(int)) && local.cls_height > 0)
+    out.cls_height = local.cls_height;
+  if (covers(offsetof(rpocr_options, cls_width), sizeof(int)) && local.cls_width > 0)
+    out.cls_width = local.cls_width;
+  if (covers(offsetof(rpocr_options, cls_crop_long_lines), sizeof(int)))
+    out.cls_crop_long_lines = local.cls_crop_long_lines != 0;
+  if (covers(offsetof(rpocr_options, cls_model), sizeof(const char*)) && local.cls_model)
+    out.cls_model = local.cls_model;
   return out;
+}
+
+// Per-line orientation stored right after the rpocr_text_box array in the
+// same allocation, so rpocr_text_box keeps its layout and rpocr_result_free
+// stays a single free().
+struct ClsTrailer { int label; float score; };
+
+rpocr_text_box* AllocItems(std::size_t count) {
+  const std::size_t bytes = count * sizeof(rpocr_text_box) + count * sizeof(ClsTrailer);
+  auto* items = static_cast<rpocr_text_box*>(std::calloc(1, bytes));
+  if (!items) return nullptr;
+  auto* trailer = reinterpret_cast<ClsTrailer*>(items + count);
+  for (std::size_t i = 0; i < count; ++i) trailer[i] = {-1, 0.F};
+  return items;
+}
+
+ClsTrailer* Trailer(const rpocr_result* result) {
+  return reinterpret_cast<ClsTrailer*>(result->items + result->count);
 }
 
 char* Dup(const std::string& text) {
@@ -92,9 +128,11 @@ int FillResult(const std::vector<rpocr::Result>& source, rpocr_result* result) {
   result->items = nullptr;
   result->count = 0;
   if (source.empty()) return RPOCR_OK;
-  auto* items = static_cast<rpocr_text_box*>(std::calloc(source.size(), sizeof(rpocr_text_box)));
+  auto* items = AllocItems(source.size());
   if (!items) return Fail(RPOCR_ERR_NOMEM, "out of memory");
+  auto* trailer = reinterpret_cast<ClsTrailer*>(items + source.size());
   for (std::size_t i = 0; i < source.size(); ++i) {
+    trailer[i] = {source[i].cls_label, source[i].cls_score};
     items[i].text = Dup(source[i].text);
     if (!items[i].text) {
       for (std::size_t j = 0; j < i; ++j) std::free(items[j].text);
@@ -135,7 +173,7 @@ int FillLite(const std::vector<rpocr::indra::LiteLine>& src, rpocr_result* resul
   result->items = nullptr;
   result->count = 0;
   if (src.empty()) return RPOCR_OK;
-  auto* items = static_cast<rpocr_text_box*>(std::calloc(src.size(), sizeof(rpocr_text_box)));
+  auto* items = AllocItems(src.size());
   if (!items) return Fail(RPOCR_ERR_NOMEM, "out of memory");
   for (std::size_t i = 0; i < src.size(); ++i) {
     const auto& l = src[i];
@@ -209,6 +247,13 @@ void rpocr_options_init_ex(rpocr_options* options, size_t size) {
   options->vulkan_device_index = defaults.vulkan_device_index;
   options->rec_fast_mode = defaults.rec_fast_mode ? 1 : 0;
   options->model_type = RPOCR_MODEL_AUTO;
+  options->use_cls = defaults.use_cls ? 1 : 0;
+  options->cls_thresh = defaults.cls_thresh;
+  options->cls_batch_size = defaults.cls_batch_size;
+  options->cls_height = defaults.cls_height;
+  options->cls_width = defaults.cls_width;
+  options->cls_crop_long_lines = defaults.cls_crop_long_lines ? 1 : 0;
+  options->cls_model = nullptr;
   const size_t n = size < sizeof(full) ? size : sizeof(full);
   std::memcpy(out, &full, n);
   out->struct_size = static_cast<int>(n);
@@ -309,9 +354,10 @@ int rpocr_run(rpocr_ocr* ocr, const rpocr_image* image, int tasks, rpocr_result*
   result->count = 0;
   if (!ocr || !image) return Fail(RPOCR_ERR_INVALID_ARGUMENT, "null OCR handle or image");
   const bool det = (tasks & RPOCR_TASK_DET) != 0, rec = (tasks & RPOCR_TASK_REC) != 0;
-  if ((!det && !rec) || (tasks & ~(RPOCR_TASK_DET | RPOCR_TASK_REC)) != 0) {
+  if ((!det && !rec) || (tasks & ~(RPOCR_TASK_DET | RPOCR_TASK_REC | RPOCR_TASK_CLS)) != 0) {
     return Fail(RPOCR_ERR_INVALID_ARGUMENT, "tasks must be RPOCR_TASK_DET, RPOCR_TASK_REC or both");
   }
+  if ((tasks & RPOCR_TASK_CLS) != 0 && !ocr->lite) return rpocr_run_ex(ocr, image, tasks, result);
   try {
     if (ocr->lite) {
       if (!image->rgb || image->width <= 0 || image->height <= 0) return Fail(RPOCR_ERR_INVALID_ARGUMENT, "empty image");
@@ -325,6 +371,50 @@ int rpocr_run(rpocr_ocr* ocr, const rpocr_image* image, int tasks, rpocr_result*
   } catch (const std::exception& ex) {
     return Fail(RPOCR_ERR_RUNTIME, ex.what());
   }
+}
+
+int rpocr_run_ex(rpocr_ocr* ocr, const rpocr_image* image, int tasks, rpocr_result* result) {
+  ClearError();
+  if (!result) return Fail(RPOCR_ERR_INVALID_ARGUMENT, "null result");
+  result->items = nullptr;
+  result->count = 0;
+  if (!ocr || !image) return Fail(RPOCR_ERR_INVALID_ARGUMENT, "null OCR handle or image");
+  const bool det = (tasks & RPOCR_TASK_DET) != 0, rec = (tasks & RPOCR_TASK_REC) != 0,
+             cls = (tasks & RPOCR_TASK_CLS) != 0;
+  if ((!det && !rec && !cls) ||
+      (tasks & ~(RPOCR_TASK_DET | RPOCR_TASK_REC | RPOCR_TASK_CLS)) != 0) {
+    return Fail(RPOCR_ERR_INVALID_ARGUMENT,
+                "tasks must combine RPOCR_TASK_DET, RPOCR_TASK_REC and RPOCR_TASK_CLS");
+  }
+  try {
+    if (ocr->lite) {
+      if (!det && !rec) return Fail(RPOCR_ERR_UNSUPPORTED, "the lite model has no orientation classifier");
+      if (!image->rgb || image->width <= 0 || image->height <= 0) return Fail(RPOCR_ERR_INVALID_ARGUMENT, "empty image");
+      return FillLite(ocr->lite->Run(image->rgb, image->width, image->height, (det ? 1 : 0) | (rec ? 2 : 0)), result);
+    }
+    if (!det && !rec && !ocr->engine().ClsLoaded())
+      return Fail(RPOCR_ERR_INVALID_ARGUMENT, "RPOCR_TASK_CLS needs a classifier model (cls_model)");
+    return FillResult(ocr->engine().Run(Borrow(*image), det, rec, cls), result);
+  } catch (const rpocr::UnsupportedError& ex) {
+    return Fail(RPOCR_ERR_UNSUPPORTED, ex.what());
+  } catch (const std::bad_alloc&) {
+    return Fail(RPOCR_ERR_NOMEM, "out of memory");
+  } catch (const std::exception& ex) {
+    return Fail(RPOCR_ERR_RUNTIME, ex.what());
+  }
+}
+
+int rpocr_result_cls(const rpocr_result* result, size_t index, int* label, float* score) {
+  if (!result || !result->items || index >= result->count) return RPOCR_ERR_INVALID_ARGUMENT;
+  const ClsTrailer& t = Trailer(result)[index];
+  if (label) *label = t.label;
+  if (score) *score = t.score;
+  return RPOCR_OK;
+}
+
+int rpocr_cls_loaded(const rpocr_ocr* ocr) {
+  if (!ocr || ocr->lite) return 0;
+  return ocr->engine().ClsLoaded() ? 1 : 0;
 }
 
 int rpocr_recognize_batch(rpocr_ocr* ocr, const rpocr_image* images, size_t count,
