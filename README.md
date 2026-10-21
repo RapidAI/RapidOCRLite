@@ -28,6 +28,16 @@ Join our [Discord](https://discord.gg/33eyQJq498)
 [简体中文](./README-CN.md) | English
 </div>
 
+<div align="center">
+
+[![Community video](https://img.shields.io/badge/%E2%96%B6%20Community%20video-Douyin-ff0050?style=for-the-badge)](https://www.douyin.com/video/7698023726318767386)
+
+**[🎬 Community-made promo video: RapidOCRLite — lightweight open-source OCR engine (Douyin)](https://www.douyin.com/video/7698023726318767386)**
+
+<sub>Made spontaneously by a community user — thank you for the support!</sub>
+
+</div>
+
 **RapidOCRLite** (PyPI `RapidOCRLite` 5.0.0a6) is the lightweight, fast edition of RapidOCR: a C++ PP-OCRv6 engine with a C ABI, a C++ API, and a Python package whose import name is still `rapidocr` and whose Python API is fully compatible with RapidOCR. The ONNX Runtime 3.x line (latest tag `v3.9.2`) stays in [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR). Hosted demos linked from the badges above run that 3.x line.
 
 ### 🧪 `model_type="lite"` (experimental, bundled Indra OCR weights)

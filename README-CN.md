@@ -28,6 +28,16 @@
 简体中文 | [English](./README.md)
 </div>
 
+<div align="center">
+
+[![社区宣传视频](https://img.shields.io/badge/%E2%96%B6%20%E7%A4%BE%E5%8C%BA%E5%AE%A3%E4%BC%A0%E8%A7%86%E9%A2%91-%E6%8A%96%E9%9F%B3-ff0050?style=for-the-badge)](https://www.douyin.com/video/7698023726318767386)
+
+**[🎬 社区用户制作的宣传视频：RapidOCRLite 轻量级开源OCR引擎（抖音）](https://www.douyin.com/video/7698023726318767386)**
+
+<sub>由社区用户自发制作，感谢社区的支持！</sub>
+
+</div>
+
 **RapidOCRLite**（PyPI 名 `RapidOCRLite`，5.0.0a6）是 RapidOCR 的轻量快速版：C++ 实现的 PP-OCRv6 引擎，带 C ABI、C++ API，以及导入名仍为 `rapidocr`、API 与 RapidOCR 完全兼容的 Python 包。基于 ONNX Runtime 的 3.x 线（最新标签 `v3.9.2`）留在 [RapidAI/RapidOCR](https://github.com/RapidAI/RapidOCR)。上方徽章里的在线演示跑的是 3.x。
 
 ### 🧪 `model_type="lite"`（实验性：内置 Indra OCR 权重）
