@@ -423,7 +423,7 @@ Turn it off:
 
 `use_det=False, use_rec=False, use_cls=True` returns `TextClsOutput` (`img_list`, `cls_res`) as on main. The classifier runs on the CPU and hybrid backends; the strict GPU-only/Metal graphs and `model_type="lite"` do not classify (logged once).
 
-Speed: on the 212-page SWHL det set (GitHub Actions x86 runner, PP-OCRv6 small, median per page) the full pipeline goes from 184.8 ms to 195.2 ms (+5.6%; rapidocr main: 224.7 → 232.1 ms); a single rec crop goes from 7.96 ms to 9.62 ms. Turn it off when your text is never upside down. Accuracy on the SWHL sets is identical to rapidocr main with cls on (det H-mean 0.8492; rec exact 0.8387, char 0.9516) and off (0.8492; 0.8419, 0.9515); cls labels match main on all 310 rec crops on AVX-512, AVX2 and scalar.
+Speed: on the first 100 SWHL det pages (GitHub Actions runners, PP-OCRv6 small, per-page median of 3 interleaved runs) the classifier adds 9.1 ms per page on x86 AVX-512 (403.7 → 412.8 ms, +2.2%; AVX2 +12.2 ms, +3.1%) and 19.2 ms on macOS arm64 NEON (511.7 → 530.9 ms, +3.8%; the macOS runner is noisy); one classifier call on a single crop takes 2.10 ms (x86) / 3.19 ms (arm64). Before the classifier graph fusions the same runs measured +19.2 ms (x86) and 2.65 ms per rec crop (now 1.59 ms). Turn it off when your text is never upside down. Accuracy on the SWHL sets is identical to rapidocr main with cls on (det H-mean 0.8492; rec exact 0.8387, char 0.9516) and off (0.8492; 0.8419, 0.9515); cls labels match main on all 310 rec crops on AVX-512, AVX2 and scalar.
 
 ### ⚙️ Configuration
 

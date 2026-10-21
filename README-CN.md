@@ -820,7 +820,7 @@ C 接口用 `RPOCR_BACKEND_METAL`，`rpocr_metal_available()` 报告是否支持
 
 `use_det=False, use_rec=False, use_cls=True` 与 main 一样返回 `TextClsOutput`（`img_list`、`cls_res`）。分类器在 CPU 和 hybrid 后端运行；严格 GPU-only/Metal 图和 `model_type="lite"` 不做分类（只记录一次日志）。
 
-速度：在 SWHL 检测集 212 页上（GitHub Actions x86 runner，PP-OCRv6 small，每页中位数），整条流程从 184.8 ms 增加到 195.2 ms（+5.6%；rapidocr main：224.7 → 232.1 ms）；单个识别切片从 7.96 ms 增加到 9.62 ms。文字从不倒置时可以关闭。开启时 SWHL 精度与 rapidocr main 完全相同（检测 H-mean 0.8492；识别 exact 0.8387、char 0.9516），关闭时为 0.8492；0.8419、0.9515；310 个识别切片上的方向标签在 AVX-512、AVX2、标量下都与 main 一致。
+速度：在 SWHL 检测集前 100 页上（GitHub Actions runner，PP-OCRv6 small，3 次交替运行的每页中位数），分类器在 x86 AVX-512 上每页增加 9.1 ms（403.7 → 412.8 ms，+2.2%；AVX2 +12.2 ms，+3.1%），在 macOS arm64 NEON 上增加 19.2 ms（511.7 → 530.9 ms，+3.8%；macOS runner 波动较大）；单个切片的一次分类调用为 2.10 ms（x86）/ 3.19 ms（arm64）。分类图融合之前同样的测试为每页 +19.2 ms（x86）、每个识别切片 +2.65 ms（现在 +1.59 ms）。文字从不倒置时可以关闭。开启时 SWHL 精度与 rapidocr main 完全相同（检测 H-mean 0.8492；识别 exact 0.8387、char 0.9516），关闭时为 0.8492；0.8419、0.9515；310 个识别切片上的方向标签在 AVX-512、AVX2、标量下都与 main 一致。
 
 ### ⚙️ 配置
 
