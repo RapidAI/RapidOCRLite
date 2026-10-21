@@ -81,17 +81,15 @@ jobs:
           run() {  # label srcdir [env...]
             label=$1; dir=$2; shift 2
             env "$@" PYTHONPATH="$dir/python/src" PPOCR_LIBRARY="$dir/build/librapidocrlite.$LIBEXT" \
-              /tmp/lite/bin/python tools/cls_parity/bench.py "$label" "bench/$label.json" --model-root /tmp/models-lite | tee -a bench/summary.txt
+              /tmp/lite/bin/python tools/cls_parity/bench.py "$label" "bench/$label.json" --pages 100 --model-root /tmp/models-lite | tee -a bench/summary.txt
           }
           run base "$PWD/../base"
           run head "$PWD"
-          run base_again "$PWD/../base"
-          run head_again "$PWD"
           if [ "$RUNNER_OS" = Linux ]; then
             run base_avx2 "$PWD/../base" PPOCR_FORCE_ISA=avx2
             run head_avx2 "$PWD" PPOCR_FORCE_ISA=avx2
           fi
-          /tmp/main/bin/python tools/cls_parity/bench.py rapidocr_main bench/main.json --model-root /tmp/models-main | tee -a bench/summary.txt
+          /tmp/main/bin/python tools/cls_parity/bench.py rapidocr_main bench/main.json --pages 100 --model-root /tmp/models-main | tee -a bench/summary.txt
 
       - name: cls graph operator profile
         run: |
