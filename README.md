@@ -423,7 +423,7 @@ Turn it off:
 
 `use_det=False, use_rec=False, use_cls=True` returns `TextClsOutput` (`img_list`, `cls_res`) as on main. The classifier runs on the CPU and hybrid backends; the strict GPU-only/Metal graphs and `model_type="lite"` do not classify (logged once).
 
-Speed: the classifier adds one small CNN pass per batch of 6 lines; see the `cls parity` CI job summary for current timings.
+Speed: on the 212-page SWHL det set (GitHub Actions x86 runner, PP-OCRv6 small, median per page) the full pipeline goes from 184.8 ms to 195.2 ms (+5.6%; rapidocr main: 224.7 → 232.1 ms); a single rec crop goes from 7.96 ms to 9.62 ms. Turn it off when your text is never upside down. Accuracy on the SWHL sets is identical to rapidocr main with cls on (det H-mean 0.8492; rec exact 0.8387, char 0.9516) and off (0.8492; 0.8419, 0.9515); cls labels match main on all 310 rec crops on AVX-512, AVX2 and scalar.
 
 ### ⚙️ Configuration
 

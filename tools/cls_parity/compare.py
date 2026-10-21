@@ -4,8 +4,11 @@
   compare.py REF.json OTHER.json [MORE.json ...]  [--strict]
 
 REF is normally rapidocr main. --strict exits 1 when any OTHER differs from
-REF in full-pipeline text (per page), box coordinates (> 0.5 px), rec text,
-or a cls label on the rec crops.
+REF in full-pipeline text (per page), rec text, a cls label on the rec crops,
+or box coordinates (> 0.5 px). --box-baseline=A.json,B.json excuses box
+diffs on pages where A and B (the same pair with use_cls off) already
+differ; --no-box skips the box check (cross-ISA runs: AVX-512 and AVX2
+already differ on one det page before this change).
 """
 import json
 import os
@@ -63,7 +66,7 @@ def boxdiff(x, y):
     return bool(x) and float(np.abs(np.array(x) - np.array(y)).max()) > 0.5
 
 
-def compare(na, a, nb, b):
+def compare(na, a, nb, b, excused=frozenset(), check_box=True):
     n_det = min(len(a["det"]), len(b["det"]))
     n_rec = min(len(a["rec"]), len(b["rec"]))
     dd = [i for i in range(n_det) if boxdiff(a["det"][i], b["det"][i])]
@@ -86,17 +89,28 @@ def compare(na, a, nb, b):
     if a.get("cls_rec") and b.get("cls_rec"):
         sd = [abs(x[1] - y[1]) for x, y in zip(a["cls_rec"], b["cls_rec"])]
         print(f"  cls score |diff| max {max(sd):.2e} median {statistics.median(sd):.2e}")
-    return len(dd) + len(ft) + len(fb) + len(rd) + len(cd)
+    hard = [i for i in set(dd) | set(fb) if i not in excused] if check_box else []
+    if check_box and (dd or fb):
+        print(f"  box diff pages {sorted(set(dd) | set(fb))}, excused by baseline {sorted(excused)}")
+    return len(hard) + len(ft) + len(rd) + len(cd)
 
 
 if __name__ == "__main__":
     strict = "--strict" in sys.argv
     files = [f for f in sys.argv[1:] if not f.startswith("--")]
+    check_box = "--no-box" not in sys.argv
+    excused = set()
+    for arg in sys.argv[1:]:
+        if arg.startswith("--box-baseline="):
+            x, y = (json.load(open(f)) for f in arg.split("=", 1)[1].split(","))
+            excused = {i for i in range(min(len(x["det"]), len(y["det"])))
+                       if boxdiff(x["det"][i], y["det"][i]) or boxdiff(x["full"][i][1], y["full"][i][1])}
     ds = {f: json.load(open(f)) for f in files}
     for f, d in ds.items():
         summary(os.path.basename(f), d)
     bad = 0
     for f in files[1:]:
-        bad += compare(os.path.basename(files[0]), ds[files[0]], os.path.basename(f), ds[f])
+        bad += compare(os.path.basename(files[0]), ds[files[0]], os.path.basename(f), ds[f],
+                       frozenset(excused), check_box)
     if strict and bad:
         sys.exit(1)

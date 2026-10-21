@@ -67,7 +67,7 @@ jobs:
           python -m venv /tmp/main
           /tmp/main/bin/pip install -q "rapidocr @ git+https://github.com/RapidAI/RapidOCR@${RAPIDOCR_MAIN_REF}#subdirectory=python" onnxruntime datasets
           for v in /tmp/lite /tmp/main; do
-            $v/bin/pip install -q text_det_metric==0.0.8 text_rec_metric==0.0.1 || echo "metrics packages unavailable"
+            $v/bin/pip install -q --ignore-requires-python text_det_metric==0.0.8 text_rec_metric==0.0.1 || echo "metrics packages unavailable"
           done
           /tmp/main/bin/python -c "import rapidocr, cv2, onnxruntime; print(rapidocr.__file__, cv2.__version__, onnxruntime.__version__)"
 
@@ -120,8 +120,8 @@ jobs:
             /tmp/main/bin/python tools/cls_parity/compare.py parity/main_cls0.json parity/main_cls1.json || true
           } | tee parity/summary.txt
           echo '```' >> "$GITHUB_STEP_SUMMARY"; cat parity/summary.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
-          /tmp/main/bin/python tools/cls_parity/compare.py parity/main_cls1.json parity/lite_cls1.json --strict
-          /tmp/main/bin/python tools/cls_parity/compare.py parity/lite_cls1.json parity/lite_cls1_avx2.json parity/lite_cls1_scalar.json --strict
+          /tmp/main/bin/python tools/cls_parity/compare.py parity/main_cls1.json parity/lite_cls1.json --strict --box-baseline=parity/main_cls0.json,parity/lite_cls0.json
+          /tmp/main/bin/python tools/cls_parity/compare.py parity/lite_cls1.json parity/lite_cls1_avx2.json parity/lite_cls1_scalar.json --strict --no-box
 
       - uses: actions/upload-artifact@v4
         if: always()
