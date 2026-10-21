@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
   memcpy(&options, raw, (size_t)size < sizeof(options) ? (size_t)size : sizeof(options));
   options.struct_size = (int)((size_t)size < sizeof(options) ? (size_t)size : sizeof(options));
   options.backend = RPOCR_BACKEND_CPU;
+  options.cls_model = NULL; /* a host pointer in the capture; never dereference it */
   free(raw);
   {
     rpocr_cpu_info cpu;
