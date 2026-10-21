@@ -19,6 +19,7 @@ RPOCR_BACKEND_METAL = 3
 
 RPOCR_TASK_DET = 1
 RPOCR_TASK_REC = 2
+RPOCR_TASK_CLS = 4
 
 
 class Options(ctypes.Structure):
@@ -48,6 +49,14 @@ class Options(ctypes.Structure):
         ("vulkan_device_index", ctypes.c_int),
         ("rec_fast_mode", ctypes.c_int),
         ("model_type", ctypes.c_int),  # RPOCR_MODEL_*
+        # Text-line orientation classifier (appended; see rapidocrlite.h).
+        ("use_cls", ctypes.c_int),
+        ("cls_thresh", ctypes.c_float),
+        ("cls_batch_size", ctypes.c_int),
+        ("cls_height", ctypes.c_int),
+        ("cls_width", ctypes.c_int),
+        ("cls_crop_long_lines", ctypes.c_int),
+        ("cls_model", ctypes.c_char_p),
     ]
 
 
@@ -172,6 +181,19 @@ def _bind(lib: ctypes.CDLL) -> None:
     if run is not None:
         run.argtypes = [ctypes.c_void_p, ctypes.POINTER(Image), ctypes.c_int, ctypes.POINTER(Result)]
         run.restype = ctypes.c_int
+    run_ex = getattr(lib, "rpocr_run_ex", None)
+    if run_ex is not None:
+        run_ex.argtypes = [ctypes.c_void_p, ctypes.POINTER(Image), ctypes.c_int, ctypes.POINTER(Result)]
+        run_ex.restype = ctypes.c_int
+    result_cls = getattr(lib, "rpocr_result_cls", None)
+    if result_cls is not None:
+        result_cls.argtypes = [ctypes.POINTER(Result), ctypes.c_size_t,
+                               ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_float)]
+        result_cls.restype = ctypes.c_int
+    cls_loaded = getattr(lib, "rpocr_cls_loaded", None)
+    if cls_loaded is not None:
+        cls_loaded.argtypes = [ctypes.c_void_p]
+        cls_loaded.restype = ctypes.c_int
     lib.rpocr_result_free.argtypes = [ctypes.POINTER(Result)]
     lib.rpocr_result_free.restype = None
     lib.rpocr_last_error.argtypes = []
@@ -242,6 +264,43 @@ class NativeOCR:
 
     def recognize(self, rgb: np.ndarray):
         return self.run(rgb, RPOCR_TASK_DET | RPOCR_TASK_REC)
+
+    def cls_loaded(self) -> bool:
+        query = getattr(self.lib, "rpocr_cls_loaded", None)
+        return bool(query(self.handle)) if query is not None else False
+
+    def run_ex(self, rgb: np.ndarray, tasks: int):
+        """rpocr_run_ex: use_cls is exactly ``tasks & RPOCR_TASK_CLS``.
+
+        Returns (boxes, txts, scores, cls) where cls holds one
+        (label_index, score) per line; label_index is -1 when the line was
+        not classified.
+        """
+        if getattr(self.lib, "rpocr_run_ex", None) is None:
+            raise RuntimeError("this librapidocrlite has no rpocr_run_ex; use_cls needs a newer build")
+        array = np.ascontiguousarray(rgb, dtype=np.uint8)
+        if array.ndim != 3 or array.shape[2] != 3:
+            raise ValueError("native OCR expects an HWC RGB uint8 image")
+        height, width = array.shape[:2]
+        image = Image(width, height, array.ctypes.data_as(ctypes.POINTER(ctypes.c_uint8)))
+        result = Result()
+        status = self.lib.rpocr_run_ex(self.handle, ctypes.byref(image), int(tasks), ctypes.byref(result))
+        try:
+            if status != RPOCR_OK:
+                raise RuntimeError(self._error() or "rpocr_run_ex failed")
+            boxes, txts, scores, cls = [], [], [], []
+            label = ctypes.c_int(-1)
+            score = ctypes.c_float(0.0)
+            for index in range(int(result.count)):
+                item = result.items[index]
+                txts.append(item.text.decode("utf-8", errors="replace") if item.text else "")
+                scores.append(float(item.confidence))
+                boxes.append([[item.box[k].x, item.box[k].y] for k in range(4)])
+                self.lib.rpocr_result_cls(ctypes.byref(result), index, ctypes.byref(label), ctypes.byref(score))
+                cls.append((int(label.value), float(score.value)))
+            return boxes, txts, scores, cls
+        finally:
+            self.lib.rpocr_result_free(ctypes.byref(result))
 
     def run(self, rgb: np.ndarray, tasks: int):
         array = np.ascontiguousarray(rgb, dtype=np.uint8)

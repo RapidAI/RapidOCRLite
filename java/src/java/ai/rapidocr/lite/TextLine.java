@@ -16,6 +16,9 @@ public final class TextLine {
     private final int bboxY;
     private final int bboxW;
     private final int bboxH;
+    /** Orientation class index (0 = "0", 1 = "180"), -1 when not classified. */
+    private final int clsLabel;
+    private final float clsScore;
 
     /**
      * Called by the JNI layer; application code normally only reads results.
@@ -26,6 +29,19 @@ public final class TextLine {
      */
     public TextLine(String text, float confidence, float[][] box,
                     int bboxX, int bboxY, int bboxW, int bboxH) {
+        this(text, confidence, box, bboxX, bboxY, bboxW, bboxH, -1, 0f);
+    }
+
+    /**
+     * @param clsLabel text-line orientation class (0 = "0", 1 = "180"), -1 when
+     *                 the classifier did not run; the line was rotated 180 degrees
+     *                 before recognition when 1 scored above cls_thresh
+     * @param clsScore probability of {@code clsLabel}
+     */
+    public TextLine(String text, float confidence, float[][] box,
+                    int bboxX, int bboxY, int bboxW, int bboxH, int clsLabel, float clsScore) {
+        this.clsLabel = clsLabel;
+        this.clsScore = clsScore;
         this.text = text == null ? "" : text;
         this.confidence = confidence;
         this.box = box;
@@ -66,6 +82,16 @@ public final class TextLine {
 
     public int bboxH() {
         return bboxH;
+    }
+
+    /** Orientation class index (0 = "0", 1 = "180"); -1 when not classified. */
+    public int clsLabel() {
+        return clsLabel;
+    }
+
+    /** Probability of {@link #clsLabel()}. */
+    public float clsScore() {
+        return clsScore;
     }
 
     @Override

@@ -68,6 +68,21 @@ class TextDetOutput:
 
 
 @dataclass
+class TextClsOutput:
+    """``use_det=False, use_rec=False, use_cls=True`` result, same fields as
+    ``main``'s ``rapidocr.ch_ppocr_cls.TextClsOutput``: ``img_list`` holds the
+    lines after the 180-degree correction, ``cls_res`` one ``(label, score)``
+    per line."""
+
+    img_list: Optional[List[np.ndarray]] = None
+    cls_res: Optional[List[Tuple[str, float]]] = None
+    elapse: Optional[float] = None
+
+    def __len__(self) -> int:
+        return 0 if self.img_list is None else len(self.img_list)
+
+
+@dataclass
 class TextRecOutput:
     """``use_det=False`` result, same fields as ``main``'s ``TextRecOutput``."""
 

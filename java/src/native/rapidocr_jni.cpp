@@ -64,7 +64,7 @@ jobjectArray NewBox2D(JNIEnv* env, const rpocr_point box[4]) {
   return outer;
 }
 
-jobject NewTextLine(JNIEnv* env, const rpocr_text_box& item) {
+jobject NewTextLine(JNIEnv* env, const rpocr_text_box& item, int cls_label, float cls_score) {
   jstring text = env->NewStringUTF(item.text ? item.text : "");
   if (!text) return nullptr;
   jobjectArray box = NewBox2D(env, item.box);
@@ -75,7 +75,7 @@ jobject NewTextLine(JNIEnv* env, const rpocr_text_box& item) {
   jobject obj = env->NewObject(g_textLineCls, g_textLineCtor, text,
                                (jfloat)item.confidence, box, (jint)item.bbox_x,
                                (jint)item.bbox_y, (jint)item.bbox_w,
-                               (jint)item.bbox_h);
+                               (jint)item.bbox_h, (jint)cls_label, (jfloat)cls_score);
   env->DeleteLocalRef(box);
   env->DeleteLocalRef(text);
   return obj;
@@ -85,7 +85,10 @@ jobjectArray ResultToArray(JNIEnv* env, const rpocr_result& result) {
   jobjectArray arr = env->NewObjectArray((jsize)result.count, g_textLineCls, nullptr);
   if (!arr) return nullptr;
   for (size_t i = 0; i < result.count; ++i) {
-    jobject line = NewTextLine(env, result.items[i]);
+    int cls_label = -1;
+    float cls_score = 0.f;
+    rpocr_result_cls(&result, i, &cls_label, &cls_score);
+    jobject line = NewTextLine(env, result.items[i], cls_label, cls_score);
     if (!line) return nullptr;
     env->SetObjectArrayElement(arr, (jsize)i, line);
     env->DeleteLocalRef(line);
@@ -94,15 +97,18 @@ jobjectArray ResultToArray(JNIEnv* env, const rpocr_result& result) {
 }
 
 // options layout must match OcrOptions.nativeArgs():
-// backend, detLimitSideLen, recParallelism, detThreshold, detBoxThreshold, detUnclipRatio
-void ApplyOptions(rpocr_options& opt, const double* a) {
-  if (!a) return;
+// backend, detLimitSideLen, recParallelism, detThreshold, detBoxThreshold, detUnclipRatio,
+// useCls (1/0), clsThresh (NaN = default)
+void ApplyOptions(rpocr_options& opt, const double* a, jsize n) {
+  if (!a || n < 6) return;
   opt.backend = (int)a[0];
   if (a[1] > 0) opt.det_limit_side_len = (int)a[1];
   if (a[2] > 0) opt.rec_parallelism = (int)a[2];
   if (!std::isnan(a[3])) opt.det_threshold = (float)a[3];
   if (!std::isnan(a[4])) opt.det_box_threshold = (float)a[4];
   if (!std::isnan(a[5])) opt.det_unclip_ratio = (float)a[5];
+  if (n > 6 && !std::isnan(a[6])) opt.use_cls = a[6] != 0.0 ? 1 : 0;
+  if (n > 7 && !std::isnan(a[7])) opt.cls_thresh = (float)a[7];
 }
 
 }  // namespace
@@ -117,7 +123,7 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
   g_textLineCls = (jclass)env->NewGlobalRef(local);
   env->DeleteLocalRef(local);
   g_textLineCtor = env->GetMethodID(g_textLineCls, "<init>",
-                                    "(Ljava/lang/String;F[[FIIII)V");
+                                    "(Ljava/lang/String;F[[FIIIIIF)V");
   if (!g_textLineCtor) return JNI_ERR;
 
   local = env->FindClass("[F");
@@ -198,7 +204,7 @@ Java_ai_rapidocr_lite_RapidOcr_nativeCreatePPOCR__Ljava_lang_String_2Ljava_lang_
   rpocr_options_init(&opt);
   opt.backend = RPOCR_BACKEND_CPU;
   opt.model_type = RPOCR_MODEL_PPOCR;
-  ApplyOptions(opt, opts);
+  ApplyOptions(opt, opts, options ? env->GetArrayLength(options) : 0);
 
   rpocr_ocr* ocr = rpocr_create(d, r, t, &opt);
   if (!ocr) {
@@ -211,6 +217,41 @@ Java_ai_rapidocr_lite_RapidOcr_nativeCreatePPOCR__Ljava_lang_String_2Ljava_lang_
   ReleaseUtf(env, det, d);
   ReleaseUtf(env, rec, r);
   ReleaseUtf(env, dict, t);
+  return (jlong)(intptr_t)ocr;
+}
+
+// PP-OCRv6 engine with the text-line orientation classifier model
+// (ch_ppocr_mobile_v2.0_cls_mobile.onnx, rapidocr main Global.use_cls).
+extern "C" JNIEXPORT jlong JNICALL
+Java_ai_rapidocr_lite_RapidOcr_nativeCreatePPOCRCls(JNIEnv* env, jclass, jstring det, jstring rec,
+                                                    jstring dict, jdoubleArray options,
+                                                    jstring cls) {
+  const char* d = GetUtf(env, det);
+  const char* r = GetUtf(env, rec);
+  const char* t = GetUtf(env, dict);
+  const char* c = GetUtf(env, cls);
+
+  jdouble* opts = options ? env->GetDoubleArrayElements(options, nullptr) : nullptr;
+
+  rpocr_options opt;
+  rpocr_options_init(&opt);
+  opt.backend = RPOCR_BACKEND_CPU;
+  opt.model_type = RPOCR_MODEL_PPOCR;
+  ApplyOptions(opt, opts, options ? env->GetArrayLength(options) : 0);
+  opt.cls_model = c;
+
+  rpocr_ocr* ocr = rpocr_create(d, r, t, &opt);
+  if (!ocr) {
+    ThrowIllegal(env, rpocr_last_error());
+  }
+
+  if (options && opts) {
+    env->ReleaseDoubleArrayElements(options, opts, JNI_ABORT);
+  }
+  ReleaseUtf(env, det, d);
+  ReleaseUtf(env, rec, r);
+  ReleaseUtf(env, dict, t);
+  ReleaseUtf(env, cls, c);
   return (jlong)(intptr_t)ocr;
 }
 
@@ -244,7 +285,7 @@ Java_ai_rapidocr_lite_RapidOcr_nativeCreateLite__Ljava_lang_String_2_3D(
   rpocr_options_init(&opt);
   opt.backend = RPOCR_BACKEND_CPU;
   opt.model_type = RPOCR_MODEL_LITE;
-  ApplyOptions(opt, opts);
+  ApplyOptions(opt, opts, options ? env->GetArrayLength(options) : 0);
 
   rpocr_ocr* ocr = rpocr_create(d, nullptr, nullptr, &opt);
   if (!ocr) {

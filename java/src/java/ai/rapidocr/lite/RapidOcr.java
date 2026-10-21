@@ -64,6 +64,10 @@ public final class RapidOcr implements AutoCloseable {
     public static RapidOcr forPPOCR(String detOnnx, String recOnnx, String dictTxt,
                                     OcrOptions options) {
         Objects.requireNonNull(options, "options");
+        if (options.clsModel() != null) {
+            return create(nativeCreatePPOCRCls(detOnnx, recOnnx, dictTxt, options.nativeArgs(),
+                    options.clsModel()));
+        }
         return create(nativeCreatePPOCR(detOnnx, recOnnx, dictTxt, options.nativeArgs()));
     }
 
@@ -253,6 +257,9 @@ public final class RapidOcr implements AutoCloseable {
 
     private static native long nativeCreatePPOCR(String det, String rec, String dict,
                                                  double[] options);
+
+    private static native long nativeCreatePPOCRCls(String det, String rec, String dict,
+                                                    double[] options, String cls);
 
     private static native long nativeCreateLite(String dir);
 

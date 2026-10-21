@@ -2,9 +2,10 @@
 
 The constructor and ``__call__`` follow ``rapidocr.main.RapidOCR`` on the
 ``main`` branch. This build always runs the in-process C++ ONNX interpreter
-(detector + recognizer). Angle classification and word-box decoding are not
-part of that engine; ``use_cls`` and ``return_word_box`` are accepted and
-reported rather than silently changing results.
+(detector, text-line orientation classifier and recognizer). ``use_cls``
+(default on, as on ``main``) runs the 0/180 classifier between detection and
+recognition with ``main``'s preprocessing. Word-box decoding is not part of
+the engine; ``return_word_box`` is accepted and reported.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import numpy as np
 
 from . import _native
 from .inference_engine.base import FileInfo, InferSession
-from .output import RapidOCROutput, TextDetOutput, TextRecOutput, filter_by_score
+from .output import RapidOCROutput, TextClsOutput, TextDetOutput, TextRecOutput, filter_by_score
 from .typings import EngineType, ModelType, OCRVersion, TaskType
 from .utils.load_image import LoadImage, LoadImageError
 from .utils.model_resolver import list_supported_langs as _list_supported_langs
@@ -58,7 +59,7 @@ class RapidOCR:
         logger.setLevel(getattr(logging, level, logging.INFO))
         self.text_score = float(self.cfg.Global.text_score)
         self.use_det = bool(self.cfg.Global.use_det)
-        self.use_cls = bool(self.cfg.Global.use_cls)
+        self.use_cls = _env_bool("PPOCR_USE_CLS", bool(self.cfg.Global.use_cls))
         self.use_rec = bool(self.cfg.Global.use_rec)
         self.return_word_box = bool(self.cfg.Global.get("return_word_box", False))
         self.return_single_char_box = bool(self.cfg.Global.get("return_single_char_box", False))
@@ -72,6 +73,7 @@ class RapidOCR:
         self.load_img = LoadImage()
         self._engine: Optional[_native.NativeOCR] = None
         self._warned_cls = False
+        self._engine_has_cls = False
         self._check_engine_choice()
 
     def update_params(
@@ -137,21 +139,93 @@ class RapidOCR:
             logger.warning("return_word_box is not implemented by the native PP-OCRv6 engine")
         if return_single_char_box:
             logger.warning("return_single_char_box is not implemented by the native PP-OCRv6 engine")
-        if not self.use_det and not self.use_rec:
-            raise RapidOCRError("use_det and use_rec cannot both be False with the native engine")
-        if self.use_cls and not self._warned_cls:
-            logger.warning("use_cls is ignored: the native engine has no angle classifier")
-            self._warned_cls = True
+        lite = self._is_lite()
+        use_cls = bool(self.use_cls)
+        if use_cls and lite:
+            if not self._warned_cls:
+                logger.warning("use_cls is ignored by the lite (Indra) model: it has no orientation classifier")
+                self._warned_cls = True
+            use_cls = False
+        if not self.use_det and not self.use_rec and not use_cls:
+            raise RapidOCRError("use_det, use_cls and use_rec cannot all be False")
 
         started = time.perf_counter()
         original = self.load_img(img_content)
         # main pads short pages only in detect_and_crop, so use_det=False
         # gets the bounded resize alone.
-        if self._is_lite():  # Indra resizes internally (long side 1024, adaptive)
+        if lite:  # Indra resizes internally (long side 1024, adaptive)
             prepared, ratio_w, ratio_h, pad_top = original, 1.0, 1.0, 0
         else:
             prepared, ratio_w, ratio_h, pad_top = _prepare_image(self, original, pad=self.use_det)
-        engine = self._ensure_engine()
+        engine = self._ensure_engine(need_cls=use_cls)
+        if lite:
+            return self._call_lite(engine, original, prepared, ratio_w, ratio_h, pad_top, started)
+        cls_bit = _native.RPOCR_TASK_CLS if use_cls else 0
+        labels = [str(x) for x in (self.cfg.Cls.get("label_list") or ["0", "180"])]
+        cls_thresh = float(self.cfg.Cls.get("cls_thresh", 0.9))
+
+        def label_of(index: int) -> str:
+            return labels[index] if 0 <= index < len(labels) else str(index)
+
+        def corrected(img: np.ndarray, item) -> np.ndarray:
+            # main: cv2.rotate(img, ROTATE_180) when "180" in label and score > thresh
+            index, score = item
+            if index >= 0 and "180" in label_of(index) and score > cls_thresh:
+                return np.ascontiguousarray(img[::-1, ::-1])
+            return img
+
+        det_threshold = float(self.cfg.Det.get("thresh", 0.3))
+        box_threshold = float(self.cfg.Det.get("box_thresh", 0.5))
+        unclip = float(self.cfg.Det.get("unclip_ratio", 1.6))
+        engine.set_det_thresholds(det_threshold, box_threshold, unclip)
+        if not self.use_det and not self.use_rec:
+            # main returns TextClsOutput when only the classifier ran.
+            _, _, _, cls = engine.run_ex(prepared, _native.RPOCR_TASK_CLS)
+            elapsed = time.perf_counter() - started
+            return TextClsOutput(
+                img_list=[corrected(prepared, cls[0])],
+                cls_res=[(label_of(cls[0][0]), cls[0][1])],
+                elapse=elapsed,
+            )
+        if not self.use_rec:
+            # main classifies here too but returns only the detector output.
+            boxes, _, scores, _ = engine.run_ex(prepared, _native.RPOCR_TASK_DET)
+            elapsed = time.perf_counter() - started
+            if not boxes:
+                return TextDetOutput()
+            ori_h, ori_w = original.shape[:2]
+            mapped = map_boxes_to_original(np.asarray(boxes, dtype=np.float32), ratio_w, ratio_h, pad_top, ori_w, ori_h)
+            return TextDetOutput(img=original, boxes=mapped, scores=list(scores), elapse=elapsed)
+        if not self.use_det:
+            _, txts, scores, cls = engine.run_ex(prepared, _native.RPOCR_TASK_REC | cls_bit)
+            elapsed = time.perf_counter() - started
+            img = corrected(original, cls[0]) if (use_cls and cls) else original
+            return TextRecOutput(
+                imgs=[img],
+                txts=tuple(txts),
+                scores=tuple(scores),
+                word_results=tuple((t, s, None) for t, s in zip(txts, scores)),
+                elapse=elapsed,
+            )
+        boxes, txts, scores, _ = engine.run_ex(prepared, _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC | cls_bit)
+        kept_boxes, kept_txts, kept_scores = filter_by_score(boxes, txts, scores, self.text_score)
+        elapsed = time.perf_counter() - started
+        if len(kept_txts) == 0:
+            return RapidOCROutput()
+        ori_h, ori_w = original.shape[:2]
+        kept_boxes = map_boxes_to_original(kept_boxes, ratio_w, ratio_h, pad_top, ori_w, ori_h)
+        return RapidOCROutput(
+            img=original,
+            boxes=kept_boxes,
+            txts=kept_txts,
+            scores=kept_scores,
+            word_results=(),
+            elapse_list=[None, None, elapsed],
+        )
+
+    def _call_lite(self, engine, original, prepared, ratio_w, ratio_h, pad_top, started):
+        if not self.use_det and not self.use_rec:
+            raise RapidOCRError("the lite model has no orientation classifier; use_det or use_rec must be True")
         det_threshold = float(self.cfg.Det.get("thresh", 0.3))
         box_threshold = float(self.cfg.Det.get("box_thresh", 0.5))
         unclip = float(self.cfg.Det.get("unclip_ratio", 1.6))
@@ -190,6 +264,16 @@ class RapidOCR:
             elapse_list=[None, None, elapsed],
         )
 
+    def _cls_settings(self):
+        """main's TextClassifier geometry for Cls.ocr_version (CLS_SHAPE_BY_OCR_VERSION)."""
+
+        version = _enum_value(self.cfg.Cls.get("ocr_version", "PP-OCRv4"))
+        if version == OCRVersion.PPOCRV4.value:
+            return 48, 192, True
+        if version == OCRVersion.PPOCRV5.value:
+            return 80, 160, False
+        raise NotImplementedError(f"Cls.ocr_version={version!r}: use PP-OCRv4 or PP-OCRv5")
+
     def _check_engine_choice(self) -> None:
         for section in ("Det", "Rec", "Cls"):
             choice = _enum_value(self.cfg[section].get("engine_type", "onnxruntime"))
@@ -208,9 +292,14 @@ class RapidOCR:
         # Lite needs both sections (unchanged rule); a half-lite config keeps its previous behavior.
         return all(str(_enum_value(self.cfg[s].get("model_type", ""))).lower() == "lite" for s in ("Det", "Rec"))
 
-    def _ensure_engine(self) -> _native.NativeOCR:
-        if self._engine is not None:
+    def _ensure_engine(self, need_cls: bool = False) -> _native.NativeOCR:
+        if self._engine is not None and (not need_cls or self._engine_has_cls or self._is_lite()):
             return self._engine
+        if self._engine is not None:
+            # use_cls was turned on after construction without a classifier:
+            # main loads its model lazily; reload the handle with it.
+            self._engine.close()
+            self._engine = None
         if self._is_lite():
             # Det/Rec model_type="lite": bundled Indra OCR weights (models/lite), run by the
             # native C++ engine with rpocr_options.model_type = RPOCR_MODEL_LITE.
@@ -222,6 +311,8 @@ class RapidOCR:
             self._engine = IndraLiteEngine(bundled_model_dir(self.cfg), threads=th)
             return self._engine
         det, rec, dictionary = _resolve_models(self.cfg)
+        want_cls = bool(need_cls or self.use_cls)
+        cls_model = _resolve_cls_model(self.cfg) if want_cls else None
         options = _native.default_options()
         options.backend = _native.RPOCR_BACKEND_CPU
         options.model_type = _native.RPOCR_MODEL_PPOCR
@@ -254,7 +345,20 @@ class RapidOCR:
             options.rec_batch_size = int(batch)
         # Lite extension: Rec.fast_mode (False = exact rapidocr 3.10 output).
         options.rec_fast_mode = 1 if _as_bool(self.cfg["Rec"].get("fast_mode", False)) else 0
+        # Orientation classifier: main's Cls section (use_cls itself is a
+        # per-call task bit, so the handle default does not matter here).
+        options.use_cls = 1 if want_cls else 0
+        if cls_model:
+            height, width, crop = self._cls_settings()
+            options.cls_height = height
+            options.cls_width = width
+            options.cls_crop_long_lines = 1 if crop else 0
+            options.cls_thresh = float(self.cfg.Cls.get("cls_thresh", 0.9))
+            options.cls_batch_size = int(self.cfg.Cls.get("cls_batch_num", 6) or 6)
+            self._cls_model_bytes = str(cls_model).encode()
+            options.cls_model = self._cls_model_bytes
         self._engine = _native.NativeOCR(det, rec, dictionary, options)
+        self._engine_has_cls = bool(cls_model) and self._engine.cls_loaded()
         _log_active_backend(self._engine, int(options.backend))
         return self._engine
 
@@ -282,6 +386,17 @@ def _log_active_backend(engine: _native.NativeOCR, requested: int) -> None:
         )
     else:
         logger.info("Native engine backend: %s", name)
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    """PPOCR_USE_CLS-style override: unset or empty keeps ``default``."""
+
+    import os
+
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def _as_bool(value: Any) -> bool:
@@ -402,8 +517,8 @@ def _resolve_models(cfg: ConfigNode) -> tuple:
     """Download missing det/rec/dict the way 3.x InferSession does.
 
     Files land in ``Global.model_root_dir`` under the URL filename. The cls
-    model is never downloaded: the native engine has no angle classifier, so
-    it would be fetched and then ignored.
+    model is resolved separately (``_resolve_cls_model``) and only when
+    ``use_cls`` is on.
     """
 
     from .utils.download_file import DownloadFile, DownloadFileInput
@@ -445,6 +560,25 @@ def _resolve_models(cfg: ConfigNode) -> tuple:
     return str(det), str(rec), str(dictionary)
 
 
+def _resolve_cls_model(cfg: ConfigNode) -> str:
+    """Cls.model_path, else download main's Cls model (PP-OCRv4 mobile =
+    ch_ppocr_mobile_v2.0_cls_mobile.onnx; PP-OCRv5 mobile/server = PP-LCNet
+    textline_ori) into Global.model_root_dir, as det/rec are."""
+
+    from .utils.download_models import download_task
+
+    import os
+
+    path = cfg.Cls.get("model_path") or os.environ.get("PPOCR_CLS_MODEL")
+    if path:
+        return str(path)
+    root = Path(cfg.Global.model_root_dir).expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    info = _section_info(cfg.Cls)
+    download_task(root, info)
+    return str(root / Path(InferSession.get_model_url(info)["model_dir"]).name)
+
+
 def parse_args(arg_list: Optional[list] = None):
     import argparse
 
@@ -454,7 +588,16 @@ def parse_args(arg_list: Optional[list] = None):
     parser.add_argument("--det", default=None)
     parser.add_argument("--rec", default=None)
     parser.add_argument("--dict", dest="dictionary", default=None)
+    parser.add_argument("--cls", dest="cls_model", default=None, help="orientation classifier ONNX")
     parser.add_argument("--text_score", type=float, default=None)
+    parser.add_argument(
+        "--use_cls",
+        "--use-cls",
+        dest="use_cls",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="text-line orientation classifier (default: Global.use_cls, on)",
+    )
     parser.add_argument("--lang_type", default=None)
     parser.add_argument(
         "--model-type",
@@ -482,7 +625,9 @@ def main(arg_list: Optional[list] = None) -> None:
     if image is None:
         raise SystemExit("rapidocr: an image path is required (positional or -img/--img_path)")
     # No --model-type: keep config.yaml defaults (small), same as RapidOCR().
-    params: Dict[str, Any] = {"Global.use_cls": False}
+    params: Dict[str, Any] = {}
+    if args.use_cls is not None:
+        params["Global.use_cls"] = bool(args.use_cls)
     if args.model_type:
         if args.model_type not in {"tiny", "small", "medium"}:
             raise SystemExit(f"rapidocr: PP-OCRv6 has no {args.model_type!r} model")
@@ -499,6 +644,8 @@ def main(arg_list: Optional[list] = None) -> None:
         params["Rec.model_path"] = args.rec
     if args.dictionary:
         params["Rec.rec_keys_path"] = args.dictionary
+    if args.cls_model:
+        params["Cls.model_path"] = args.cls_model
     engine = RapidOCR(params=params)
     result = engine(image)
     print(result)
