@@ -522,7 +522,7 @@ Apple 芯片上的 GPU：Mac mini，Apple M4（10 个 CPU 核，4P+6E；10 个 G
 | hello（1 行） | 25.3 ms | 77.4 ms | 11.3 ms |
 | 整页（45 行） | 210 ms | 672 ms | 107.2 ms |
 
-Metal 在 hello 上比 NEON 快约 2 倍，整页快约 1.85 倍；文本与 CPU 一致，框 IoU 为 1.0，4 线程结果一致，Metal API validation 无报错。它把最重的翻译 kernel 换成了原生 MSL kernel（逐点 Conv、3×3 Conv 和识别头的 simdgroup-matrix GEMM），DB 后处理改在 CPU 上读共享的概率图，并复用回收的 arena 槽位。识别把宽度相近的最多 8 个裁剪（最宽/最窄 ≤ 1.5）合进一张图：每个裁剪保持自己的自然宽度，在每个沿宽度混合的算子之前把填充列清零，SE 均值按各自的有效面积相除，CTC 只解码各自的有效步数，所以文本与按精确宽度跑的图一致。Metal 上默认开启（`PPOCR_DISABLE_GPU_REC_WIDTH_BATCH=1` 关闭；`PPOCR_ENABLE_GPU_REC_WIDTH_BATCH=1` 在 Vulkan 上开启，但在 MoltenVK 上更慢）。优化前在同一台机器上 Metal 为 76 ms / 539 ms，按宽度批量之前整页为 147.6 ms。剩下的时间主要是识别模型逐点 Conv GEMM 的 GPU 计算（M4 上约 1 TFLOPS）。`PPOCR_METAL_KERNEL_PROFILE=1` 配合 `PPOCR_GPU_PROFILE=1` 可打印每个 kernel 的 GPU 时间。
+Metal 在 hello 上比 NEON 快约 2 倍，整页快约 1.85 倍；4 线程结果一致，Metal API validation 无报错。整页文本和框与 CPU 引擎及 rapidocr main 一致：Metal 上检测输入、DB 后处理、文本行裁剪（透视变换）和识别分批都用与 CPU 引擎相同的 CPU 实现，只有检测和识别网络在 GPU 上运行。（此前 Metal 在设备上做输入和双线性轴对齐裁剪，在 100 页 SWHL 测试集上有 67 页结果不同。`PPOCR_METAL_DEVICE_FRONTEND=1` 可恢复旧路径，下面的宽度批量现在只用于该路径和 Vulkan。）它把最重的翻译 kernel 换成了原生 MSL kernel（逐点 Conv、3×3 Conv 和识别头的 simdgroup-matrix GEMM），DB 后处理改在 CPU 上读共享的概率图，并复用回收的 arena 槽位。识别把宽度相近的最多 8 个裁剪（最宽/最窄 ≤ 1.5）合进一张图：每个裁剪保持自己的自然宽度，在每个沿宽度混合的算子之前把填充列清零，SE 均值按各自的有效面积相除，CTC 只解码各自的有效步数，所以文本与按精确宽度跑的图一致。Metal 上默认开启（`PPOCR_DISABLE_GPU_REC_WIDTH_BATCH=1` 关闭；`PPOCR_ENABLE_GPU_REC_WIDTH_BATCH=1` 在 Vulkan 上开启，但在 MoltenVK 上更慢）。优化前在同一台机器上 Metal 为 76 ms / 539 ms，按宽度批量之前整页为 147.6 ms。剩下的时间主要是识别模型逐点 Conv GEMM 的 GPU 计算（M4 上约 1 TFLOPS）。`PPOCR_METAL_KERNEL_PROFILE=1` 配合 `PPOCR_GPU_PROFILE=1` 可打印每个 kernel 的 GPU 时间。
 
 MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROFILE` 只有主机侧时间。它的文本也与 CPU 一致，校验层报错为 0，4 线程下结果一致。
 
@@ -818,7 +818,7 @@ C 接口用 `RPOCR_BACKEND_METAL`，`rpocr_metal_available()` 报告是否支持
 - 环境变量：`PPOCR_USE_CLS=0`（Python、C、C++、Java 均生效；`1` 强制开启）。
 - C：`opts.use_cls = 0`（`rpocr_options` 末尾新增字段，见 [`docs/API.md`](docs/API.md)）。C/C++/Java 只有在给出分类模型时才分类（`cls_model`、`OcrOptions.clsModel(...)` 或 `PPOCR_CLS_MODEL`）。
 
-`use_det=False, use_rec=False, use_cls=True` 与 main 一样返回 `TextClsOutput`（`img_list`、`cls_res`）。分类器在 CPU 和 hybrid 后端运行；严格 GPU-only/Metal 图和 `model_type="lite"` 不做分类（只记录一次日志）。
+`use_det=False, use_rec=False, use_cls=True` 与 main 一样返回 `TextClsOutput`（`img_list`、`cls_res`）。分类器在 CPU、hybrid 和 Metal 后端运行；严格 Vulkan GPU-only 图和 `model_type="lite"` 不做分类（只记录一次日志）。
 
 速度：在 SWHL 检测集前 100 页上（GitHub Actions runner，PP-OCRv6 small，3 次交替运行的每页中位数），分类器在 x86 AVX-512 上每页增加 9.1 ms（403.7 → 412.8 ms，+2.2%；AVX2 +12.2 ms，+3.1%），在 macOS arm64 NEON 上增加 19.2 ms（511.7 → 530.9 ms，+3.8%；macOS runner 波动较大）；单个切片的一次分类调用为 2.10 ms（x86）/ 3.19 ms（arm64）。分类图融合之前同样的测试为每页 +19.2 ms（x86）、每个识别切片 +2.65 ms（现在 +1.59 ms）。文字从不倒置时可以关闭。开启时 SWHL 精度与 rapidocr main 完全相同（检测 H-mean 0.8492；识别 exact 0.8387、char 0.9516），关闭时为 0.8492；0.8419、0.9515；310 个识别切片上的方向标签在 AVX-512、AVX2、标量下都与 main 一致。
 
@@ -860,7 +860,7 @@ C++ 默认值在 `include/rapidocrlite/rapidocrlite.hpp` 的 `rpocr::Options` �
 | --- | --- |
 | ONNX Runtime、OpenVINO、Paddle、PyTorch、TensorRT、MNN | 内置 PP-OCRv6 解释器。`EngineType.ONNXRUNTIME` 和 `EngineType.PPOCR_CPP` 都选它。其他引擎名抛 `NotImplementedError`。 |
 | PP-OCRv4 与 PP-OCRv5 模型库 | PP-OCRv6 ONNX 检测器和识别器。 |
-| 方向分类器（默认 `use_cls=True`） | 相同：默认开启，模型、预处理和阈值一致；在精度测试集上输出与 main 相同（见 `tools/cls_parity`）。GPU-only/Metal 图和 lite 模型不运行它。 |
+| 方向分类器（默认 `use_cls=True`） | 相同：默认开启，模型、预处理和阈值一致；在精度测试集上输出与 main 相同（见 `tools/cls_parity`）。严格 Vulkan GPU-only 图和 lite 模型不运行它。 |
 | `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。use_det/use_cls/use_rec 全为 False 抛 `RapidOCRError`；只开 use_cls 返回 `TextClsOutput`。这两种模式走 CPU 图，`backend: metal` 时也可用（完整流程仍走 Metal）；严格 Vulkan GPU 后端会拒绝。与 rapidocr 3.x main 一样，调用时传入的参数会保存在引擎上，对之后的调用继续生效。 |
 | 单词框和单字框 | `return_word_box` / `return_single_char_box` 会警告。`word_results` 为空。 |
 | `elapse_list` 为 `[det, cls, rec]` | `[None, None, total]`。空白页是 `RapidOCROutput()`（`boxes` / `txts` / `img` 为 `None`）。 |
@@ -873,7 +873,7 @@ C++ 默认值在 `include/rapidocrlite/rapidocrlite.hpp` 的 `rpocr::Options` �
 
 ### ⚠️ 已知限制
 
-- 严格 GPU-only（Vulkan）/ Metal 图以及 `model_type="lite"` 不运行方向分类器。
+- 严格 GPU-only（Vulkan）图以及 `model_type="lite"` 不运行方向分类器。
 - 没有单词框或单字框。`word_results` 保持为空。
 - 原生引擎跑 PP-OCRv6 ONNX 图。PP-OCRv4 / v5 文件不会被执行。
 - 纯 GPU 模式没有 CPU 神经网络回退。除非设置 `PPOCR_ENABLE_HYBRID_GPU_GRAPH`，hybrid 留在 CPU。

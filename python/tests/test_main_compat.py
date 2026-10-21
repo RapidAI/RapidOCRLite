@@ -34,7 +34,7 @@ from rapidocr.utils.load_image import LoadImage, MemoryImage
 from rapidocr.utils.parse_parameters import ParseParams
 
 REMAINING_INCOMPATIBILITIES = (
-    "use_cls runs on the CPU/hybrid graph only; GPU-only/Metal graphs and the lite model skip it",
+    "use_cls runs on the CPU/hybrid/Metal paths only; the strict Vulkan GPU-only graph and the lite model skip it",
     "use_det=False and use_rec=False together raise RapidOCRError",
     "return_word_box and return_single_char_box do not produce word boxes",
     "PP-OCRv4 and PP-OCRv5 model versions raise NotImplementedError",

@@ -146,7 +146,7 @@ pip install ./python
 | --- | --- |
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | built-in PP-OCRv6 interpreter only (`EngineType.ONNXRUNTIME` or `EngineType.PPOCR_CPP`) |
 | PP-OCRv4 and v5 model zoo | PP-OCRv6 ONNX detector + recognizer |
-| angle classifier (`use_cls=True` by default) | same: on by default, PP-OCRv4 `ch_ppocr_mobile_v2.0_cls_mobile` (or PP-OCRv5 PP-LCNet via `Cls.ocr_version` / `Cls.model_type`), main's preprocessing incl. #748; CPU/hybrid only (not the GPU-only/Metal graph, not lite) |
+| angle classifier (`use_cls=True` by default) | same: on by default, PP-OCRv4 `ch_ppocr_mobile_v2.0_cls_mobile` (or PP-OCRv5 PP-LCNet via `Cls.ocr_version` / `Cls.model_type`), main's preprocessing incl. #748; CPU/hybrid/Metal (not the strict Vulkan GPU-only graph, not lite) |
 | `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`, `TextClsOutput` with only `use_cls`); all three False raises `RapidOCRError`; C ABI `rpocr_run` with `RPOCR_TASK_DET` / `RPOCR_TASK_REC` |
 | word and character boxes | `return_word_box` warns; `word_results` is empty |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]` because the native call is one timed region |
@@ -190,8 +190,9 @@ use_rec, use_cls)`, `Result::{cls_label, cls_score}`. Java:
 
 The classifier runs as its own CPU graph (`Backend::cpu_only`) with the same
 kernels and ISA dispatch as det/rec, so AVX-512, AVX2, NEON, LSX/LASX and
-scalar give the same labels. The strict GPU-only (Vulkan) and Metal graphs
-do not classify (one stderr note); `model_type = lite` ignores it. The
+scalar give the same labels. On Metal it runs on the CPU between the
+GPU detector and recognizer. The strict GPU-only (Vulkan) graph does not
+classify (one stderr note); `model_type = lite` ignores it. The
 opt-in hybrid whole-GPU graph (`PPOCR_ENABLE_HYBRID_GPU_GRAPH`) is skipped
 while classification is on so the CPU crops can be turned.
 

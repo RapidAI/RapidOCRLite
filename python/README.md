@@ -86,7 +86,7 @@ What does not carry over from 3.x:
 | --- | --- |
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | Built-in PP-OCRv6 interpreter. `EngineType.ONNXRUNTIME` and `EngineType.PPOCR_CPP` both select it. The other engine names raise `NotImplementedError`. |
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer only. |
-| Angle classifier (`use_cls=True` by default) | Same as main: on by default, same model (PP-OCRv4 ch_ppocr_mobile_v2.0_cls_mobile; PP-OCRv5 PP-LCNet via `Cls.ocr_version`), preprocessing (incl. #748) and threshold. Off with `use_cls=False` or `PPOCR_USE_CLS=0`. Not run by the GPU-only/Metal graphs or the lite model. |
+| Angle classifier (`use_cls=True` by default) | Same as main: on by default, same model (PP-OCRv4 ch_ppocr_mobile_v2.0_cls_mobile; PP-OCRv5 PP-LCNet via `Cls.ocr_version`), preprocessing (incl. #748) and threshold. Off with `use_cls=False` or `PPOCR_USE_CLS=0`. Not run by the strict Vulkan GPU-only graph or the lite model. |
 | `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput`, `use_det=False` returns `TextRecOutput`. Both False raises `RapidOCRError`. |
 | Word and character boxes | `return_word_box` / `return_single_char_box` warn. `word_results` is empty. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. The native call is one timed region. An empty page is `RapidOCROutput()` (`boxes`/`txts`/`img` are `None`), same as 3.x. |

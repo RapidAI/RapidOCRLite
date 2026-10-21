@@ -1109,7 +1109,8 @@ struct OCR::Impl {
   // use_cls runs the text-line orientation classifier on the crops first
   // (rapidocr main TextClassifier) and rotates "180" lines before recognition.
   std::vector<Result> RecognizeCrops(const Image& image, const std::vector<Box>& boxes,
-                                     bool use_det, bool profile_e2e, bool use_cls = false);
+                                     bool use_det, bool profile_e2e, bool use_cls = false,
+                                     bool rec_on_gpu = false);
   // Orientation classifier (CPU graph). Empty unless a cls model was given.
   detail::OnnxLite cls;
   bool cls_loaded{};
@@ -1601,6 +1602,51 @@ std::vector<Result> RecognizeGpuOnly(detail::OnnxLite& det, detail::OnnxLite& re
   return results;
 }
 
+// Metal full pipeline, exact front end. The device RGB resize and the
+// axis-aligned bilinear crops above are not the cv2 arithmetic rapidocr uses
+// (cv2.resize INTER_LINEAR for the detector input, getPerspectiveTransform +
+// warpPerspective INTER_CUBIC for each line), so Metal pages drifted from the
+// CPU engine and rapidocr main. Build the detector input with the exact CPU
+// port (DetInput), run the detector graph on the GPU, and hand its
+// probability map to the exact CPU DBPost; recognition then uses the CPU
+// crop/resize ports and batching (OCR::Impl::RecognizeCrops) and uploads
+// those tensors to the GPU recognizer. PPOCR_METAL_DEVICE_FRONTEND=1
+// restores the previous all-device route.
+std::vector<Box> DetectGpuExactInput(detail::OnnxLite& det, detail::OnnxLite& rec,
+                                     const Options& opt, const Image& image,
+                                     bool keep_gpu_constants) {
+  auto& arena = det.gpu_arena();
+  if (!keep_gpu_constants) rec.ReleaseGpuConstants();
+  Tensor input = DetInput(image, opt);
+  if (input.shape.size() != 4) Fail("detector input shape");
+  const std::vector<std::int64_t> shape = input.shape;
+  const std::size_t elements = input.data.size();
+  auto slot = arena.Acquire(elements, "ocr-det-input-exact");
+  if (!slot.resident || !arena.Upload(slot, input.data.data(), elements)) {
+    arena.Release(slot);
+    FailGpuOnly("detector exact input upload");
+  }
+  std::unordered_map<std::string, detail::OnnxLite::GpuTensor> outputs;
+  if (!det.RunGpuOnlyDevice({{"x", {shape, slot}}}, outputs)) FailGpuOnly("detector graph");
+  detail::OnnxLite::GpuTensor probability; bool found{};
+  for (auto& [_, value] : outputs) if (value.shape.size() == 4 && value.shape[1] == 1) {
+    probability = std::move(value); found = true; break;
+  }
+  for (auto& [_, value] : outputs)
+    if (value.slot.resident && (!found || value.slot.index != probability.slot.index)) arena.Release(value.slot);
+  if (!found) Fail("GPU detector probability map not found");
+  auto boxes = DBPostDevice(arena, probability, 0, image.width, image.height, opt);
+  arena.Release(probability.slot);
+  if (!keep_gpu_constants) det.ReleaseGpuConstants();
+  (void)(keep_gpu_constants ? arena.ReclaimFreeTransientStorage() : arena.ReclaimFreeStorage());
+  return boxes;
+}
+
+bool MetalDeviceFrontEnd() {
+  static const bool v = std::getenv("PPOCR_METAL_DEVICE_FRONTEND") != nullptr;
+  return v;
+}
+
 // GPU-only detector batch for pages that naturally share the same PP-OCR
 // resize shape.  The RGB front end and detector graph both run with a real N
 // dimension; per-page DB post-processing remains the required control-plane
@@ -1900,7 +1946,8 @@ bool OCR::ClsLoaded() const noexcept { return impl_ && impl_->cls_loaded; }
 // cv_compat reproduces OpenCV's crop and resize bit for bit, so the input
 // tensors equal 3.10's. use_det=false recognizes the whole image unrotated.
 std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vector<Box>& boxes,
-                                              bool use_det, bool profile_e2e, bool use_cls) {
+                                              bool use_det, bool profile_e2e, bool use_cls,
+                                              bool rec_on_gpu) {
   const std::size_t n = boxes.size();
   const bool classify = use_cls && cls_loaded && n > 0;
   // The classifier may rotate a line, so it needs its own copy of the
@@ -2019,7 +2066,9 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
   std::vector<Result> out(n);
   const auto recognition_parallelism = opt.backend == Backend::hybrid && hybrid_gpu_graph_state > 0
       ? opt.hybrid_graph_parallelism : opt.rec_parallelism;
-  const auto workers = std::min<std::size_t>(batches.size(),
+  // rec_on_gpu (Metal): the exact CPU tensors go through the one GPU queue,
+  // so batches run in order on the calling thread.
+  const auto workers = rec_on_gpu ? std::size_t{1} : std::min<std::size_t>(batches.size(),
       RecognitionWorkerLimit(opt.backend, recognition_parallelism));
   const auto rec_preprocess_workers = std::max<std::size_t>(
       1, std::size_t(std::max(1, opt.batch_preprocess_parallelism)) /
@@ -2066,7 +2115,22 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
     std::unordered_map<std::string, Tensor> rec_input;
     rec_input.emplace("x", std::move(input));
     const auto rec_t1 = profile_e2e ? std::chrono::steady_clock::now() : rec_t0;
-    auto logits = rec.RunCtcTop1(std::move(rec_input));
+    detail::OnnxLite::CtcTop1Output logits;
+    if (rec_on_gpu) {
+      auto& arena = rec.gpu_arena();
+      Tensor& host = rec_input.at("x");
+      const std::vector<std::int64_t> shape = host.shape;
+      const std::size_t elements = host.data.size();
+      auto slot = arena.Acquire(elements, "ocr-rec-input-exact");
+      if (!slot.resident || !arena.Upload(slot, host.data.data(), elements)) {
+        arena.Release(slot);
+        FailGpuOnly("recognizer exact input upload");
+      }
+      if (!rec.RunGpuOnlyCtcTop1({{"x", {shape, slot}}}, logits))
+        FailGpuOnly("recognizer batch/CTC graph");
+    } else {
+      logits = rec.RunCtcTop1(std::move(rec_input));
+    }
     if (profile_e2e) {
       std::cerr << "e2e_ms rec_pre="
                 << std::chrono::duration<double, std::milli>(rec_t1 - rec_t0).count()
@@ -2203,11 +2267,11 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec,
   const bool classify = use_cls && impl_->cls_loaded;
   const bool full = use_det && use_rec;
   const bool gpu_graph = impl_->opt.backend == Backend::gpu_only;
-  if (classify && gpu_graph) {
+  if (classify && gpu_graph && !(impl_->metal && !MetalDeviceFrontEnd())) {
     static std::once_flag logged_cls;
     std::call_once(logged_cls, [] {
-      std::fprintf(stderr, "ppocr: the GPU-only / Metal graph does not run the text-line "
-                           "orientation classifier; use the cpu or hybrid backend for use_cls\n");
+      std::fprintf(stderr, "ppocr: the strict GPU-only graph does not run the text-line "
+                           "orientation classifier; use the cpu, hybrid or metal backend for use_cls\n");
     });
   }
   // Metal runs the full det+rec pipeline on the GPU. Detection-only and
@@ -2231,6 +2295,18 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec,
   if (impl_->opt.backend != Backend::cpu_only) gpu_lock.lock();
   if(image.empty()) Fail("invalid RGB image");
   if(impl_->det.outputs().empty()) Fail("detector has no output");
+  if (impl_->metal && full && !MetalDeviceFrontEnd()) {
+    const bool profile_e2e = std::getenv("PPOCR_PROFILE_E2E") != nullptr;
+    const auto boxes = DetectGpuExactInput(impl_->det, impl_->rec, impl_->opt, image,
+                                           impl_->keep_gpu_constants);
+    auto out = impl_->RecognizeCrops(image, boxes, true, profile_e2e, classify, true);
+    if (!impl_->keep_gpu_constants) impl_->rec.ReleaseGpuConstants();
+    (void)(impl_->keep_gpu_constants ? impl_->rec.gpu_arena().ReclaimFreeTransientStorage()
+                                     : impl_->rec.gpu_arena().ReclaimFreeStorage());
+    gpu_lock.unlock();
+    ReclaimHostHeap();
+    return out;
+  }
   if (impl_->opt.backend == Backend::gpu_only && !partial_on_cpu) {
     auto result = RecognizeGpuOnly(impl_->det, impl_->rec, impl_->opt, impl_->dict, image,
                                    impl_->keep_gpu_constants);
@@ -2401,6 +2477,11 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
   std::vector<std::vector<Result>> output(images.size());
   if (images.empty()) return output;
   if (impl_->lite) {
+    for (std::size_t i = 0; i < images.size(); ++i) output[i] = Run(images[i], true, true);
+    return output;
+  }
+  // Metal: the same exact front end as Run (see DetectGpuExactInput), page by page.
+  if (impl_->metal && !MetalDeviceFrontEnd()) {
     for (std::size_t i = 0; i < images.size(); ++i) output[i] = Run(images[i], true, true);
     return output;
   }
