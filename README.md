@@ -408,6 +408,23 @@ options.backend = rpocr::Backend::metal;  // rpocr::MetalAvailable() reports sup
 
 In C, set `RPOCR_BACKEND_METAL`; `rpocr_metal_available()` reports support. Without Metal (other platforms, a build without it, `PPOCR_DISABLE_METAL=1`) all three fall back to CPU and do not fail. The driver is chosen once per process: Metal and Vulkan do not mix in one process. `ppocr_metal_check` compares Metal to CPU and runs a multithreaded determinism check; `tests/run_metal_macos.sh` runs it under Metal API validation (`MTL_DEBUG_LAYER=1`).
 
+### 🔄 Text-line orientation (`use_cls`, on by default)
+
+Like rapidocr main, the engine classifies every detected line as 0° or 180° between detection and recognition and turns upside-down lines before reading them. `Global.use_cls` is `true` by default; the first run downloads `ch_ppocr_mobile_v2.0_cls_mobile.onnx` (PP-OCRv4 `Cls`, 0.6 MB) into `Global.model_root_dir`, the same way as the det/rec models.
+
+The step reproduces rapidocr main (`8ac45f4`, including #748): lines sorted by aspect ratio in batches of `Cls.cls_batch_num` (6); each line is `cv2.resize`d (bit-exact port) to 48×192 or less and padded, values scaled to [-1, 1]; with the v2.0 model a line wider than 4× its height is classified on its centre at the model's 4:1 aspect ratio instead of being squeezed; a line is rotated when its label is `"180"` with score above `Cls.cls_thresh` (0.9). `Cls.ocr_version: PP-OCRv5` with `Cls.model_type: mobile` / `server` selects the PP-LCNet x0.25 / x1.0 `textline_ori` models (80×160 input, no centre crop, as on main).
+
+Turn it off:
+
+- Python: `RapidOCR(params={"Global.use_cls": False})`, or per call `engine(img, use_cls=False)`.
+- CLI: `rapidocr img.png --no-use_cls` (`--use_cls` / `--cls PATH` also accepted).
+- Environment: `PPOCR_USE_CLS=0` (Python, C, C++ and Java; `1` forces it on).
+- C: `opts.use_cls = 0` (appended `rpocr_options` fields; see [`docs/API.md`](docs/API.md)). C/C++/Java classify only when a classifier model is given (`cls_model`, `OcrOptions.clsModel(...)`, or `PPOCR_CLS_MODEL`).
+
+`use_det=False, use_rec=False, use_cls=True` returns `TextClsOutput` (`img_list`, `cls_res`) as on main. The classifier runs on the CPU and hybrid backends; the strict GPU-only/Metal graphs and `model_type="lite"` do not classify (logged once).
+
+Speed: the classifier adds one small CNN pass per batch of 6 lines; see the `cls parity` CI job summary for current timings.
+
 ### ⚙️ Configuration
 
 Python keys use the 3.x `Section.name` form. A YAML `config_path` is loaded with PyYAML and then overridden by `params`.
@@ -422,7 +439,9 @@ Python keys use the 3.x `Section.name` form. A YAML `config_path` is loaded with
 | `Det.mean`, `Det.std` | Detector normalization, BGR order, length 3. |
 | `Det.use_dilation` | 2×2 dilation of the detector mask. On in the Python config, off in `rpocr::Options`. |
 | `Global.text_score` | Drop lines below this score. Also a per-call argument. |
-| `Global.use_cls` | Accepted. The native engine does not run an angle classifier and warns once. |
+| `Global.use_cls` | Text-line orientation classifier (0/180), on by default as on main. See [Text-line orientation](#-text-line-orientation-use_cls-on-by-default). |
+| `Cls.ocr_version`, `Cls.model_type`, `Cls.model_path` | `PP-OCRv4` + `mobile` (default, ch_ppocr_mobile_v2.0_cls_mobile) or `PP-OCRv5` + `mobile` / `server` (PP-LCNet textline_ori). |
+| `Cls.cls_batch_num`, `Cls.cls_thresh`, `Cls.label_list` | 6, 0.9, `["0", "180"]`, as on main. |
 | `Global.model_root_dir` | Download directory. The package `models/` directory when null. |
 | `Rec.rec_batch_num` | Recognizer batch size. |
 | `EngineConfig.ppocr_cpp.use_vulkan` | Request the Vulkan graph. |
@@ -444,20 +463,20 @@ keep the same names. `result.txts`, `result.scores`, `result.boxes`, `result.ela
 | --- | --- |
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | Built-in PP-OCRv6 interpreter. `EngineType.ONNXRUNTIME` and `EngineType.PPOCR_CPP` both select it. Other engine names raise `NotImplementedError`. |
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer. |
-| Angle classifier (`use_cls=True` by default) | The cls file is still downloaded when `use_cls` is true. The native engine ignores it and logs one warning. |
-| `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput` (boxes, DB scores); `use_det=False` returns `TextRecOutput` for the whole image. Both False raises `RapidOCRError`. These modes run on the CPU graph, also with `backend: metal` (Metal keeps the full pipeline); the strict Vulkan GPU backend rejects them. Per-call arguments are stored on the engine and stay in effect for later calls, as in rapidocr 3.x main. |
+| Angle classifier (`use_cls=True` by default) | Same: on by default, same model, preprocessing and threshold; output equals main on the accuracy sets (see `tools/cls_parity`). Not run by the GPU-only/Metal graphs or the lite model. |
+| `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput` (boxes, DB scores); `use_det=False` returns `TextRecOutput` for the whole image. All three of use_det/use_cls/use_rec False raises `RapidOCRError`; use_cls alone returns `TextClsOutput`. These modes run on the CPU graph, also with `backend: metal` (Metal keeps the full pipeline); the strict Vulkan GPU backend rejects them. Per-call arguments are stored on the engine and stay in effect for later calls, as in rapidocr 3.x main. |
 | Word and character boxes | `return_word_box` / `return_single_char_box` warn. `word_results` is empty. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. An empty page is `RapidOCROutput()` (`boxes` / `txts` / `img` are `None`). |
 | `vis()` draws with OpenCV in BGR | `vis()` draws with Pillow and returns RGB. |
 | `EngineConfig` CUDA, OpenVINO, TensorRT, MNN, … | Those keys load and can be read. They are not applied. Vulkan keys above are applied. |
 
-A caller that only reads `txts`, `scores`, and `boxes` from a PP-OCRv6 model can switch by installing this package. Set `use_cls=False` to skip the warning. Do not pass an older OCR version.
+A caller that only reads `txts`, `scores`, and `boxes` from a PP-OCRv6 model can switch by installing this package. Do not pass an older OCR version for Det/Rec.
 
 There is no 4.x tag in this repository. Details and the C ABI are in [`docs/API.md`](docs/API.md) and [`python/README.md`](python/README.md).
 
 ### ⚠️ Known limits
 
-- No direction classifier. `use_cls` does not rotate boxes.
+- The orientation classifier does not run in the strict GPU-only (Vulkan) / Metal graphs or with `model_type="lite"`.
 - No per-word or per-character boxes. `word_results` stays empty.
 - The native engine runs PP-OCRv6 ONNX graphs. PP-OCRv4 / v5 files are not executed.
 - GPU-only mode has no CPU neural fallback. Hybrid stays on CPU unless `PPOCR_ENABLE_HYBRID_GPU_GRAPH` is set.

@@ -146,8 +146,8 @@ pip install ./python
 | --- | --- |
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | built-in PP-OCRv6 interpreter only (`EngineType.ONNXRUNTIME` or `EngineType.PPOCR_CPP`) |
 | PP-OCRv4 and v5 model zoo | PP-OCRv6 ONNX detector + recognizer |
-| angle classifier (`use_cls=True` by default) | flag is accepted and ignored, with one warning |
-| `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`); both False raises `RapidOCRError`; C ABI `rpocr_run` with `RPOCR_TASK_DET` / `RPOCR_TASK_REC` |
+| angle classifier (`use_cls=True` by default) | same: on by default, PP-OCRv4 `ch_ppocr_mobile_v2.0_cls_mobile` (or PP-OCRv5 PP-LCNet via `Cls.ocr_version` / `Cls.model_type`), main's preprocessing incl. #748; CPU/hybrid only (not the GPU-only/Metal graph, not lite) |
+| `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`, `TextClsOutput` with only `use_cls`); all three False raises `RapidOCRError`; C ABI `rpocr_run` with `RPOCR_TASK_DET` / `RPOCR_TASK_REC` |
 | word and character boxes | `return_word_box` warns; `word_results` is empty |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]` because the native call is one timed region |
 | OpenCV drawing in `vis` | Pillow polygons |
@@ -155,6 +155,45 @@ pip install ./python
 `result.txts`, `result.scores`, and `result.boxes` stay the fields existing
 callers read. `text_score`, `box_thresh`, and `unclip_ratio` still filter or
 retune a call without rebuilding the models.
+
+## Text-line orientation classifier (`use_cls`, appended fields)
+
+rapidocr main's `Global.use_cls` step (head 8ac45f4, PR #748) runs between
+detection and recognition: each crop is classified 0/180 and turned when the
+label is "180" with a score above `cls_thresh`. Fields appended to
+`rpocr_options` after `model_type` (older callers pass a smaller
+`struct_size` and keep the previous behavior, `use_cls = 0`):
+
+| field | default | meaning |
+| --- | --- | --- |
+| `use_cls` | 1 | handle default for `rpocr_recognize` / `rpocr_run` / batch |
+| `cls_thresh` | 0.9 | rotate when label 1 ("180") scores above it |
+| `cls_batch_size` | 6 | `Cls.cls_batch_num` |
+| `cls_height`, `cls_width` | 48, 192 | input size; 80, 160 for PP-LCNet textline_ori |
+| `cls_crop_long_lines` | 1 | v2.0 model: classify the centre of a line wider than `ceil(h*cls_width/cls_height)` (#748); 0 for PP-LCNet |
+| `cls_model` | NULL | classifier ONNX; copied at `rpocr_create`. NULL: no classification unless `PPOCR_CLS_MODEL` is set |
+
+`PPOCR_USE_CLS=0/1` overrides `use_cls`. `RPOCR_TASK_CLS` (4) is a task bit:
+`rpocr_run` treats it as "also classify"; `rpocr_run_ex(ocr, image, tasks,
+result)` takes it literally, and `RPOCR_TASK_CLS` alone classifies the whole
+image (one result, image box, empty text). `rpocr_result_cls(result, i,
+&label, &score)` reads a line's orientation from any result (label -1 when
+not classified; the per-line data lives after the `rpocr_text_box` array in
+the same allocation, so `rpocr_text_box` and `rpocr_result_free` are
+unchanged). `rpocr_cls_loaded(ocr)` reports whether a model is loaded.
+
+C++: `rpocr::Options::{use_cls, cls_model, cls_thresh, cls_batch_size,
+cls_height, cls_width, cls_crop_long_lines}`, `OCR::Run(image, use_det,
+use_rec, use_cls)`, `Result::{cls_label, cls_score}`. Java:
+`OcrOptions.builder().clsModel(path).useCls(true).clsThresh(0.9f)`,
+`TextLine.clsLabel()` / `clsScore()`.
+
+The classifier runs as its own CPU graph (`Backend::cpu_only`) with the same
+kernels and ISA dispatch as det/rec, so AVX-512, AVX2, NEON, LSX/LASX and
+scalar give the same labels. The strict GPU-only (Vulkan) and Metal graphs
+do not classify (one stderr note); `model_type = lite` ignores it. The
+opt-in hybrid whole-GPU graph (`PPOCR_ENABLE_HYBRID_GPU_GRAPH`) is skipped
+while classification is on so the CPU crops can be turned.
 
 ## Vulkan
 

@@ -805,6 +805,23 @@ options.backend = rpocr::Backend::metal;  // rpocr::MetalAvailable() 报告是�
 
 C 接口用 `RPOCR_BACKEND_METAL`，`rpocr_metal_available()` 报告是否支持。没有 Metal 时（其他平台、未启用 Metal 的构建、`PPOCR_DISABLE_METAL=1`）三种接口都回退到 CPU，不会失败。驱动按进程选定一次：同一进程里不能混用 Metal 和 Vulkan。`ppocr_metal_check` 对比 Metal 与 CPU 并做多线程确定性检查；`tests/run_metal_macos.sh` 在 Metal API validation（`MTL_DEBUG_LAYER=1`）下运行它。
 
+### 🔄 文本行方向分类（`use_cls`，默认开启）
+
+与 rapidocr main 一致，引擎在检测和识别之间把每个文本行分为 0° 或 180°，倒置的行先旋转再识别。`Global.use_cls` 默认为 `true`；首次运行会把 `ch_ppocr_mobile_v2.0_cls_mobile.onnx`（PP-OCRv4 `Cls`，0.6 MB）下载到 `Global.model_root_dir`，方式与检测/识别模型相同。
+
+处理流程复现 rapidocr main（`8ac45f4`，含 #748）：按宽高比排序、每批 `Cls.cls_batch_num`（6）行；每行用（逐位一致的）`cv2.resize` 缩放到不超过 48×192 并补零，像素缩放到 [-1, 1]；使用 v2.0 模型时，宽度超过高度 4 倍的长行只取中间一段（模型的 4:1 宽高比）分类，而不是整行压缩；标签为 `"180"` 且分数高于 `Cls.cls_thresh`（0.9）时旋转 180°。`Cls.ocr_version: PP-OCRv5` 配合 `Cls.model_type: mobile` / `server` 选择 PP-LCNet x0.25 / x1.0 `textline_ori` 模型（80×160 输入，不裁中间，与 main 相同）。
+
+关闭方法：
+
+- Python：`RapidOCR(params={"Global.use_cls": False})`，或单次调用 `engine(img, use_cls=False)`。
+- 命令行：`rapidocr img.png --no-use_cls`（也支持 `--use_cls`、`--cls 路径`）。
+- 环境变量：`PPOCR_USE_CLS=0`（Python、C、C++、Java 均生效；`1` 强制开启）。
+- C：`opts.use_cls = 0`（`rpocr_options` 末尾新增字段，见 [`docs/API.md`](docs/API.md)）。C/C++/Java 只有在给出分类模型时才分类（`cls_model`、`OcrOptions.clsModel(...)` 或 `PPOCR_CLS_MODEL`）。
+
+`use_det=False, use_rec=False, use_cls=True` 与 main 一样返回 `TextClsOutput`（`img_list`、`cls_res`）。分类器在 CPU 和 hybrid 后端运行；严格 GPU-only/Metal 图和 `model_type="lite"` 不做分类（只记录一次日志）。
+
+速度：分类器每 6 行做一次小 CNN 推理；最新耗时见 CI `cls parity` 任务摘要。
+
 ### ⚙️ 配置
 
 Python 键使用 3.x 的 `Section.name` 形式。YAML `config_path` 由 PyYAML 载入，再被 `params` 覆盖。
@@ -819,7 +836,9 @@ Python 键使用 3.x 的 `Section.name` 形式。YAML `config_path` 由 PyYAML �
 | `Det.mean`、`Det.std` | 检测器归一化，BGR 顺序，长度 3。 |
 | `Det.use_dilation` | 检测掩码的 2×2 膨胀。Python 配置里开启，`rpocr::Options` 里关闭。 |
 | `Global.text_score` | 丢掉低于该分数的行。也可以作为单次调用参数。 |
-| `Global.use_cls` | 接受该键。原生引擎不做方向分类，并警告一次。 |
+| `Global.use_cls` | 文本行方向分类（0/180），与 main 一样默认开启，见上文。 |
+| `Cls.ocr_version`、`Cls.model_type`、`Cls.model_path` | `PP-OCRv4` + `mobile`（默认，ch_ppocr_mobile_v2.0_cls_mobile）或 `PP-OCRv5` + `mobile` / `server`（PP-LCNet textline_ori）。 |
+| `Cls.cls_batch_num`、`Cls.cls_thresh`、`Cls.label_list` | 6、0.9、`["0", "180"]`，与 main 相同。 |
 | `Global.model_root_dir` | 下载目录。为空时用包内 `models/`。 |
 | `Rec.rec_batch_num` | 识别批大小。 |
 | `EngineConfig.ppocr_cpp.use_vulkan` | 请求 Vulkan 计算图。 |
@@ -841,20 +860,20 @@ C++ 默认值在 `include/rapidocrlite/rapidocrlite.hpp` 的 `rpocr::Options` �
 | --- | --- |
 | ONNX Runtime、OpenVINO、Paddle、PyTorch、TensorRT、MNN | 内置 PP-OCRv6 解释器。`EngineType.ONNXRUNTIME` 和 `EngineType.PPOCR_CPP` 都选它。其他引擎名抛 `NotImplementedError`。 |
 | PP-OCRv4 与 PP-OCRv5 模型库 | PP-OCRv6 ONNX 检测器和识别器。 |
-| 方向分类器（默认 `use_cls=True`） | `use_cls` 为真时仍会下载 cls 文件。原生引擎忽略它，并打一条警告。 |
-| `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。两者都为 False 抛 `RapidOCRError`。这两种模式走 CPU 图，`backend: metal` 时也可用（完整流程仍走 Metal）；严格 Vulkan GPU 后端会拒绝。与 rapidocr 3.x main 一样，调用时传入的参数会保存在引擎上，对之后的调用继续生效。 |
+| 方向分类器（默认 `use_cls=True`） | 相同：默认开启，模型、预处理和阈值一致；在精度测试集上输出与 main 相同（见 `tools/cls_parity`）。GPU-only/Metal 图和 lite 模型不运行它。 |
+| `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。use_det/use_cls/use_rec 全为 False 抛 `RapidOCRError`；只开 use_cls 返回 `TextClsOutput`。这两种模式走 CPU 图，`backend: metal` 时也可用（完整流程仍走 Metal）；严格 Vulkan GPU 后端会拒绝。与 rapidocr 3.x main 一样，调用时传入的参数会保存在引擎上，对之后的调用继续生效。 |
 | 单词框和单字框 | `return_word_box` / `return_single_char_box` 会警告。`word_results` 为空。 |
 | `elapse_list` 为 `[det, cls, rec]` | `[None, None, total]`。空白页是 `RapidOCROutput()`（`boxes` / `txts` / `img` 为 `None`）。 |
 | `vis()` 用 OpenCV 按 BGR 绘制 | `vis()` 用 Pillow 绘制并返回 RGB。 |
 | `EngineConfig` 的 CUDA、OpenVINO、TensorRT、MNN 等 | 这些键可以载入和读取，不会生效。上面的 Vulkan 键会生效。 |
 
-只读取 PP-OCRv6 模型的 `txts`、`scores` 和 `boxes` 的调用方，装上这个包即可切换。把 `use_cls=False` 设上可以去掉警告。不要传更老的 OCR 版本。
+只读取 PP-OCRv6 模型的 `txts`、`scores` 和 `boxes` 的调用方，装上这个包即可切换。检测/识别不要传更老的 OCR 版本。
 
 本仓库没有 4.x 标签。细节和 C ABI 见 [`docs/API.md`](docs/API.md) 与 [`python/README.md`](python/README.md)。
 
 ### ⚠️ 已知限制
 
-- 没有方向分类器。`use_cls` 不会旋转文本框。
+- 严格 GPU-only（Vulkan）/ Metal 图以及 `model_type="lite"` 不运行方向分类器。
 - 没有单词框或单字框。`word_results` 保持为空。
 - 原生引擎跑 PP-OCRv6 ONNX 图。PP-OCRv4 / v5 文件不会被执行。
 - 纯 GPU 模式没有 CPU 神经网络回退。除非设置 `PPOCR_ENABLE_HYBRID_GPU_GRAPH`，hybrid 留在 CPU。
