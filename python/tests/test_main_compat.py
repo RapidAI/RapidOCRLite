@@ -34,7 +34,7 @@ from rapidocr.utils.load_image import LoadImage, MemoryImage
 from rapidocr.utils.parse_parameters import ParseParams
 
 REMAINING_INCOMPATIBILITIES = (
-    "use_cls is accepted and ignored; there is no angle classifier",
+    "use_cls runs on the CPU/hybrid graph only; GPU-only/Metal graphs and the lite model skip it",
     "use_det=False and use_rec=False together raise RapidOCRError",
     "return_word_box and return_single_char_box do not produce word boxes",
     "PP-OCRv4 and PP-OCRv5 model versions raise NotImplementedError",
@@ -305,6 +305,7 @@ def _model_params():
         "Rec.model_type": "tiny",
         "Global.use_cls": False,
         "Global.text_score": 0.3,
+        **({"Cls.model_path": os.environ["PPOCR_CLS_MODEL"]} if os.environ.get("PPOCR_CLS_MODEL") else {}),
     }
 
 

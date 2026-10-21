@@ -52,6 +52,8 @@ export PPOCR_TEST_IMAGE="$ROOT/python/tests/data/hello.png"
 export PPOCR_TEST_DET="$ROOT/ci-models/PP-OCRv6_det_tiny.onnx"
 export PPOCR_TEST_REC="$ROOT/ci-models/PP-OCRv6_rec_tiny.onnx"
 export PPOCR_TEST_DICT="$ROOT/ci-models/ppocrv6_tiny_dict.txt"
+# use_cls is on by default (rapidocr main); use the cached classifier.
+export PPOCR_CLS_MODEL="$ROOT/ci-models/ch_ppocr_mobile_v2.0_cls_mobile.onnx"
 
 python - << 'PY'
 import os

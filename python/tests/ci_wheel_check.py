@@ -37,6 +37,8 @@ os.environ.update(
     PPOCR_TEST_DET=str(MODELS / "PP-OCRv6_det_tiny.onnx"),
     PPOCR_TEST_REC=str(MODELS / "PP-OCRv6_rec_tiny.onnx"),
     PPOCR_TEST_DICT=str(MODELS / "ppocrv6_tiny_dict.txt"),
+    # use_cls is on by default (rapidocr main); use the cached classifier.
+    PPOCR_CLS_MODEL=str(MODELS / "ch_ppocr_mobile_v2.0_cls_mobile.onnx"),
 )
 
 try:
