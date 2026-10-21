@@ -5893,7 +5893,28 @@ void DepthwiseConv(float* dst, const float* src, const float* weights,
     const int last_x = max_start_x < 0 ? 0 : std::min(output_w, max_start_x / stride_w + 1);
     for (int oy = 0; oy < output_h; ++oy) {
       const int iy0 = oy * stride_h - pad_top;
+      // Width-stride-1 rows (the MobileNetV3 cls 5x5 / 3x3 stride-(2,1)
+      // layers have no SIMD kernel): accumulate the interior columns tap by
+      // tap over the contiguous row so the inner loop vectorizes. Each output
+      // still sums base + taps in the same ky-major/kx-minor order.
+      int vx0 = 0, vx1 = 0;
+      if (stride_w == 1 && oy >= first_y && oy < last_y && last_x - first_x >= 8) {
+        vx0 = first_x;
+        vx1 = last_x;
+        float* o = out + std::size_t(oy) * output_w;
+        for (int ox = vx0; ox < vx1; ++ox) o[ox] = base;
+        for (int ky = 0; ky < kernel_h; ++ky) {
+          const float* row = in + std::size_t(iy0 + ky) * input_w - pad_left;
+          const float* kernel = filter + std::size_t(ky) * kernel_w;
+          for (int kx = 0; kx < kernel_w; ++kx) {
+            const float k = kernel[kx];
+            const float* r = row + kx;
+            for (int ox = vx0; ox < vx1; ++ox) o[ox] += r[ox] * k;
+          }
+        }
+      }
       for (int ox = 0; ox < output_w; ++ox) {
+        if (ox >= vx0 && ox < vx1) continue;
         const int ix0 = ox * stride_w - pad_left;
         float sum = base;
         if (oy >= first_y && oy < last_y && ox >= first_x && ox < last_x) {

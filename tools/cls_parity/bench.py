@@ -41,22 +41,27 @@ def timed(fn):
     return (time.perf_counter() - t) * 1000
 
 
-for e in (on, off):  # warm-up
-    e(pages[0]); e(crops[0], use_det=False)
-on(crops[0], use_det=False, use_rec=False, use_cls=True)
+# rapidocr keeps per-call use_det/use_cls/use_rec for later calls, so every
+# call states all three.
+PAGE = dict(use_det=True, use_rec=True)
+CROP = dict(use_det=False, use_rec=True)
+CLS = dict(use_det=False, use_rec=False, use_cls=True)
+for e, c in ((on, True), (off, False)):  # warm-up
+    e(pages[0], use_cls=c, **PAGE); e(crops[0], use_cls=c, **CROP)
+on(crops[0], **CLS)
 res = {"label": a.label, "full_on": [], "full_off": [], "rec_on": [], "rec_off": [], "cls_only": []}
 for img in pages:
     x, y = [], []
     for _ in range(a.rounds):
-        x.append(timed(lambda: on(img)))
-        y.append(timed(lambda: off(img)))
+        x.append(timed(lambda: on(img, use_cls=True, **PAGE)))
+        y.append(timed(lambda: off(img, use_cls=False, **PAGE)))
     res["full_on"].append(statistics.median(x)); res["full_off"].append(statistics.median(y))
 for img in crops:
     x, y, z = [], [], []
     for _ in range(a.rounds):
-        x.append(timed(lambda: on(img, use_det=False)))
-        y.append(timed(lambda: off(img, use_det=False)))
-        z.append(timed(lambda: on(img, use_det=False, use_rec=False, use_cls=True)))
+        x.append(timed(lambda: on(img, use_cls=True, **CROP)))
+        y.append(timed(lambda: off(img, use_cls=False, **CROP)))
+        z.append(timed(lambda: on(img, **CLS)))
     res["rec_on"].append(statistics.median(x)); res["rec_off"].append(statistics.median(y))
     res["cls_only"].append(statistics.median(z))
 m = {k: statistics.median(v) for k, v in res.items() if isinstance(v, list)}

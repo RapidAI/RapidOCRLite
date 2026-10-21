@@ -1801,7 +1801,18 @@ void ClassifyCrops(const detail::OnnxLite& cls, const Options& opt, std::vector<
     return crops[a].w / static_cast<double>(crops[a].h) < crops[b].w / static_cast<double>(crops[b].h);
   });
   const auto lut = detail::cvc::RecNormalizeTable(0.5F, 0.5F);
-  const std::size_t max_batch = static_cast<std::size_t>(std::max(1, opt.cls_batch_size));
+  // Every line is padded to the fixed cls_width, so a line's tensor does not
+  // depend on which lines share its batch (rapidocr main batches by
+  // cls_batch_num only to bound memory). Running up to PPOCR_CLS_EXEC_BATCH
+  // (default 32) lines per graph call amortizes the ~90 per-node dispatches
+  // and lets the batched depthwise/pointwise kernels spread work over threads.
+  static const int exec_batch = [] {
+    const char* v = std::getenv("PPOCR_CLS_EXEC_BATCH");
+    const int parsed = v ? std::atoi(v) : 0;
+    return parsed > 0 ? std::min(parsed, 256) : 32;
+  }();
+  const std::size_t max_batch = static_cast<std::size_t>(
+      std::max({1, opt.cls_batch_size, exec_batch}));
   const std::size_t workers = static_cast<std::size_t>(std::max(1, opt.batch_preprocess_parallelism));
   const std::size_t stride = std::size_t(3) * ch * cw;
   const std::string& output_name = cls.outputs().empty() ? std::string{} : cls.outputs().front();
