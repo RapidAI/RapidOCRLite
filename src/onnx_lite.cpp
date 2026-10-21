@@ -2543,7 +2543,62 @@ void FuseSEGateFromFusedOps(GraphData& graph) {
         continue;
       }
     }
-    // Tiny-det FPN SE is GlobalAveragePool(x) -> 1x1 Relu -> 1x1 HardSigmoid
+    // MobileNetV3 / PP-OCR v2.0 cls SE is GlobalAveragePool(x) -> 1x1 Relu ->
+    // 1x1 HardSigmoid -> Mul(x, gate) (no residual Add). Same fused op as the
+    // ReduceMean form above; channels start at 8 in the first cls block.
+    if (i + 3 < graph.nodes.size() && reduce.op == "GlobalAveragePool" &&
+        reduce.in.size() == 1 && reduce.out.size() == 1 && consumers[reduce.out[0]] == 1 &&
+        !outputs.contains(reduce.out[0])) {
+      const auto& first = graph.nodes[i + 1];
+      const auto& second = graph.nodes[i + 2];
+      const auto& multiply = graph.nodes[i + 3];
+      const bool ordered = first.op == "FusedConvRelu" && first.in.size() == 3 &&
+          first.in[0] == reduce.out[0] && first.out.size() == 1 &&
+          consumers[first.out[0]] == 1 && second.op == "FusedConvHardSigmoid" &&
+          second.in.size() == 3 && second.in[0] == first.out[0] &&
+          second.out.size() == 1 && consumers[second.out[0]] == 1 &&
+          multiply.op == "Mul" && multiply.in.size() == 2 && multiply.out.size() == 1 &&
+          !outputs.contains(multiply.out[0]) &&
+          ((multiply.in[0] == reduce.in[0] && multiply.in[1] == second.out[0]) ||
+           (multiply.in[1] == reduce.in[0] && multiply.in[0] == second.out[0]));
+      const auto first_weights = ordered ? graph.initializers.find(first.in[1])
+                                         : graph.initializers.end();
+      const auto second_weights = ordered ? graph.initializers.find(second.in[1])
+                                          : graph.initializers.end();
+      const auto first_bias = ordered ? graph.initializers.find(first.in[2])
+                                      : graph.initializers.end();
+      const auto second_bias = ordered ? graph.initializers.find(second.in[2])
+                                       : graph.initializers.end();
+      if (ordered && first_weights != graph.initializers.end() &&
+          second_weights != graph.initializers.end() &&
+          consumers[reduce.in[0]] == 2 &&
+          first_weights->second.shape.size() == 4 &&
+          second_weights->second.shape.size() == 4 &&
+          first_weights->second.shape[2] == 1 && first_weights->second.shape[3] == 1 &&
+          second_weights->second.shape[2] == 1 && second_weights->second.shape[3] == 1 &&
+          first_weights->second.shape[1] == second_weights->second.shape[0] &&
+          first_weights->second.shape[0] == second_weights->second.shape[1] &&
+          first_bias != graph.initializers.end() && second_bias != graph.initializers.end() &&
+          first_bias->second.data.size() == std::size_t(first_weights->second.shape[0]) &&
+          second_bias->second.data.size() == std::size_t(second_weights->second.shape[0]) &&
+          first_weights->second.shape[1] >= 8) {
+        Node node;
+        node.op = "FusedSEGateMul";
+        node.name = reduce.name.empty() ? "fused_se_gate_mul" : reduce.name + "_se_gate_mul";
+        node.in = {reduce.in[0], first.in[1], first.in[2], second.in[1], second.in[2]};
+        node.out = multiply.out;
+        node.attr["alpha"].f = second.attr.contains("__ppocr_fused_alpha")
+            ? second.attr.at("__ppocr_fused_alpha").f
+            : (second.attr.contains("alpha") ? second.attr.at("alpha").f : .2F);
+        node.attr["beta"].f = second.attr.contains("__ppocr_fused_beta")
+            ? second.attr.at("__ppocr_fused_beta").f
+            : (second.attr.contains("beta") ? second.attr.at("beta").f : .5F);
+        fused.push_back(std::move(node));
+        i += 4;
+        continue;
+      }
+    }
+        // Tiny-det FPN SE is GlobalAveragePool(x) -> 1x1 Relu -> 1x1 HardSigmoid
     // -> Mul(x, gate) -> Add(x, mul) i.e. x * (1 + SE(x)). Eight of these
     // sit after unfused 1x1 projections. Collapse the five nodes so x's
     // dying storage is scaled in place. `PPOCR_DISABLE_SE_RESIDUAL_FUSION`
