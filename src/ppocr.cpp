@@ -2322,13 +2322,18 @@ std::vector<Result> LiteResults(const std::vector<indra::LiteLine>& lines) {
     if (!l.char_x.empty() && l.step > 0.F && x1 > x0 && y1 > y0) {
       r.crop_width = x1 - x0;
       r.crop_height = y1 - y0;
+      // main treats h / w >= 1.5 as vertical text (crop turned 90 degrees).
+      if (r.crop_height * 1.0 / r.crop_width >= 1.5) std::swap(r.crop_width, r.crop_height);
       r.rec_steps = std::max(1, static_cast<int>(std::lround(1.0 / l.step)));
       r.rec_max_wh_ratio = r.crop_width / static_cast<double>(r.crop_height);
       for (std::size_t k = 0; k < l.char_x.size(); ++k) {
         r.char_cols.push_back(std::clamp(static_cast<int>(std::floor(l.char_x[k] * r.rec_steps)), 0,
                                          r.rec_steps - 1));
         r.char_probs.push_back(l.char_probs[k]);
+        // one CTC step per character at most (main's selection is a set)
+        if (k > 0 && r.char_cols[k] <= r.char_cols[k - 1]) r.char_cols[k] = r.char_cols[k - 1] + 1;
       }
+      r.rec_steps = std::max(r.rec_steps, r.char_cols.back() + 1);
     }
     out.push_back(std::move(r));
   }

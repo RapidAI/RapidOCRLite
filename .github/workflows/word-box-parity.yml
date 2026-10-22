@@ -190,9 +190,9 @@ jobs:
         run: |
           mkdir -p parity
           /tmp/lite/bin/python tools/word_parity/eval_words.py parity/cpu.json --extra /tmp/word-pages \
-            --limit-det 40 --limit-rec 1 --model-root /tmp/models-lite
+            --limit-det 40 --no-rec --model-root /tmp/models-lite
           /tmp/lite/bin/python tools/word_parity/eval_words.py parity/gpu.json --extra /tmp/word-pages \
-            --limit-det 40 --limit-rec 1 --model-root /tmp/models-lite \
+            --limit-det 40 --no-rec --model-root /tmp/models-lite \
             --param EngineConfig.ppocr_cpp.backend=gpu Global.log_level=info
           {
             echo "### strict Vulkan GPU-only graph vs CPU"

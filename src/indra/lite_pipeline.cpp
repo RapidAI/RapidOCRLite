@@ -300,14 +300,21 @@ inline void LiteChars(LiteLine& l, const std::vector<Tok>& toks, double b0, doub
                       const std::u32string& text, bool (*is_space)(const Tok&, const void*), const void* ctx) {
   l.char_x.clear(); l.char_probs.clear(); l.step = 0;
   const double width = b2 - b0;
-  if (width <= 0 || toks.empty()) return;
+  if (width <= 0 || toks.empty()) {
+    if (std::getenv("PPOCR_LITE_CHARS_DEBUG")) std::fprintf(stderr, "lite chars: width %g, %zu tokens\n", width, toks.size());
+    return;
+  }
   std::vector<const Tok*> kept; bool pending_space = false;
   for (const auto& t : toks) {
     if (is_space(t, ctx)) { if (!kept.empty()) pending_space = true; continue; }
     if (pending_space) { kept.push_back(nullptr); pending_space = false; }
     kept.push_back(&t);
   }
-  if (kept.size() != text.size()) return;
+  if (kept.size() != text.size()) {
+    if (std::getenv("PPOCR_LITE_CHARS_DEBUG"))
+      std::fprintf(stderr, "lite chars: %zu tokens (%zu kept) vs %zu code points\n", toks.size(), kept.size(), text.size());
+    return;
+  }
   double step = 0;
   for (const auto* t : kept) if (t) { step = t->step; break; }
   if (step <= 0) return;

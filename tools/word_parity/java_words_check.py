@@ -25,7 +25,7 @@ def ref_words(txt, box, ch, single):
     if not txt.strip() or steps <= 0:
         return []
     info = build_word_info(txt, cols, probs, steps, cw * 1.0 / chh, max_wh)
-    b = np.asarray([[[round(x), round(y)] for x, y in box]], dtype=np.float32)
+    b = np.asarray([[[x, y] for x, y in box]], dtype=np.float32)
     out = CalRecBoxes()([(chh, cw)], b, [txt], [info], single)
     return [[t, float(c), [list(map(int, p)) for p in bb]] for t, c, bb in (out[0] if out else [])]
 

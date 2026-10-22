@@ -1343,7 +1343,9 @@ jobs:
             --ppocr ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
             ci-models/ppocrv6_tiny_dict.txt $pages | tail -40
           python -m pip install -q numpy Pillow PyYAML requests tqdm
-          lib=$(ls java/build/native/linux-x86_64/*.so | grep -v jni | head -1)
+          ls -la java/build/native/linux-x86_64/
+          lib=$(find java/build/native/linux-x86_64 -name '*rapidocrlite*.so*' ! -name '*jni*' | head -1)
+          echo "engine library: $lib"
           PPOCR_LIBRARY="$PWD/$lib" PYTHONPATH=python/src python tools/word_parity/java_words_check.py \
             java-words.json ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
             ci-models/ppocrv6_tiny_dict.txt | tee -a "$GITHUB_STEP_SUMMARY"
@@ -1495,8 +1497,9 @@ jobs:
           diff a.txt b.txt
           echo "loongarch64 jar OCR matches x86_64 ($(wc -l < a.txt) lines)"
           # word boxes (return_word_box) must match too
-          grep '^    w ' ocr-x86_64.txt > aw.txt
-          grep '^    w ' ocr-loongarch64.txt > bw.txt
+          # (confidences are float noise across ISAs in their 5th decimal: compare text + boxes)
+          grep '^    w ' ocr-x86_64.txt | sed 's/Word\[[^]]*\]/Word/' > aw.txt
+          grep '^    w ' ocr-loongarch64.txt | sed 's/Word\[[^]]*\]/Word/' > bw.txt
           test -s aw.txt
           diff aw.txt bw.txt
           echo "loongarch64 jar word boxes match x86_64 ($(wc -l < aw.txt) words)"

@@ -25,6 +25,7 @@ ap.add_argument("--limit-rec", type=int, default=0)
 ap.add_argument("--extra", nargs="*", default=[])
 ap.add_argument("--model-root", default=None)
 ap.add_argument("--no-datasets", action="store_true")
+ap.add_argument("--no-rec", action="store_true", help="skip the use_det=False crops")
 ap.add_argument("--param", nargs="*", default=[], help="extra RapidOCR params KEY=VALUE")
 a = ap.parse_args()
 params = {"Global.log_level": "error"}
@@ -105,7 +106,7 @@ if not a.no_datasets:
         rec = rec[: a.limit_rec]
     for i, s in enumerate(det):
         out["pages"][f"det/{i}"] = dump_full(bgr(s["image"]))
-    for i, s in enumerate(rec):
+    for i, s in enumerate([] if a.no_rec else rec):
         out["rec"][f"rec/{i}"] = dump_rec(bgr(s["image"]))
 json.dump(out, open(a.out, "w"), ensure_ascii=False)
 print("wrote", a.out, "pages", len(out["pages"]), "rec", len(out["rec"]))

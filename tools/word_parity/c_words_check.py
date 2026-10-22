@@ -74,8 +74,8 @@ for name, src in images():
         else:
             with_data += 1
             info = build_word_info(txt, cols, probs, steps, crop_w * 1.0 / crop_h, max_wh)
-            # C sees the engine's integer box corners.
-            box = np.asarray([[[round(x), round(y)] for x, y in boxes[i]]], dtype=np.float32)
+            # C sees the engine's float box corners (rpocr_text_box.box).
+            box = np.asarray([[[x, y] for x, y in boxes[i]]], dtype=np.float32)
             ref = []
             for single in (False, True):
                 out = CalRecBoxes()([(crop_h, crop_w)], box, [txt], [info], single)
@@ -86,7 +86,9 @@ for name, src in images():
             if [list(x) for x in ref[mode]] != [list(x) for x in got[mode]]:
                 bad += 1
                 if len(first) < 8:
-                    first.append(f"{name} line {i} {'char' if mode else 'word'} {txt!r}: py {ref[mode][:3]} c {got[mode][:3]}")
+                    diffs = [(k, x, y) for k, (x, y) in enumerate(zip(ref[mode], got[mode])) if list(x) != list(y)]
+                    first.append(f"{name} line {i} {'char' if mode else 'word'} {txt!r} n={len(ref[mode])}/{len(got[mode])} "
+                                 f"box={boxes[i]} crop={crop_w}x{crop_h}: first diffs {diffs[:2]}")
         # geometry sanity (word mode)
         if got[0]:
             xs = [p[0] for p in boxes[i]]

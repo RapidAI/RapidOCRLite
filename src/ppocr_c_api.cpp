@@ -3,6 +3,7 @@
 
 #include "rapidocrlite/rapidocrlite.hpp"
 #include "np_argsort.hpp"
+#include "word_boxes.hpp"
 #include "cv_compat.hpp"
 #include "vulkan_backend.hpp"
 #include "indra/lite_pipeline.hpp"
@@ -126,6 +127,10 @@ rpocr_text_box* AllocItems(std::size_t count) {
   return items;
 }
 
+ClsTrailer* Trailer(rpocr_text_box* items, std::size_t count) {
+  return reinterpret_cast<ClsTrailer*>(items + count);
+}
+
 ClsTrailer* Trailer(const rpocr_result* result) {
   return reinterpret_cast<ClsTrailer*>(result->items + result->count);
 }
@@ -226,6 +231,38 @@ int FillLite(const std::vector<rpocr::indra::LiteLine>& src, rpocr_result* resul
     items[i].box[1] = {l.x1, l.y0};
     items[i].box[2] = {l.x1, l.y1};
     items[i].box[3] = {l.x0, l.y1};
+    // return_word_box data, as OCR::Run's LiteResults: the (rounded) line box
+    // is the crop and one CTC step is `step` of its width.
+    ClsTrailer& t = Trailer(items, src.size())[i];
+    const int bx0 = static_cast<int>(std::lround(l.x0)), by0 = static_cast<int>(std::lround(l.y0));
+    const int bx1 = static_cast<int>(std::lround(l.x1)), by1 = static_cast<int>(std::lround(l.y1));
+    if (!l.char_x.empty() && l.step > 0.F && bx1 > bx0 && by1 > by0) {
+      const std::size_t n = l.char_x.size();
+      t.char_cols = static_cast<int*>(std::malloc(n * sizeof(int)));
+      t.char_probs = static_cast<float*>(std::malloc(n * sizeof(float)));
+      if (t.char_cols && t.char_probs) {
+        t.crop_width = bx1 - bx0;
+        t.crop_height = by1 - by0;
+        // main treats a box with h / w >= 1.5 as vertical text (its crop is
+        // turned 90 degrees and characters run top to bottom).
+        if (t.crop_height * 1.0 / t.crop_width >= 1.5) std::swap(t.crop_width, t.crop_height);
+        t.rec_steps = std::max(1, static_cast<int>(std::lround(1.0 / l.step)));
+        t.rec_max_wh_ratio = t.crop_width / static_cast<double>(t.crop_height);
+        for (std::size_t k = 0; k < n; ++k) {
+          t.char_cols[k] = std::clamp(static_cast<int>(std::floor(l.char_x[k] * t.rec_steps)), 0, t.rec_steps - 1);
+          t.char_probs[k] = l.char_probs[k];
+          // one CTC step per character at most (main's selection is a set)
+          if (k > 0 && t.char_cols[k] <= t.char_cols[k - 1]) t.char_cols[k] = t.char_cols[k - 1] + 1;
+        }
+        t.rec_steps = std::max(t.rec_steps, t.char_cols[n - 1] + 1);
+        t.char_count = n;
+      } else {
+        std::free(t.char_cols);
+        std::free(t.char_probs);
+        t.char_cols = nullptr;
+        t.char_probs = nullptr;
+      }
+    }
   }
   result->items = items;
   result->count = src.size();
@@ -495,7 +532,9 @@ int rpocr_result_words(const rpocr_result* result, size_t index, int single_char
     line.char_probs.assign(t.char_probs, t.char_probs + t.char_count);
   }
   try {
-    const auto out = rpocr::WordBoxes(line, single_char != 0);
+    float corners[4][2];
+    for (int k = 0; k < 4; ++k) { corners[k][0] = item.box[k].x; corners[k][1] = item.box[k].y; }
+    const auto out = rpocr::detail::WordBoxesAt(line, corners, single_char != 0);
     if (out.empty()) return RPOCR_OK;
     auto* items = static_cast<rpocr_word*>(std::calloc(out.size(), sizeof(rpocr_word)));
     if (!items) return Fail(RPOCR_ERR_NOMEM, "out of memory");

@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "np_argsort.hpp"
+#include "word_boxes.hpp"
 
 namespace rpocr {
 namespace {
@@ -212,6 +213,45 @@ void Invert3(const double s[3][3], double o[3][3]) {
   o[2][2] = (s[0][0] * s[1][1] - s[0][1] * s[1][0]) * d;
 }
 
+// np.dot(IM, [x, y, 1]) is a 3x3 float64 gemv in OpenBLAS. Its kernel on
+// FMA hardware computes fma(a0, x, a1 * y) + a2 (verified bit for bit
+// against numpy 2.5 / scipy-openblas 0.3.34 on x86-64 CI: mode 7); without
+// FMA plain left-to-right sums. PPOCR_WORDBOX_DOT forces a mode
+// (diagnostics): 0 plain, 1-8 the variants below.
+int DotMode() {
+  static const int mode = [] {
+    if (const char* e = std::getenv("PPOCR_WORDBOX_DOT")) return std::atoi(e);
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return 7;
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    // NumPy's X86_V3 group (AVX2 + FMA ...) is what OpenBLAS's Haswell+ kernels need.
+    return detail::NumpyArgsortIsa() != detail::ArgsortIsa::scalar ? 7 : 0;
+#else
+    return 0;
+#endif
+  }();
+  return mode;
+}
+
+double Dot3(const double* r, double px, double py) {
+  switch (DotMode()) {
+    case 1: return std::fma(r[2], 1.0, std::fma(r[1], py, r[0] * px));
+    case 2: return std::fma(r[0], px, std::fma(r[1], py, r[2]));
+    case 3: return std::fma(r[1], py, std::fma(r[0], px, r[2]));
+    case 4: { volatile double a = r[0] * px, c = r[2] * 1.0, b = r[1] * py; volatile double t = a + c; return t + b; }
+    case 5: { volatile double a = r[0] * px, b = r[1] * py, c = r[2]; volatile double t = b + c; return a + t; }
+    case 6: return std::fma(r[0], px, std::fma(r[1], py, r[2] * 1.0));
+    case 7: { volatile double t = std::fma(r[0], px, r[1] * py); return t + r[2]; }
+    case 8: { volatile double t = std::fma(r[1], py, r[0] * px); return t + r[2]; }
+    default: {
+      volatile double a = r[0] * px;
+      volatile double b = r[1] * py;
+      volatile double c = a + b;
+      return c + r[2];
+    }
+  }
+}
+
 using IPt = std::array<long long, 2>;
 
 // main's CalRecBoxes.order_points on integer points.
@@ -275,6 +315,13 @@ std::array<IPt, 4> OrderPoints(const std::array<IPt, 4>& box) {
 }  // namespace
 
 std::vector<Word> WordBoxes(const Result& line, bool single_char) {
+  float q[4][2];
+  for (int k = 0; k < 4; ++k) { q[k][0] = float(line.box[k][0]); q[k][1] = float(line.box[k][1]); }
+  return detail::WordBoxesAt(line, q, single_char);
+}
+
+namespace detail {
+std::vector<Word> WordBoxesAt(const Result& line, const float box[4][2], bool single_char) {
   std::vector<Word> out;
   const std::u32string text = Utf8To32(line.text);
   bool blank = true;
@@ -346,7 +393,7 @@ std::vector<Word> WordBoxes(const Result& line, bool single_char) {
   }
   // get_box_direction on the line box (float32)
   float q[4][2];
-  for (int k = 0; k < 4; ++k) { q[k][0] = float(line.box[k][0]); q[k][1] = float(line.box[k][1]); }
+  for (int k = 0; k < 4; ++k) { q[k][0] = box[k][0]; q[k][1] = box[k][1]; }
   const double e0 = Norm32(q[0][0] - q[1][0], q[0][1] - q[1][1]);
   const double e1 = Norm32(q[1][0] - q[2][0], q[1][1] - q[2][1]);
   const double e2 = Norm32(q[2][0] - q[3][0], q[2][1] - q[3][1]);
@@ -377,12 +424,7 @@ std::vector<Word> WordBoxes(const Result& line, bool single_char) {
         px = rx + crop_w;
         py = ry;
       }
-      volatile double x = im[0][0] * px + im[0][1] * py;
-      x = x + im[0][2];
-      volatile double y = im[1][0] * px + im[1][1] * py;
-      y = y + im[1][2];
-      volatile double z = im[2][0] * px + im[2][1] * py;
-      z = z + im[2][2];
+      const double x = Dot3(im[0], px, py), y = Dot3(im[1], px, py), z = Dot3(im[2], px, py);
       pts[k] = {static_cast<long long>(std::trunc(x / z + double(left))),
                 static_cast<long long>(std::trunc(y / z + double(top)))};
     }
@@ -395,5 +437,6 @@ std::vector<Word> WordBoxes(const Result& line, bool single_char) {
   }
   return out;
 }
+}  // namespace detail
 
 }  // namespace rpocr
