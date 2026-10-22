@@ -152,3 +152,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - 2026-10-19 21:20 Release 5.0.0a11: version bump; first release with the Java binding inside (java/ fat jar on the release, build-java.yml dispatch-driven after build-sdk uploads the SDK tarballs).
 - 2026-10-20 14:30 Release 5.0.0a12: version bump; first release with manylinux_2_38_loongarch64 wheels (cp39-cp313, GitHub Release only, QEMU-verified).
 - 2026-10-20 16:00 Release 5.0.0a13: version bump; Java fat jar gains native/linux-loongarch64 (zig cross, QEMU loong64 OCR parity with x86_64).
+- 2026-10-22 09:55 Release 5.0.0a14: version bump; text-line orientation classifier (use_cls, rapidocr main parity) with fused cls graph, Metal full-page parity with CPU/main (7c5ccf6).
