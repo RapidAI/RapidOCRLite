@@ -146,9 +146,9 @@ pip install ./python
 | --- | --- |
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | built-in PP-OCRv6 interpreter only (`EngineType.ONNXRUNTIME` or `EngineType.PPOCR_CPP`) |
 | PP-OCRv4 and v5 model zoo | PP-OCRv6 ONNX detector + recognizer |
-| angle classifier (`use_cls=True` by default) | same: on by default, PP-OCRv4 `ch_ppocr_mobile_v2.0_cls_mobile` (or PP-OCRv5 PP-LCNet via `Cls.ocr_version` / `Cls.model_type`), main's preprocessing incl. #748; CPU/hybrid/Metal (not the strict Vulkan GPU-only graph, not lite) |
+| angle classifier (`use_cls=True` by default) | same: on by default, PP-OCRv4 `ch_ppocr_mobile_v2.0_cls_mobile` (or PP-OCRv5 PP-LCNet via `Cls.ocr_version` / `Cls.model_type`), main's preprocessing incl. #748; CPU/hybrid/Metal/Vulkan GPU-only (not its legacy device route, not lite) |
 | `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`, `TextClsOutput` with only `use_cls`); all three False raises `RapidOCRError`; C ABI `rpocr_run` with `RPOCR_TASK_DET` / `RPOCR_TASK_REC` |
-| word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). Every backend computes them the same way (per-character CTC step and probability plus the crop geometry): CPU, hybrid and Metal match main; the strict Vulkan GPU-only graph (axis-aligned crops) and the lite model (its own recognizer) are checked against CPU (see docs/API.md). `vis()` does not draw them. |
+| word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). Every backend computes them the same way (per-character CTC step and probability plus the crop geometry): CPU, hybrid, Metal and the strict Vulkan GPU-only graph match main (GPU backends checked to equal CPU exactly); the lite model (its own recognizer) is checked against CPU (see docs/API.md). `vis()` does not draw them. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]` because the native call is one timed region |
 | OpenCV drawing in `vis` | Pillow polygons |
 
@@ -198,13 +198,17 @@ LoongArch (QEMU) jar with x86-64.
 Every backend records the data the same way: the time step and probability
 of each kept CTC character plus the crop geometry.
 
-- CPU, hybrid and Metal (exact path): main's batches and crops; the words
-  and boxes match main (`word-box-parity`).
-- Strict Vulkan GPU-only graph: each line is read from its axis-aligned
-  rectangle at its own width. The engine reports the rotated crop size the
-  CPU path would cut, and scales `rec_max_wh_ratio` so `line_txt_len` is the
-  line's share of the CTC steps. On lavapipe the words are compared with the
-  CPU run of the same models (`compare_backends.py`).
+- CPU, hybrid, Metal and the strict Vulkan GPU-only graph: main's batches
+  and crops (the GPU backends run only the det/rec networks on the device,
+  around the CPU resize, DB postprocess, perspective-warp crops and
+  batching); the words and boxes match main, and CI requires hybrid, Metal
+  and Vulkan GPU-only (lavapipe) to equal the CPU run exactly
+  (`compare_backends.py --exact`).
+- Legacy Vulkan GPU-only device route (`PPOCR_VULKAN_DEVICE_FRONTEND=1`):
+  each line is read from its axis-aligned rectangle at its own width. The
+  engine reports the rotated crop size the CPU path would cut and scales
+  `rec_max_wh_ratio` so `line_txt_len` is the line's share of the CTC steps;
+  texts match CPU but word edges can move by a few CTC columns.
 - Lite model (`model_type=lite`): Indra's recognizer reports each token's
   centre. The line box is the crop and one CTC step is one recognizer
   stride, so `line_txt_len == rec_steps`. There is no main counterpart, so
@@ -275,8 +279,9 @@ use_rec, use_cls)`, `Result::{cls_label, cls_score}`. Java:
 The classifier runs as its own CPU graph (`Backend::cpu_only`) with the same
 kernels and ISA dispatch as det/rec, so AVX-512, AVX2, NEON, LSX/LASX and
 scalar give the same labels. On Metal it runs on the CPU between the
-GPU detector and recognizer. The strict GPU-only (Vulkan) graph does not
-classify (one stderr note); `model_type = lite` ignores it. The
+GPU detector and recognizer. The strict GPU-only (Vulkan) graph classifies
+the same way; only its legacy device route (`PPOCR_VULKAN_DEVICE_FRONTEND=1`)
+does not (one stderr note); `model_type = lite` ignores it. The
 opt-in hybrid whole-GPU graph (`PPOCR_ENABLE_HYBRID_GPU_GRAPH`) is skipped
 while classification is on so the CPU crops can be turned.
 
