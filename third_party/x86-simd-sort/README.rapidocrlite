@@ -1,0 +1,3 @@
+Vendored from https://github.com/intel/x86-simd-sort at fa944efbea1a33426b3f8a9a21e23794ab8aa300
+(the submodule commit NumPy v2.5.4 builds np.argsort from). Unmodified; used by
+src/np_argsort_*.cpp so the recognizer batches lines in exactly np.argsort order.

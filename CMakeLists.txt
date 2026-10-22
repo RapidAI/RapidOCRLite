@@ -38,6 +38,7 @@ set(PPOCR_SOURCES
     src/db_geometry.cpp
     src/cv_compat.cpp
     src/clipper/clipper.cpp
+    src/np_argsort.cpp
 )
 
 add_library(ppocr_objects OBJECT ${PPOCR_SOURCES})
@@ -233,6 +234,37 @@ if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
     # the same feature bits before the TU is entered.
     set_source_files_properties(src/kernels_avx512.cpp PROPERTIES COMPILE_OPTIONS
         "-mavx512f;-mavx512dq;-mavx512bw;-mavx512vl;-mbmi;-mbmi2;-mfma")
+  endif()
+endif()
+
+# np.argsort order for recognition batches (src/np_argsort.hpp): NumPy's
+# scalar introsort everywhere, plus the vendored x86-simd-sort argsort built
+# for NumPy's X86_V3 (AVX2) and X86_V4 (AVX-512) dispatch targets on x86.
+# No fast-math: NaN placement must follow NumPy.
+if(MSVC)
+  set_source_files_properties(src/np_argsort.cpp PROPERTIES COMPILE_OPTIONS "/fp:precise")
+else()
+  set_source_files_properties(src/np_argsort.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math")
+endif()
+if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
+  target_sources(ppocr_objects PRIVATE src/np_argsort_avx2.cpp)
+  target_compile_definitions(ppocr_objects PRIVATE PPOCR_HAS_NP_ARGSORT_AVX2=1)
+  set(PPOCR_NP_ARGSORT_SIMD src/np_argsort_avx2.cpp)
+  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 4)
+    target_sources(ppocr_objects PRIVATE src/np_argsort_avx512.cpp)
+    target_compile_definitions(ppocr_objects PRIVATE PPOCR_HAS_NP_ARGSORT_AVX512=1)
+    list(APPEND PPOCR_NP_ARGSORT_SIMD src/np_argsort_avx512.cpp)
+  endif()
+  set_source_files_properties(${PPOCR_NP_ARGSORT_SIMD} PROPERTIES
+      INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/x86-simd-sort/src")
+  if(MSVC)
+    set_source_files_properties(src/np_argsort_avx2.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/fp:precise;/W0")
+    set_source_files_properties(src/np_argsort_avx512.cpp PROPERTIES COMPILE_OPTIONS "/arch:AVX512;/fp:precise;/W0")
+  else()
+    set_source_files_properties(src/np_argsort_avx2.cpp PROPERTIES COMPILE_OPTIONS
+        "-mavx2;-mfma;-mf16c;-mbmi;-mbmi2;-mlzcnt;-mmovbe;-mpopcnt;-msse4.2;-mno-avx512f;-fno-fast-math;-w")
+    set_source_files_properties(src/np_argsort_avx512.cpp PROPERTIES COMPILE_OPTIONS
+        "-mavx512f;-mavx512cd;-mavx512vl;-mavx512bw;-mavx512dq;-mavx2;-mfma;-mf16c;-mbmi;-mbmi2;-mlzcnt;-mmovbe;-mpopcnt;-msse4.2;-fno-fast-math;-w")
   endif()
 endif()
 

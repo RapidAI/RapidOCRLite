@@ -185,6 +185,34 @@ detection-only). C++: `Result::{char_cols, char_probs, rec_steps,
 crop_width, crop_height, rec_max_wh_ratio}`. The Java binding does not
 expose them yet.
 
+### Recognition batch order (native `np.argsort`)
+
+main batches line crops by `np.argsort(width / height)`, NumPy's default
+unstable sort. Ties decide which lines share a padded batch, and that
+changes `max_wh_ratio`, the word boxes and (slightly) the scores. The
+engine reproduces that order natively for every caller (C, C++, Java,
+Python), with no NumPy at run time (`src/np_argsort*`):
+
+- On x86-64 CPUs with NumPy's X86_V4 group (AVX-512 F/CD/VL/BW/DQ) or
+  X86_V3 group (AVX2, FMA, F16C, BMI1/2, LZCNT, MOVBE), NumPy 2.x's
+  `aquicksort_double` dispatches to x86-simd-sort
+  (`x86simdsortStatic::argsort(..., hasnan=true)`). The engine compiles the
+  same commit that NumPy v2.5.4 vendors (fa944ef, `third_party/x86-simd-sort`)
+  for the same two targets and picks the one NumPy would pick.
+- Everywhere else (ARM/NEON, which has no SIMD argsort in NumPy, LoongArch,
+  older x86) it uses a port of NumPy's scalar introsort: insertion sort below
+  16, median of 3, heapsort after 2*log2(n) levels, NaN last.
+
+The three paths order ties differently, so the native order matches what a
+main user on the same CPU gets. The `argsort-fuzz` workflow checks every
+path against `np.argsort` on 20,000 arrays: lengths 1..2000, quantized
+ratios with many ties, plus ±0, inf and NaN. `rpocr_argsort(values, n,
+order)` and `rpocr_argsort_isa()` expose the sort itself.
+`PPOCR_ARGSORT_ISA=scalar|avx2` forces a lower path to match a NumPy run
+with `NPY_DISABLE_CPU_FEATURES`. Caveats: 32-bit x86 builds have no AVX-512
+path; NumPy older than 2.5 vendored other x86-simd-sort commits.
+`rpocr_set_rec_order` / `OCR::SetRecOrder` still override the order.
+
 ## Text-line orientation classifier (`use_cls`, appended fields)
 
 rapidocr main's `Global.use_cls` step (head 8ac45f4, PR #748) runs between

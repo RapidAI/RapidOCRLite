@@ -1,5 +1,6 @@
 #include "indra/lite_pipeline.hpp"
 #include "rapidocrlite/rapidocrlite.hpp"
+#include "np_argsort.hpp"
 
 #include "db_geometry.hpp"
 #include "cv_compat.hpp"
@@ -2021,19 +2022,29 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
   });
   const int rec_h = opt.rec_height;
   const int rec_w = rec_h * 320 / 48;
+  // rapidocr main: indices = np.argsort(np.array(width_list)), NumPy's
+  // default (unstable) argsort, reproduced natively (np_argsort.hpp). An
+  // OCR::SetRecOrder callback overrides it.
   const auto apply_rec_order = [&] {
-    if (!rec_order || n < 2) return;
+    if (n < 2) return;
     std::vector<double> ratios(n);
     for (std::size_t i = 0; i < n; ++i) ratios[i] = crop_w(i) / static_cast<double>(crop_h(i));
-    std::vector<std::size_t> custom(n, n);
-    rec_order(ratios, custom);
-    if (custom.size() != n) return;
-    std::vector<char> seen(n, 0);
-    for (const std::size_t i : custom) {
-      if (i >= n || seen[i]) return;
-      seen[i] = 1;
+    if (rec_order) {
+      std::vector<std::size_t> custom(n, n);
+      rec_order(ratios, custom);
+      bool valid = custom.size() == n;
+      std::vector<char> seen(n, 0);
+      for (std::size_t k = 0; valid && k < n; ++k) {
+        const std::size_t i = custom[k];
+        if (i >= n || seen[i]) valid = false;
+        else seen[i] = 1;
+      }
+      if (valid) {
+        order.swap(custom);
+        return;
+      }
     }
-    order.swap(custom);
+    detail::NumpyArgsort(ratios.data(), n, order.data());
   };
   const std::size_t max_batch = static_cast<std::size_t>(std::max(1, opt.rec_batch_size));
   struct Batch { int width; const std::size_t* indices; std::size_t count; double max_ratio; };

@@ -1,3 +1,4 @@
+#include <math.h>
 #include "rapidocrlite/rapidocrlite.h"
 
 #include <stddef.h>
@@ -62,6 +63,15 @@ int main(void) {
   }
   Expect(rpocr_cls_loaded(NULL) == 0, "cls_loaded null");
   Expect(rpocr_set_rec_order(NULL, NULL, NULL) == RPOCR_ERR_INVALID_ARGUMENT, "rec order null");
+  {
+    /* np.argsort([3, 1, 2, 1, nan, 0]) -> 5 1 3 2 0 4 on every NumPy path */
+    const double v[6] = {3.0, 1.0, 2.0, 1.5, NAN, 0.0};
+    const size_t want[6] = {5, 1, 3, 2, 0, 4};
+    size_t got[6] = {0};
+    rpocr_argsort(v, 6, got);
+    for (int i = 0; i < 6; ++i) Expect(got[i] == want[i], "argsort order");
+    Expect(rpocr_argsort_isa() >= 0 && rpocr_argsort_isa() <= 2, "argsort isa");
+  }
   rpocr_image_buffer image = {0};
   Expect(rpocr_load_ppm("missing.ppm", &image) != RPOCR_OK, "missing ppm");
 

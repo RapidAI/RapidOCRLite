@@ -112,17 +112,6 @@ REC_ORDER_FN = ctypes.CFUNCTYPE(
 )
 
 
-def _numpy_rec_order(ratios, count, order, _user):
-    # rapidocr main TextRecognizer: indices = np.argsort(np.array(width_list))
-    values = np.ctypeslib.as_array(ratios, shape=(int(count),)).copy()
-    indices = np.argsort(values)
-    for k, index in enumerate(indices.tolist()):
-        order[k] = index
-
-
-_REC_ORDER_CALLBACK = REC_ORDER_FN(_numpy_rec_order)
-
-
 class BackendInfo(ctypes.Structure):
     _fields_ = [
         ("vulkan_loader_available", ctypes.c_int),
@@ -228,6 +217,14 @@ def _bind(lib: ctypes.CDLL) -> None:
     if set_rec_order is not None:
         set_rec_order.argtypes = [ctypes.c_void_p, REC_ORDER_FN, ctypes.c_void_p]
         set_rec_order.restype = ctypes.c_int
+    argsort = getattr(lib, "rpocr_argsort", None)
+    if argsort is not None:
+        argsort.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p]
+        argsort.restype = None
+    argsort_isa = getattr(lib, "rpocr_argsort_isa", None)
+    if argsort_isa is not None:
+        argsort_isa.argtypes = []
+        argsort_isa.restype = ctypes.c_int
     cls_loaded = getattr(lib, "rpocr_cls_loaded", None)
     if cls_loaded is not None:
         cls_loaded.argtypes = [ctypes.c_void_p]
@@ -270,10 +267,6 @@ class NativeOCR:
         if not handle:
             raise RuntimeError(self._error() or "rpocr_create failed")
         self.handle = handle
-        # Batch lines in np.argsort order, as rapidocr main does (unstable on ties).
-        set_rec_order = getattr(self.lib, "rpocr_set_rec_order", None)
-        if set_rec_order is not None:
-            set_rec_order(handle, _REC_ORDER_CALLBACK, None)
 
     def active_backend(self) -> Optional[int]:
         """RPOCR_BACKEND_* that runs the full pipeline, or None on an old build."""
@@ -482,3 +475,21 @@ def default_options() -> Options:
     options = Options()
     lib.rpocr_options_init_ex(ctypes.byref(options), ctypes.sizeof(Options))
     return options
+
+
+def native_argsort(values) -> np.ndarray:
+    """rpocr_argsort: the engine's native np.argsort (recognition batch order)."""
+
+    lib = load_library()
+    if getattr(lib, "rpocr_argsort", None) is None:
+        raise RuntimeError("this librapidocrlite has no rpocr_argsort")
+    arr = np.ascontiguousarray(values, dtype=np.float64)
+    out = np.empty(arr.shape[0], dtype=np.uintp)
+    lib.rpocr_argsort(arr.ctypes.data, arr.shape[0], out.ctypes.data)
+    return out.astype(np.intp)
+
+
+def native_argsort_isa() -> str:
+    lib = load_library()
+    query = getattr(lib, "rpocr_argsort_isa", None)
+    return {0: "scalar", 1: "avx2", 2: "avx512"}.get(int(query()), "?") if query else "none"

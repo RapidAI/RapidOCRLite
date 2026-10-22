@@ -2,6 +2,7 @@
 #include "rapidocrlite/rapidocrlite.h"
 
 #include "rapidocrlite/rapidocrlite.hpp"
+#include "np_argsort.hpp"
 #include "cv_compat.hpp"
 #include "vulkan_backend.hpp"
 #include "indra/lite_pipeline.hpp"
@@ -472,6 +473,13 @@ int rpocr_set_rec_order(rpocr_ocr* ocr, rpocr_rec_order_fn fn, void* user) {
   });
   return RPOCR_OK;
 }
+
+void rpocr_argsort(const double* values, size_t count, size_t* order) {
+  if (!order || (!values && count > 0)) return;
+  rpocr::detail::NumpyArgsort(values, count, order);
+}
+
+int rpocr_argsort_isa(void) { return static_cast<int>(rpocr::detail::NumpyArgsortIsa()); }
 
 int rpocr_cls_loaded(const rpocr_ocr* ocr) {
   if (!ocr || ocr->lite) return 0;

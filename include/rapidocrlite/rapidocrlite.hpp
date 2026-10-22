@@ -264,13 +264,13 @@ class RPOCR_API OCR {
   // default for this handle (after PPOCR_USE_CLS).
   [[nodiscard]] bool ClsEnabled() const noexcept;
   [[nodiscard]] bool ClsLoaded() const noexcept;
-  // Order in which the exact (non-fast) recognition path batches crops.
-  // rapidocr main sorts them with np.argsort(width / height), numpy's
-  // default unstable sort, so equal ratios can land in different batches
-  // than the default std::stable_sort; batch padding then changes
-  // max_wh_ratio, the word boxes and (slightly) the scores. fn receives each
-  // crop's width / height and must fill `order` (pre-sized) with a
-  // permutation; anything else keeps the stable order. Empty fn restores it.
+  // Order in which the exact (non-fast) recognition path batches crops. By
+  // default it is np.argsort(width / height) computed natively, bit for bit
+  // what NumPy 2.x gives on this CPU (x86-simd-sort on AVX2 / AVX-512 x86,
+  // NumPy's scalar introsort elsewhere; see docs/API.md), which is how
+  // rapidocr main batches lines. An override receives each crop's
+  // width / height and must fill `order` (pre-sized) with a permutation;
+  // anything else falls back to the native order. Empty fn removes it.
   // Set it before recognizing; the call is not synchronized with Run.
   using RecOrderFn =
       std::function<void(const std::vector<double>& ratios, std::vector<std::size_t>& order)>;

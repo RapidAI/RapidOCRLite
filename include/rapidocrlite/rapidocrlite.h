@@ -232,17 +232,28 @@ typedef struct rpocr_line_chars {
 RPOCR_API int rpocr_result_chars(const rpocr_result* result, size_t index,
                                  rpocr_line_chars* chars);
 /* Recognition batch order (5.0.0a15). rapidocr main batches line crops in
-   np.argsort(width / height) order, numpy's unstable sort, so lines with
-   equal ratios can share a batch differently from this library's stable
-   sort, which changes batch padding and with it word boxes and, slightly,
-   scores. A callback set here receives the `count` ratios (double
-   width / height of each crop, detection order) and fills `order` with a
-   permutation of 0..count-1; an invalid permutation keeps the stable order.
-   NULL restores it. Only the exact (non-fast) CPU / hybrid / Metal
-   recognition path uses it. The Python package installs np.argsort. */
+   np.argsort(width / height) order, NumPy's default unstable sort; ties
+   decide which lines share a padded batch, which changes word boxes and,
+   slightly, scores. The engine reproduces that order natively by default
+   (rpocr_argsort). A callback set here overrides it: it receives the
+   `count` ratios (double width / height of each crop, detection order) and
+   fills `order` with a permutation of 0..count-1; an invalid permutation
+   keeps the native order. NULL removes the override. Only the exact
+   (non-fast) CPU / hybrid / Metal recognition path batches this way. */
 typedef void (*rpocr_rec_order_fn)(const double* ratios, size_t count, size_t* order,
                                    void* user);
 RPOCR_API int rpocr_set_rec_order(rpocr_ocr* ocr, rpocr_rec_order_fn fn, void* user);
+/* np.argsort(values) for a float64 array (kind="quicksort"), index for index
+   as NumPy 2.x computes it on this CPU: NumPy dispatches to x86-simd-sort on
+   x86 CPUs with its X86_V4 (AVX-512 F/CD/VL/BW/DQ) or X86_V3 (AVX2, FMA,
+   BMI1/2, F16C, LZCNT, MOVBE) feature groups and otherwise (older x86, ARM,
+   LoongArch, ...) runs its scalar introsort; ties come out differently in
+   the three. The vendored x86-simd-sort is the commit NumPy v2.5.4 ships.
+   The PPOCR_ARGSORT_ISA environment variable (scalar, avx2, avx512) forces a
+   lower variant. rpocr_argsort_isa returns the variant in use: 0 scalar,
+   1 avx2, 2 avx512. */
+RPOCR_API void rpocr_argsort(const double* values, size_t count, size_t* order);
+RPOCR_API int rpocr_argsort_isa(void);
 /* 1 when this handle has a classifier model loaded, 0 otherwise. */
 RPOCR_API int rpocr_cls_loaded(const rpocr_ocr* ocr);
 /* outs must point at count result objects. Input order is preserved. */

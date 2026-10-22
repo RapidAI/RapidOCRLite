@@ -1,0 +1,53 @@
+name: argsort fuzz
+
+# The engine batches recognition lines in np.argsort(width / height) order,
+# reproduced natively (src/np_argsort*). Fuzz it against NumPy: on x86 the
+# AVX-512, AVX2 (x86-simd-sort) and scalar paths, each against NumPy forced
+# onto the same path; on arm64 macOS the scalar path NumPy uses there.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: argsort-fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: argsort fuzz (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build the CPU library
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF
+          cmake --build build -j4
+          lib=$(ls "$PWD"/build/librapidocrlite.so "$PWD"/build/librapidocrlite.dylib 2>/dev/null | head -1)
+          echo "PPOCR_LIBRARY=$lib" >> "$GITHUB_ENV"
+      - name: Fuzz native argsort vs np.argsort
+        env:
+          PYTHONPATH: python/src
+        run: |
+          python -m pip install -q numpy
+          python -c "import numpy; numpy.show_runtime()" || true
+          if [ "$(uname -m)" = x86_64 ]; then v=all; else v=native; fi
+          python tools/argsort_fuzz/fuzz.py --cases 20000 --variant "$v"
