@@ -35,6 +35,31 @@ struct UnsupportedError : std::runtime_error {
 struct Result {
   std::string text;
   float confidence{};
+  std::array<int, 4> bbox{};                 // x, y, width, height
+  std::array<std::array<int, 2>, 4> box{};   // TL, TR, BR, BL
+  // Text-line orientation (rapidocr main TextClassifier). -1: the classifier
+  // did not run for this line. Otherwise the arg-max class index (0 = "0",
+  // 1 = "180" with the default label list) and its softmax probability. The
+  // line was rotated 180 degrees before recognition when cls_label == 1 and
+  // cls_score > Options::cls_thresh.
+  int cls_label = -1;
+  float cls_score = 0.F;
+  // Per-character CTC data for word / character boxes (rapidocr main
+  // return_word_box), filled by every recognition path (CPU, hybrid,
+  // Metal, strict Vulkan GPU-only, lite model; see docs/API.md);
+  // rec_steps == 0 when not recorded. char_cols[k] is the CTC time step that emitted the
+  // k-th decoded character and char_probs[k] its max softmax probability.
+  // rec_steps is the recognizer output length of the line's batch,
+  // crop_width / crop_height the rotated crop size (get_rotate_crop_image)
+  // and rec_max_wh_ratio the batch's max_wh_ratio, so rapidocr main's
+  // line_txt_len = rec_steps * (crop_width / crop_height) / rec_max_wh_ratio.
+  std::vector<int> char_cols;
+  std::vector<float> char_probs;
+  int rec_steps = 0;
+  int crop_width = 0;
+  int crop_height = 0;
+  double rec_max_wh_ratio = 0.0;
+};
 
 // One word (or character) box of a line, rapidocr main's word_results item:
 // (text, confidence, box). The confidence is main's per-character score
@@ -49,32 +74,6 @@ struct Word {
 // return_single_char_box), from the line's box and per-character data.
 // Empty for blank lines and when the line has no per-character data.
 std::vector<Word> WordBoxes(const Result& line, bool single_char = false);
-
-  std::array<int, 4> bbox{};                 // x, y, width, height
-  std::array<std::array<int, 2>, 4> box{};   // TL, TR, BR, BL
-  // Text-line orientation (rapidocr main TextClassifier). -1: the classifier
-  // did not run for this line. Otherwise the arg-max class index (0 = "0",
-  // 1 = "180" with the default label list) and its softmax probability. The
-  // line was rotated 180 degrees before recognition when cls_label == 1 and
-  // cls_score > Options::cls_thresh.
-  int cls_label = -1;
-  float cls_score = 0.F;
-  // Per-character CTC data for word / character boxes (rapidocr main
-  // return_word_box). Filled by the CPU / hybrid recognition path (and the
-  // Metal path that feeds the CPU front end's tensors); empty elsewhere
-  // (rec_steps == 0). char_cols[k] is the CTC time step that emitted the
-  // k-th decoded character and char_probs[k] its max softmax probability.
-  // rec_steps is the recognizer output length of the line's batch,
-  // crop_width / crop_height the rotated crop size (get_rotate_crop_image)
-  // and rec_max_wh_ratio the batch's max_wh_ratio, so rapidocr main's
-  // line_txt_len = rec_steps * (crop_width / crop_height) / rec_max_wh_ratio.
-  std::vector<int> char_cols;
-  std::vector<float> char_probs;
-  int rec_steps = 0;
-  int crop_width = 0;
-  int crop_height = 0;
-  double rec_max_wh_ratio = 0.0;
-};
 
 // Execution policy for PP-OCRv6. CPU is always available. GPU-only never
 // silently falls back: preprocessing, neural graphs, DB detection postprocess
