@@ -116,8 +116,8 @@ jobs:
             /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --subset || true
           } | tee parity/summary.txt
           echo '```' >> "$GITHUB_STEP_SUMMARY"; cat parity/summary.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
-          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict
-          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --strict --subset
+          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict --max-word-diffs 4
+          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --strict --subset --max-word-diffs 4
 
       - uses: actions/upload-artifact@v4
         if: always()

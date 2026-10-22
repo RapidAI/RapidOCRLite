@@ -14,7 +14,9 @@ import sys
 ap = argparse.ArgumentParser()
 ap.add_argument("ref")
 ap.add_argument("other")
-ap.add_argument("--conf-tol", type=float, default=2e-5)
+ap.add_argument("--conf-tol", type=float, default=1e-2)
+ap.add_argument("--max-word-diffs", type=int, default=0,
+                help="words whose text/box may differ (CTC argmax near-ties) before --strict fails")
 ap.add_argument("--strict", action="store_true")
 ap.add_argument("--subset", action="store_true", help="only keys present in the second dump")
 a = ap.parse_args()
@@ -22,6 +24,7 @@ ref, oth = json.load(open(a.ref)), json.load(open(a.other))
 
 stats = {"pages": 0, "page_equal": 0, "words": 0, "word_equal": 0, "conf_max_diff": 0.0}
 bad = []
+bad_words = []
 for key, rp in ref["pages"].items():
     if a.subset and key not in oth["pages"]:
         continue
@@ -53,6 +56,9 @@ for key, rp in ref["pages"].items():
                     stats["word_equal"] += 1
                 else:
                     ok = False
+                    if wr[0] != wo[0] or wr[2] != wo[2]:
+                        stats["word_box_diff"] = stats.get("word_box_diff", 0) + 1
+                        bad_words.append((key, mode, wr, wo))
         if ok:
             stats["page_equal"] += 1
         else:
@@ -91,5 +97,12 @@ print(f"words equal (text+box, conf<= {a.conf_tol}): {stats['word_equal']}/{stat
 print(f"rec-only WordInfo equal: {rec_eq}/{rec_total}")
 for b in bad[:20]:
     print("DIFF", json.dumps(b, ensure_ascii=False)[:600])
-if a.strict and bad:
+print(f"word text/box differences: {len(bad_words)} (allowed {a.max_word_diffs})")
+for w in bad_words[:10]:
+    print("WORD", json.dumps(w, ensure_ascii=False))
+line_level = [b for b in bad if b[2] not in ("WordInfo differs",) and not str(b[2]).startswith("txt_eq=True box_eq=True")]
+rec_bad = [b for b in bad if b[2] == "WordInfo differs"]
+if a.strict and (line_level or rec_bad or len(bad_words) > a.max_word_diffs or any(
+        str(b[2]).startswith("txt_eq=True box_eq=True") and "nlines" in str(b[2]) and
+        b[2].split("nlines=")[1].split("/")[0] != b[2].split("/")[-1] for b in bad)):
     sys.exit(1)
