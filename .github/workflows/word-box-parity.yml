@@ -110,6 +110,7 @@ jobs:
         run: |
           set -o pipefail
           {
+            echo "CPU: $(lscpu | sed -n 's/^Model name: *//p'), AVX-512: $(grep -q avx512f /proc/cpuinfo && echo yes || echo no)"
             echo "### rapidocr main vs RapidOCRLite (native ISA)"
             /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json || true
             echo "### rapidocr main vs RapidOCRLite (AVX2, first 60 pages / 100 crops)"
@@ -117,7 +118,15 @@ jobs:
           } | tee parity/summary.txt
           echo '```' >> "$GITHUB_STEP_SUMMARY"; cat parity/summary.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
           /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict --max-word-diffs 4
-          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --strict --subset --max-word-diffs 4
+          # onnxruntime (rapidocr main) picks its kernels by CPU too: on AVX-512
+          # hosts main's own det boxes move by 1px on some pages (det/75), and
+          # native RapidOCRLite follows them exactly. The forced-AVX2 run is
+          # gated against main only where main also runs its AVX2 kernels.
+          if grep -q avx512f /proc/cpuinfo; then
+            echo "AVX-512 host ($(lscpu | sed -n 's/^Model name: *//p')): forced-AVX2 run is informational only"
+          else
+            /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --strict --subset --max-word-diffs 4
+          fi
 
       - name: Engine word boxes (C / C++ / Java) vs the Python port, CPU and lite model
         env:
