@@ -1342,7 +1342,7 @@ jobs:
             --words-json java-words.json \
             --ppocr ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
             ci-models/ppocrv6_tiny_dict.txt $pages | tail -40
-          python -m pip install -q numpy Pillow PyYAML
+          python -m pip install -q numpy Pillow PyYAML requests tqdm
           lib=$(ls java/build/native/linux-x86_64/*.so | grep -v jni | head -1)
           PPOCR_LIBRARY="$PWD/$lib" PYTHONPATH=python/src python tools/word_parity/java_words_check.py \
             java-words.json ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
