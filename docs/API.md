@@ -148,13 +148,42 @@ pip install ./python
 | PP-OCRv4 and v5 model zoo | PP-OCRv6 ONNX detector + recognizer |
 | angle classifier (`use_cls=True` by default) | same: on by default, PP-OCRv4 `ch_ppocr_mobile_v2.0_cls_mobile` (or PP-OCRv5 PP-LCNet via `Cls.ocr_version` / `Cls.model_type`), main's preprocessing incl. #748; CPU/hybrid/Metal (not the strict Vulkan GPU-only graph, not lite) |
 | `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`, `TextClsOutput` with only `use_cls`); all three False raises `RapidOCRError`; C ABI `rpocr_run` with `RPOCR_TASK_DET` / `RPOCR_TASK_REC` |
-| word and character boxes | `return_word_box` warns; `word_results` is empty |
+| word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). CPU, hybrid and Metal; the strict Vulkan GPU-only graph and the lite model warn and return no word boxes. `vis()` does not draw them. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]` because the native call is one timed region |
 | OpenCV drawing in `vis` | Pillow polygons |
 
 `result.txts`, `result.scores`, and `result.boxes` stay the fields existing
 callers read. `text_score`, `box_thresh`, and `unclip_ratio` still filter or
 retune a call without rebuilding the models.
+
+## Word and character boxes (`return_word_box`, 5.0.0a15)
+
+Python: `engine(img, return_word_box=True)` (or `Global.return_word_box`)
+fills `result.word_results` exactly like rapidocr main: one tuple per kept
+line of `(text, confidence, [[x, y] * 4])` items, English/number runs as
+words and CJK as single characters; `return_single_char_box=True` gives one
+box per character on every line. With `use_det=False` the result is main's
+`TextRecOutput` whose `word_results` holds a `WordInfo` per line (words,
+word_cols, word_types, line_txt_len, confs). The geometry is
+`rapidocr/cal_rec_boxes.py`, a port of main's `CTCLabelDecode.get_word_info`
+and `CalRecBoxes` (with OpenCV's `getPerspectiveTransform` / `invert`
+reproduced bit for bit, so no OpenCV dependency); the
+`word-box-parity` workflow requires identical words and boxes on main's
+test pages and the SWHL sets.
+
+C ABI: `rpocr_result_chars(result, i, &chars)` returns the input of that
+computation for line `i` as an `rpocr_line_chars`: `cols[k]` / `probs[k]`
+(the CTC time step and max softmax probability of the k-th decoded
+character, `count` of them), `rec_steps` (recognizer output length of the
+line's batch), `crop_width` x `crop_height` (the rotated line crop) and
+`rec_max_wh_ratio` (the batch's max_wh_ratio; main's `line_txt_len =
+rec_steps * crop_width / crop_height / rec_max_wh_ratio`). The arrays are
+owned by the result and released by `rpocr_result_free`; `rpocr_text_box`
+and `rpocr_options` are unchanged. `rec_steps == 0` means the path that ran
+does not record the data (strict Vulkan GPU-only graph, lite model,
+detection-only). C++: `Result::{char_cols, char_probs, rec_steps,
+crop_width, crop_height, rec_max_wh_ratio}`. The Java binding does not
+expose them yet.
 
 ## Text-line orientation classifier (`use_cls`, appended fields)
 

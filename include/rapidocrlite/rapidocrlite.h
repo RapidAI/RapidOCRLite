@@ -208,6 +208,29 @@ RPOCR_API int rpocr_run_ex(rpocr_ocr* ocr, const rpocr_image* image, int tasks,
    score > cls_thresh. Works on every result this library returns. */
 RPOCR_API int rpocr_result_cls(const rpocr_result* result, size_t index, int* label,
                                float* score);
+/* Per-character CTC data of result item `index` (5.0.0a15), the input of
+   rapidocr main's return_word_box / return_single_char_box word boxes.
+   cols[k] is the recognizer time step that emitted the k-th decoded
+   character (CTC blank / repeat collapsed) and probs[k] its max softmax
+   probability. rec_steps is the recognizer output length of the line's
+   batch, crop_width x crop_height the rotated line crop
+   (get_rotate_crop_image; the whole image when use_det is off) and
+   rec_max_wh_ratio the batch's max_wh_ratio, so main's
+   line_txt_len = rec_steps * crop_width / crop_height / rec_max_wh_ratio.
+   rec_steps == 0 when the path that produced the result does not record it
+   (strict GPU-only Vulkan / Metal device graphs, the lite model, detection
+   only). The arrays are owned by the result (rpocr_result_free). */
+typedef struct rpocr_line_chars {
+  int rec_steps;
+  int crop_width;
+  int crop_height;
+  double rec_max_wh_ratio;
+  size_t count;
+  const int* cols;
+  const float* probs;
+} rpocr_line_chars;
+RPOCR_API int rpocr_result_chars(const rpocr_result* result, size_t index,
+                                 rpocr_line_chars* chars);
 /* 1 when this handle has a classifier model loaded, 0 otherwise. */
 RPOCR_API int rpocr_cls_loaded(const rpocr_ocr* ocr);
 /* outs must point at count result objects. Input order is preserved. */

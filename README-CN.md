@@ -862,7 +862,7 @@ C++ 默认值在 `include/rapidocrlite/rapidocrlite.hpp` 的 `rpocr::Options` �
 | PP-OCRv4 与 PP-OCRv5 模型库 | PP-OCRv6 ONNX 检测器和识别器。 |
 | 方向分类器（默认 `use_cls=True`） | 相同：默认开启，模型、预处理和阈值一致；在精度测试集上输出与 main 相同（见 `tools/cls_parity`）。严格 Vulkan GPU-only 图和 lite 模型不运行它。 |
 | `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。use_det/use_cls/use_rec 全为 False 抛 `RapidOCRError`；只开 use_cls 返回 `TextClsOutput`。这两种模式走 CPU 图，`backend: metal` 时也可用（完整流程仍走 Metal）；严格 Vulkan GPU 后端会拒绝。与 rapidocr 3.x main 一样，调用时传入的参数会保存在引擎上，对之后的调用继续生效。 |
-| 单词框和单字框 | `return_word_box` / `return_single_char_box` 会警告。`word_results` 为空。 |
+| 单词框和单字框 | `return_word_box` / `return_single_char_box` 输出与 main 相同的 `word_results`（每行 `(词, 置信度, 框)`；`return_single_char_box` 时每个字符一项；`use_det=False` 返回 main 的 `WordInfo`）。在 main 的单词框测试图和 SWHL 测试集上词与整数框和 main 完全一致（见 `tools/word_parity`）。支持 CPU、hybrid 和 Metal；严格 Vulkan GPU-only 图和 lite 模型会警告且不返回单词框。`vis()` 不绘制单词框。 |
 | `elapse_list` 为 `[det, cls, rec]` | `[None, None, total]`。空白页是 `RapidOCROutput()`（`boxes` / `txts` / `img` 为 `None`）。 |
 | `vis()` 用 OpenCV 按 BGR 绘制 | `vis()` 用 Pillow 绘制并返回 RGB。 |
 | `EngineConfig` 的 CUDA、OpenVINO、TensorRT、MNN 等 | 这些键可以载入和读取，不会生效。上面的 Vulkan 键会生效。 |

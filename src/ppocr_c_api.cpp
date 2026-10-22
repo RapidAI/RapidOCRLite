@@ -102,14 +102,26 @@ rpocr::Options ToOptions(const rpocr_options* options) {
 // Per-line orientation stored right after the rpocr_text_box array in the
 // same allocation, so rpocr_text_box keeps its layout and rpocr_result_free
 // stays a single free().
-struct ClsTrailer { int label; float score; };
+// Also holds the per-character CTC data of rpocr_result_chars; its arrays
+// are separate allocations released by rpocr_result_free.
+struct ClsTrailer {
+  int label;
+  float score;
+  int rec_steps;
+  int crop_width;
+  int crop_height;
+  double rec_max_wh_ratio;
+  size_t char_count;
+  int* char_cols;
+  float* char_probs;
+};
 
 rpocr_text_box* AllocItems(std::size_t count) {
   const std::size_t bytes = count * sizeof(rpocr_text_box) + count * sizeof(ClsTrailer);
   auto* items = static_cast<rpocr_text_box*>(std::calloc(1, bytes));
   if (!items) return nullptr;
   auto* trailer = reinterpret_cast<ClsTrailer*>(items + count);
-  for (std::size_t i = 0; i < count; ++i) trailer[i] = {-1, 0.F};
+  for (std::size_t i = 0; i < count; ++i) trailer[i] = {-1, 0.F, 0, 0, 0, 0.0, 0, nullptr, nullptr};
   return items;
 }
 
@@ -132,9 +144,29 @@ int FillResult(const std::vector<rpocr::Result>& source, rpocr_result* result) {
   if (!items) return Fail(RPOCR_ERR_NOMEM, "out of memory");
   auto* trailer = reinterpret_cast<ClsTrailer*>(items + source.size());
   for (std::size_t i = 0; i < source.size(); ++i) {
-    trailer[i] = {source[i].cls_label, source[i].cls_score};
-    items[i].text = Dup(source[i].text);
+    const auto& src = source[i];
+    trailer[i] = {src.cls_label, src.cls_score, src.rec_steps, src.crop_width, src.crop_height,
+                  src.rec_max_wh_ratio, 0, nullptr, nullptr};
+    bool chars_ok = true;
+    const std::size_t n = std::min(src.char_cols.size(), src.char_probs.size());
+    if (n > 0) {
+      trailer[i].char_cols = static_cast<int*>(std::malloc(n * sizeof(int)));
+      trailer[i].char_probs = static_cast<float*>(std::malloc(n * sizeof(float)));
+      chars_ok = trailer[i].char_cols && trailer[i].char_probs;
+      if (chars_ok) {
+        std::memcpy(trailer[i].char_cols, src.char_cols.data(), n * sizeof(int));
+        std::memcpy(trailer[i].char_probs, src.char_probs.data(), n * sizeof(float));
+        trailer[i].char_count = n;
+      }
+    }
+    items[i].text = chars_ok ? Dup(src.text) : nullptr;
     if (!items[i].text) {
+      std::free(trailer[i].char_cols);
+      std::free(trailer[i].char_probs);
+      for (std::size_t j = 0; j < i; ++j) {
+        std::free(trailer[j].char_cols);
+        std::free(trailer[j].char_probs);
+      }
       for (std::size_t j = 0; j < i; ++j) std::free(items[j].text);
       std::free(items);
       return Fail(RPOCR_ERR_NOMEM, "out of memory");
@@ -412,6 +444,20 @@ int rpocr_result_cls(const rpocr_result* result, size_t index, int* label, float
   return RPOCR_OK;
 }
 
+int rpocr_result_chars(const rpocr_result* result, size_t index, rpocr_line_chars* chars) {
+  if (!result || !result->items || index >= result->count || !chars)
+    return RPOCR_ERR_INVALID_ARGUMENT;
+  const ClsTrailer& t = Trailer(result)[index];
+  chars->rec_steps = t.rec_steps;
+  chars->crop_width = t.crop_width;
+  chars->crop_height = t.crop_height;
+  chars->rec_max_wh_ratio = t.rec_max_wh_ratio;
+  chars->count = t.char_count;
+  chars->cols = t.char_cols;
+  chars->probs = t.char_probs;
+  return RPOCR_OK;
+}
+
 int rpocr_cls_loaded(const rpocr_ocr* ocr) {
   if (!ocr || ocr->lite) return 0;
   return ocr->engine().ClsLoaded() ? 1 : 0;
@@ -467,7 +513,12 @@ int rpocr_recognize_batch(rpocr_ocr* ocr, const rpocr_image* images, size_t coun
 void rpocr_result_free(rpocr_result* result) {
   if (!result) return;
   if (result->items) {
-    for (size_t i = 0; i < result->count; ++i) std::free(result->items[i].text);
+    ClsTrailer* trailer = Trailer(result);
+    for (size_t i = 0; i < result->count; ++i) {
+      std::free(result->items[i].text);
+      std::free(trailer[i].char_cols);
+      std::free(trailer[i].char_probs);
+    }
     std::free(result->items);
   }
   result->items = nullptr;

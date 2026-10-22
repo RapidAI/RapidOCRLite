@@ -42,6 +42,21 @@ struct Result {
   // cls_score > Options::cls_thresh.
   int cls_label = -1;
   float cls_score = 0.F;
+  // Per-character CTC data for word / character boxes (rapidocr main
+  // return_word_box). Filled by the CPU / hybrid recognition path (and the
+  // Metal path that feeds the CPU front end's tensors); empty elsewhere
+  // (rec_steps == 0). char_cols[k] is the CTC time step that emitted the
+  // k-th decoded character and char_probs[k] its max softmax probability.
+  // rec_steps is the recognizer output length of the line's batch,
+  // crop_width / crop_height the rotated crop size (get_rotate_crop_image)
+  // and rec_max_wh_ratio the batch's max_wh_ratio, so rapidocr main's
+  // line_txt_len = rec_steps * (crop_width / crop_height) / rec_max_wh_ratio.
+  std::vector<int> char_cols;
+  std::vector<float> char_probs;
+  int rec_steps = 0;
+  int crop_width = 0;
+  int crop_height = 0;
+  double rec_max_wh_ratio = 0.0;
 };
 
 // Execution policy for PP-OCRv6. CPU is always available. GPU-only never

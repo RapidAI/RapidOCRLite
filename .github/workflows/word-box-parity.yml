@@ -1,0 +1,126 @@
+name: word box parity
+
+# return_word_box / return_single_char_box parity with rapidocr main
+# (RapidAI/RapidOCR @ 8ac45f4e): build the CPU library, check the
+# cal_rec_boxes port against main's code and OpenCV, then run RapidOCRLite
+# and pip-installed rapidocr main on main's word-box test pages
+# (python/tests/test_files), the SWHL text_det pages (word and single-char
+# mode) and the SWHL text_rec crops (use_det=False WordInfo), and require
+# identical words and boxes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: word-box-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  RAPIDOCR_MAIN_REF: 8ac45f4e731f50c37a1f5f9cf89294e08c1b2c15
+
+jobs:
+  parity:
+    name: return_word_box parity vs rapidocr main
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake g++
+
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+
+      - name: Build the CPU library
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_TESTS=ON -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_ENABLE_VULKAN=OFF
+          cmake --build build -j"$(nproc)"
+          (cd build && ctest -R c_api_smoke --output-on-failure)
+
+      - name: Python environments
+        run: |
+          python -m venv /tmp/lite
+          /tmp/lite/bin/pip install -q numpy Pillow PyYAML requests tqdm pytest datasets
+          python -m venv /tmp/main
+          /tmp/main/bin/pip install -q "rapidocr @ git+https://github.com/RapidAI/RapidOCR@${RAPIDOCR_MAIN_REF}#subdirectory=python" onnxruntime datasets
+          git init -q /tmp/main-src && cd /tmp/main-src
+          git remote add origin https://github.com/RapidAI/RapidOCR.git
+          git fetch -q --depth 1 origin "${RAPIDOCR_MAIN_REF}"
+          git checkout -q FETCH_HEAD -- python/tests/test_files
+          mkdir -p /tmp/word-pages
+          for f in check_return_word_len.jpeg text_vertical_words.png issue_170.png return_word_debug.jpg \
+                   ch_en_num.jpg en.jpg text_det.jpg ch_doc_server.png japan.jpg korean.jpg short.png; do
+            cp "python/tests/test_files/$f" /tmp/word-pages/ || echo "missing $f"
+          done
+          ls /tmp/word-pages
+
+      - name: Library info
+        run: echo "PPOCR_LIBRARY=$PWD/build/librapidocrlite.so" >> "$GITHUB_ENV"
+
+      - name: pytest (word boxes + compat) with the tiny models
+        env:
+          PYTHONPATH: python/src
+          PPOCR_TEST_IMAGE: python/tests/data/hello.png
+          PPOCR_TEST_DET: ci-models/PP-OCRv6_det_tiny.onnx
+          PPOCR_TEST_REC: ci-models/PP-OCRv6_rec_tiny.onnx
+          PPOCR_TEST_DICT: ci-models/ppocrv6_tiny_dict.txt
+          PPOCR_CLS_MODEL: ci-models/ch_ppocr_mobile_v2.0_cls_mobile.onnx
+        run: /tmp/lite/bin/python -m pytest -q python/tests/test_word_box.py python/tests/test_main_compat.py
+
+      - name: cal_rec_boxes port vs main's code and OpenCV
+        run: /tmp/main/bin/python tools/word_parity/port_check.py python/src/rapidocr/cal_rec_boxes.py
+
+      - name: rapidocr main reference
+        run: |
+          mkdir -p parity
+          /tmp/main/bin/python tools/word_parity/eval_words.py parity/main.json --extra /tmp/word-pages --model-root /tmp/models-main
+
+      - name: RapidOCRLite (native ISA, AVX2)
+        env:
+          PYTHONPATH: python/src
+        run: |
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/lite.json --extra /tmp/word-pages --model-root /tmp/models-lite
+          PPOCR_FORCE_ISA=avx2 /tmp/lite/bin/python tools/word_parity/eval_words.py parity/lite_avx2.json --extra /tmp/word-pages --limit-det 60 --limit-rec 100 --model-root /tmp/models-lite
+
+      - name: Compare
+        run: |
+          set -o pipefail
+          {
+            echo "### rapidocr main vs RapidOCRLite (native ISA)"
+            /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json || true
+            echo "### rapidocr main vs RapidOCRLite (AVX2, first 60 pages / 100 crops)"
+            /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --subset || true
+          } | tee parity/summary.txt
+          echo '```' >> "$GITHUB_STEP_SUMMARY"; cat parity/summary.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict
+          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --strict --subset
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: word-box-parity
+          path: parity/

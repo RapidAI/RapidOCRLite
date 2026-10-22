@@ -88,7 +88,7 @@ What does not carry over from 3.x:
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer only. |
 | Angle classifier (`use_cls=True` by default) | Same as main: on by default, same model (PP-OCRv4 ch_ppocr_mobile_v2.0_cls_mobile; PP-OCRv5 PP-LCNet via `Cls.ocr_version`), preprocessing (incl. #748) and threshold. Off with `use_cls=False` or `PPOCR_USE_CLS=0`. Not run by the strict Vulkan GPU-only graph or the lite model. |
 | `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput`, `use_det=False` returns `TextRecOutput`. Both False raises `RapidOCRError`. |
-| Word and character boxes | `return_word_box` / `return_single_char_box` warn. `word_results` is empty. |
+| Word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). CPU, hybrid and Metal; the strict Vulkan GPU-only graph and the lite model warn and return no word boxes. `vis()` does not draw them. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. The native call is one timed region. An empty page is `RapidOCROutput()` (`boxes`/`txts`/`img` are `None`), same as 3.x. |
 | `vis()` draws with OpenCV in BGR | `vis()` draws with Pillow and returns RGB. |
 | `EngineConfig` (CUDA, OpenVINO, TensorRT, MNN, …) | Those keys load and can be read. They are not applied. `EngineConfig.ppocr_cpp.use_vulkan`, `backend` (`cpu`, `hybrid`, `vulkan`), and `device_index` are applied. |

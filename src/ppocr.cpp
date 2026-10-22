@@ -1056,6 +1056,27 @@ std::pair<std::string,float> DecodeCTC(const detail::OnnxLite::CtcTop1Output& t,
   return {text,n?sum/n:0.F};
 }
 
+// Same decode, also recording each kept character's time step and
+// probability (rapidocr main CTCLabelDecode.decode `selection`).
+int DecodeCTCChars(const detail::OnnxLite::CtcTop1Output& t, std::size_t batch_index,
+                   std::vector<int>& cols, std::vector<float>& probs) {
+  cols.clear();
+  probs.clear();
+  const bool ragged = !t.sequence_steps.empty();
+  const auto offset = ragged ? t.row_offsets[batch_index] : batch_index*std::size_t(t.steps);
+  const int count = ragged ? t.sequence_steps[batch_index] : t.steps;
+  int prev = -1;
+  for (int s = 0; s < count; ++s) {
+    const int best = t.indices[offset + s];
+    if (best && best != prev) {
+      cols.push_back(s);
+      probs.push_back(t.probabilities[offset + s]);
+    }
+    prev = best;
+  }
+  return count;
+}
+
 Result MakeResult(const Box& b, std::string text, float confidence) {
   Result x{std::move(text),confidence};
   float minx=b.p[0].x,maxx=minx,miny=b.p[0].y,maxy=miny;
@@ -1997,7 +2018,7 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
   const int rec_h = opt.rec_height;
   const int rec_w = rec_h * 320 / 48;
   const std::size_t max_batch = static_cast<std::size_t>(std::max(1, opt.rec_batch_size));
-  struct Batch { int width; const std::size_t* indices; std::size_t count; };
+  struct Batch { int width; const std::size_t* indices; std::size_t count; double max_ratio; };
   std::vector<Batch> batches;
   static const int fast_env = [] {
     const char* v = std::getenv("PPOCR_REC_FAST");
@@ -2046,7 +2067,7 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
       std::size_t count = 0;
       while (first + count < n && count < max_batch && bucket[fast_order[first + count]] == width)
         ++count;
-      batches.push_back({width, fast_order.data() + first, count});
+      batches.push_back({width, fast_order.data() + first, count, width / static_cast<double>(rec_h)});
       first += count;
     }
   }
@@ -2058,7 +2079,7 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
       max_ratio = std::max(max_ratio, crop_w(i) * 1.0 / crop_h(i));
     }
     const int width = std::min(static_cast<int>(rec_h * max_ratio), std::max(1, opt.rec_max_width));
-    batches.push_back({width, order.data() + first, count});
+    batches.push_back({width, order.data() + first, count, max_ratio});
   }
   std::array<std::array<float, 256>, 3> lut{};
   for (std::size_t c = 0; c < 3; ++c)
@@ -2144,6 +2165,11 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
       auto [text, confidence] = DecodeCTC(logits, k, dict);
       const auto result_index = batch.indices[k];
       out[result_index] = MakeResult(boxes[result_index], std::move(text), confidence);
+      Result& r = out[result_index];
+      r.rec_steps = DecodeCTCChars(logits, k, r.char_cols, r.char_probs);
+      r.crop_width = crop_w(result_index);
+      r.crop_height = crop_h(result_index);
+      r.rec_max_wh_ratio = batch.max_ratio;
     }
   };
   // Longest-first packing onto the IndexExecutor's contiguous blocks (see

@@ -36,12 +36,12 @@ from rapidocr.utils.parse_parameters import ParseParams
 REMAINING_INCOMPATIBILITIES = (
     "use_cls runs on the CPU/hybrid/Metal paths only; the strict Vulkan GPU-only graph and the lite model skip it",
     "use_det=False and use_rec=False together raise RapidOCRError",
-    "return_word_box and return_single_char_box do not produce word boxes",
     "PP-OCRv4 and PP-OCRv5 model versions raise NotImplementedError",
     "EngineType other than ONNXRUNTIME and PPOCR_CPP raises NotImplementedError",
     "EngineConfig CUDA/OpenVINO/Paddle/Torch/TensorRT/MNN sections are stored and not applied",
     "elapse_list is [None, None, total], not separate det/cls/rec times",
-    "vis() returns Pillow RGB, not OpenCV BGR",
+    "vis() returns Pillow RGB, not OpenCV BGR, and does not draw word boxes",
+    "return_word_box needs the CPU/hybrid/Metal recognition path; the strict Vulkan GPU-only graph and the lite model return no word boxes",
     "the 3.x model catalog is downloaded, but only PP-OCRv6 ONNX det/rec are executed",
 )
 
@@ -270,9 +270,14 @@ def test_call_output_fields_on_sample(tmp_path: Path):
     assert from_array.txts == result.txts
     with_cls = engine(image, use_cls=True)
     assert with_cls.txts == result.txts
-    warned = engine(image, return_word_box=True)
-    assert warned.txts == result.txts
-    assert warned.word_results == ()
+    worded = engine(image, return_word_box=True)
+    assert worded.txts == result.txts
+    assert len(worded.word_results) == len(result.txts)
+    for line in worded.word_results:
+        for word, score, box in line:
+            assert isinstance(word, str) and word
+            assert 0.0 <= score <= 1.0
+            assert len(box) == 4 and all(len(p) == 2 for p in box)
     blocked = engine(image, text_score=1.0)
     assert blocked.boxes is None
 

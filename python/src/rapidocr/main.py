@@ -4,8 +4,10 @@ The constructor and ``__call__`` follow ``rapidocr.main.RapidOCR`` on the
 ``main`` branch. This build always runs the in-process C++ ONNX interpreter
 (detector, text-line orientation classifier and recognizer). ``use_cls``
 (default on, as on ``main``) runs the 0/180 classifier between detection and
-recognition with ``main``'s preprocessing. Word-box decoding is not part of
-the engine; ``return_word_box`` is accepted and reported.
+recognition with ``main``'s preprocessing. ``return_word_box`` /
+``return_single_char_box`` give ``main``'s word and character boxes: the
+engine records each decoded character's CTC time step and probability, and
+``cal_rec_boxes`` (a port of ``main``'s CalRecBoxes) turns them into boxes.
 """
 
 from __future__ import annotations
@@ -73,6 +75,8 @@ class RapidOCR:
         self.load_img = LoadImage()
         self._engine: Optional[_native.NativeOCR] = None
         self._warned_cls = False
+        self._warned_word_lite = False
+        self._warned_word_backend = False
         self._engine_has_cls = False
         self._check_engine_choice()
 
@@ -135,11 +139,10 @@ class RapidOCR:
             box_thresh=box_thresh,
             unclip_ratio=unclip_ratio,
         )
-        if return_word_box:
-            logger.warning("return_word_box is not implemented by the native PP-OCRv6 engine")
-        if return_single_char_box:
-            logger.warning("return_single_char_box is not implemented by the native PP-OCRv6 engine")
         lite = self._is_lite()
+        if self.return_word_box and lite and not self._warned_word_lite:
+            logger.warning("return_word_box is not supported by the lite (Indra) model; word_results stays empty")
+            self._warned_word_lite = True
         use_cls = bool(self.use_cls)
         if use_cls and lite:
             if not self._warned_cls:
@@ -196,18 +199,32 @@ class RapidOCR:
             ori_h, ori_w = original.shape[:2]
             mapped = map_boxes_to_original(np.asarray(boxes, dtype=np.float32), ratio_w, ratio_h, pad_top, ori_w, ori_h)
             return TextDetOutput(img=original, boxes=mapped, scores=list(scores), elapse=elapsed)
+        want_words = bool(self.return_word_box)
+        chars = [] if want_words else None
         if not self.use_det:
-            _, txts, scores, cls = engine.run_ex(prepared, _native.RPOCR_TASK_REC | cls_bit)
+            _, txts, scores, cls = engine.run_ex(prepared, _native.RPOCR_TASK_REC | cls_bit, chars)
             elapsed = time.perf_counter() - started
             img = corrected(original, cls[0]) if (use_cls and cls) else original
+            word_results = tuple((t, s, None) for t, s in zip(txts, scores))
+            if want_words:
+                # main's TextRecognizer returns the raw WordInfo per line here.
+                infos = self._word_infos(txts, chars)
+                if infos is not None:
+                    word_results = tuple(infos)
             return TextRecOutput(
                 imgs=[img],
                 txts=tuple(txts),
                 scores=tuple(scores),
-                word_results=tuple((t, s, None) for t, s in zip(txts, scores)),
+                word_results=word_results,
                 elapse=elapsed,
             )
-        boxes, txts, scores, _ = engine.run_ex(prepared, _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC | cls_bit)
+        boxes, txts, scores, _ = engine.run_ex(
+            prepared, _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC | cls_bit, chars
+        )
+        if want_words:
+            return self._word_box_output(
+                original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started
+            )
         kept_boxes, kept_txts, kept_scores = filter_by_score(boxes, txts, scores, self.text_score)
         elapsed = time.perf_counter() - started
         if len(kept_txts) == 0:
@@ -220,6 +237,82 @@ class RapidOCR:
             txts=kept_txts,
             scores=kept_scores,
             word_results=(),
+            elapse_list=[None, None, elapsed],
+        )
+
+    def _word_infos(self, txts, chars):
+        """main's CTCLabelDecode word info per line, or None (and a warning)
+        when the backend that ran did not record per-character data."""
+
+        from .cal_rec_boxes import build_word_info
+
+        if chars is None or len(chars) != len(txts) or any(c[0] <= 0 for c in chars):
+            if not self._warned_word_backend:
+                logger.warning(
+                    "return_word_box needs the CPU / hybrid recognition path; this backend "
+                    "did not record per-character data, so word_results stays empty"
+                )
+                self._warned_word_backend = True
+            return None
+        infos = []
+        for txt, (steps, crop_w, crop_h, max_wh, cols, probs) in zip(txts, chars):
+            infos.append(build_word_info(txt, cols, probs, steps, crop_w * 1.0 / crop_h, max_wh))
+        return infos
+
+    def _word_box_output(self, original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started):
+        """main's build_final_output with return_word_box=True (det + rec)."""
+
+        from .cal_rec_boxes import CalRecBoxes
+
+        infos = self._word_infos(txts, chars)
+        if infos is None:
+            kept_boxes, kept_txts, kept_scores = filter_by_score(boxes, txts, scores, self.text_score)
+            if len(kept_txts) == 0:
+                return RapidOCROutput()
+            ori_h, ori_w = original.shape[:2]
+            kept_boxes = map_boxes_to_original(kept_boxes, ratio_w, ratio_h, pad_top, ori_w, ori_h)
+            return RapidOCROutput(img=original, boxes=kept_boxes, txts=kept_txts, scores=kept_scores,
+                                  word_results=(), elapse_list=[None, None, time.perf_counter() - started])
+        if not boxes:
+            return RapidOCROutput()
+        ori_h, ori_w = original.shape[:2]
+        mapped = map_boxes_to_original(np.asarray(boxes, dtype=np.float32), ratio_w, ratio_h, pad_top, ori_w, ori_h)
+        # main: crops resized back with map_img_to_original, then lines with
+        # empty text dropped before the word boxes are computed.
+        valid = [i for i, t in enumerate(txts) if t.strip()]
+        crop_sizes = [(round(chars[i][2] * ratio_h), round(chars[i][1] * ratio_w)) for i in valid]
+        v_boxes = mapped[valid] if valid else np.zeros((0, 4, 2), dtype=np.float32)
+        v_txts = tuple(txts[i] for i in valid)
+        v_scores = tuple(float(scores[i]) for i in valid)
+        v_infos = [infos[i] for i in valid]
+        word_results = v_infos
+        if all(word_results):
+            lines = CalRecBoxes()(crop_sizes, v_boxes, v_txts, v_infos, bool(self.return_single_char_box))
+            origin_words = []
+            for word_line in lines:
+                item = [(txt, score, bbox) for txt, score, bbox in word_line if bbox is not None]
+                if item:
+                    origin_words.append(tuple(item))
+            word_results = tuple(origin_words)
+        # main's filter_by_text_score (word_results indexed by line).
+        f_boxes, f_txts, f_scores, f_words = [], [], [], []
+        for i, (box, txt, score) in enumerate(zip(v_boxes, v_txts, v_scores)):
+            if score < self.text_score:
+                continue
+            if i < len(word_results) and word_results[i]:
+                f_words.append(word_results[i])
+            f_boxes.append(box)
+            f_txts.append(txt)
+            f_scores.append(score)
+        elapsed = time.perf_counter() - started
+        if not f_txts:
+            return RapidOCROutput()
+        return RapidOCROutput(
+            img=original,
+            boxes=np.asarray(f_boxes, dtype=np.float32),
+            txts=tuple(f_txts),
+            scores=tuple(f_scores),
+            word_results=tuple(f_words),
             elapse_list=[None, None, elapsed],
         )
 
@@ -598,6 +691,10 @@ def parse_args(arg_list: Optional[list] = None):
         default=None,
         help="text-line orientation classifier (default: Global.use_cls, on)",
     )
+    parser.add_argument("-word", "--return_word_box", dest="return_word_box", action="store_true",
+                        default=False, help="print word / character boxes (main's return_word_box)")
+    parser.add_argument("--return_single_char_box", dest="return_single_char_box", action="store_true",
+                        default=False, help="with -word: one box per character for English lines too")
     parser.add_argument("--lang_type", default=None)
     parser.add_argument(
         "--model-type",
@@ -647,11 +744,19 @@ def main(arg_list: Optional[list] = None) -> None:
     if args.cls_model:
         params["Cls.model_path"] = args.cls_model
     engine = RapidOCR(params=params)
-    result = engine(image)
+    if args.return_word_box:
+        result = engine(image, return_word_box=True,
+                        return_single_char_box=bool(args.return_single_char_box))
+    else:
+        result = engine(image)
     print(result)
     if result.txts:
         for text, score in zip(result.txts, result.scores or ()):
             print(f"{text}\t{score:.4f}")
+    if args.return_word_box:
+        for line in result.word_results or ():
+            for word, score, box in line:
+                print(f"{word}\t{score:.4f}\t{box}")
 
 
 if __name__ == "__main__":

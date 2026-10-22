@@ -56,6 +56,9 @@ int main(void) {
     float score = 1.f;
     Expect(rpocr_result_cls(&result, 0, &label, &score) == RPOCR_ERR_INVALID_ARGUMENT,
            "cls of empty result");
+    rpocr_line_chars chars;
+    Expect(rpocr_result_chars(&result, 0, &chars) == RPOCR_ERR_INVALID_ARGUMENT,
+           "chars of empty result");
   }
   Expect(rpocr_cls_loaded(NULL) == 0, "cls_loaded null");
   rpocr_image_buffer image = {0};

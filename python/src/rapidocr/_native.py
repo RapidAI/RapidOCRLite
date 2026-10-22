@@ -93,6 +93,20 @@ class Result(ctypes.Structure):
     _fields_ = [("items", ctypes.POINTER(TextBox)), ("count", ctypes.c_size_t)]
 
 
+class LineChars(ctypes.Structure):
+    """rpocr_line_chars: per-character CTC data for word boxes."""
+
+    _fields_ = [
+        ("rec_steps", ctypes.c_int),
+        ("crop_width", ctypes.c_int),
+        ("crop_height", ctypes.c_int),
+        ("rec_max_wh_ratio", ctypes.c_double),
+        ("count", ctypes.c_size_t),
+        ("cols", ctypes.POINTER(ctypes.c_int)),
+        ("probs", ctypes.POINTER(ctypes.c_float)),
+    ]
+
+
 class BackendInfo(ctypes.Structure):
     _fields_ = [
         ("vulkan_loader_available", ctypes.c_int),
@@ -190,6 +204,10 @@ def _bind(lib: ctypes.CDLL) -> None:
         result_cls.argtypes = [ctypes.POINTER(Result), ctypes.c_size_t,
                                ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_float)]
         result_cls.restype = ctypes.c_int
+    result_chars = getattr(lib, "rpocr_result_chars", None)
+    if result_chars is not None:
+        result_chars.argtypes = [ctypes.POINTER(Result), ctypes.c_size_t, ctypes.POINTER(LineChars)]
+        result_chars.restype = ctypes.c_int
     cls_loaded = getattr(lib, "rpocr_cls_loaded", None)
     if cls_loaded is not None:
         cls_loaded.argtypes = [ctypes.c_void_p]
@@ -269,12 +287,17 @@ class NativeOCR:
         query = getattr(self.lib, "rpocr_cls_loaded", None)
         return bool(query(self.handle)) if query is not None else False
 
-    def run_ex(self, rgb: np.ndarray, tasks: int):
+    def has_chars(self) -> bool:
+        return getattr(self.lib, "rpocr_result_chars", None) is not None
+
+    def run_ex(self, rgb: np.ndarray, tasks: int, chars: Optional[list] = None):
         """rpocr_run_ex: use_cls is exactly ``tasks & RPOCR_TASK_CLS``.
 
         Returns (boxes, txts, scores, cls) where cls holds one
         (label_index, score) per line; label_index is -1 when the line was
-        not classified.
+        not classified. When ``chars`` is a list it receives one
+        (rec_steps, crop_width, crop_height, rec_max_wh_ratio, cols, probs)
+        tuple per line from rpocr_result_chars (rec_steps 0: not recorded).
         """
         if getattr(self.lib, "rpocr_run_ex", None) is None:
             raise RuntimeError("this librapidocrlite has no rpocr_run_ex; use_cls needs a newer build")
@@ -298,6 +321,20 @@ class NativeOCR:
                 boxes.append([[item.box[k].x, item.box[k].y] for k in range(4)])
                 self.lib.rpocr_result_cls(ctypes.byref(result), index, ctypes.byref(label), ctypes.byref(score))
                 cls.append((int(label.value), float(score.value)))
+                if chars is not None:
+                    info = LineChars()
+                    if self.has_chars() and self.lib.rpocr_result_chars(
+                        ctypes.byref(result), index, ctypes.byref(info)
+                    ) == RPOCR_OK:
+                        n = int(info.count)
+                        chars.append((
+                            int(info.rec_steps), int(info.crop_width), int(info.crop_height),
+                            float(info.rec_max_wh_ratio),
+                            [int(info.cols[k]) for k in range(n)],
+                            [float(info.probs[k]) for k in range(n)],
+                        ))
+                    else:
+                        chars.append((0, 0, 0, 0.0, [], []))
             return boxes, txts, scores, cls
         finally:
             self.lib.rpocr_result_free(ctypes.byref(result))
