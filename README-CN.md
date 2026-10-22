@@ -544,6 +544,8 @@ MoltenVK 不提供逐个 dispatch 的时间戳，所以那里的 `PPOCR_GPU_PROF
 
 RapidOCRLite 现在在这两个数据集上与 3.10 逐位一致：除检测后处理（移植 `cv2.minAreaRect` / `cv2.fillPoly` 运算，内置 Clipper 6.4.2 复现 pyclipper unclip）和 `sorted_boxes` 外，检测输入缩放、文本行裁剪（`cv2.getPerspectiveTransform` + `warpPerspective` INTER_CUBIC / BORDER_REPLICATE，含各平台 float/fp16 双三次运算）以及识别缩放/填充/归一化（`cv2.resize` INTER_LINEAR 定点；Apple arm64 上为 OpenCV 实际使用的 KleidiCV 路径）均已移植（`src/cv_compat.cpp`）。x86（AVX-512 与 AVX2，正反两种顺序）和 M4 上：整页文本 0/212 不同，识别 0/310 不同，指标完全相同；检测框 x86 上 211/212 页相同（1 页概率图不同），M4 上 212/212。剩余差异只来自网络计算本身（Lite 内核与 onnxruntime）。
 
+注意 rapidocr main 本身也不是与 CPU 无关的：onnxruntime 按 CPU 选择内核，当概率图某个像素正好落在 0.3 二值化阈值附近时，同一张图在不同机器上检测框可能差 1px。例：同一 rapidocr 提交和模型下，`det/75` 第 6 行在 AMD EPYC 7763（AVX2）和 Intel Xeon Platinum 8573C 上底边为 y=782，在 AMD EPYC 9V45 上为 y=783；裁剪变化还会改变识别分批，从而移动相邻行的单字框。RapidOCRLite 的 AVX2 路径与 main 的 AVX2 结果完全一致，这是 CI 的硬性门槛（`word-box-parity.yml`，非 AVX-512 机器对比实时 main，否则对比固定的 `tools/word_parity/ref/main_avx2.json.gz`）。原生 AVX-512 路径在这类 1px 阈值页上可能与 main 不同（在 EPYC 9V45 上与 main 一致，在 Xeon 8573C 上不一致）；CI 在同一台机器上与 main 对比并报告，任何文本差异或超过 2 个这类页面都会失败。若需要在 AVX-512 机器上得到 main 的 AVX2 结果，设置 `PPOCR_FORCE_ISA=avx2`。
+
 
 #### CPU 速度对比 rapidocr 3.10.0（PP-OCRv6 small，秒/张，越小越好）
 

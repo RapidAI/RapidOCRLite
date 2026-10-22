@@ -5,9 +5,14 @@ Word text, word boxes, line text and line boxes must be identical; word
 confidences may differ by --conf-tol (main rounds each to 5 decimals, so one
 ulp of float32 softmax can move the last digit). With --strict a mismatch
 exits 1. --subset compares only the
-keys the second dump has.
+keys the second dump has. --det-1px-pages N (with --strict) tolerates up to N
+pages whose text is identical and whose line boxes differ by at most 1px per
+coordinate (a det probability pixel flipping at the binary threshold, which
+moves rec batching and so word boxes on those pages); text differences and
+any larger box change still fail. Dumps may be .gz.
 """
 import argparse
+import gzip
 import json
 import sys
 
@@ -18,9 +23,14 @@ ap.add_argument("--conf-tol", type=float, default=1e-2)
 ap.add_argument("--max-word-diffs", type=int, default=0,
                 help="words whose text/box may differ (CTC argmax near-ties) before --strict fails")
 ap.add_argument("--strict", action="store_true")
+ap.add_argument("--det-1px-pages", type=int, default=0)
 ap.add_argument("--subset", action="store_true", help="only keys present in the second dump")
 a = ap.parse_args()
-ref, oth = json.load(open(a.ref)), json.load(open(a.other))
+def load(p):
+    return json.load(gzip.open(p, "rt") if p.endswith(".gz") else open(p))
+
+
+ref, oth = load(a.ref), load(a.other)
 
 stats = {"pages": 0, "page_equal": 0, "words": 0, "word_equal": 0, "conf_max_diff": 0.0}
 bad = []
@@ -100,6 +110,29 @@ for b in bad[:20]:
 print(f"word text/box differences: {len(bad_words)} (allowed {a.max_word_diffs})")
 for w in bad_words[:10]:
     print("WORD", json.dumps(w, ensure_ascii=False))
+tol_pages = set()
+for key, rp in ref["pages"].items():
+    op = oth["pages"].get(key)
+    if not op or "error" in rp or "error" in op or (a.subset and key not in oth["pages"]):
+        continue
+    def near(m):
+        r, o = rp[m], op[m]
+        if r == o:
+            return None
+        if r["txts"] != o["txts"] or len(r["boxes"]) != len(o["boxes"]):
+            return False
+        if [[w[0] for w in l] for l in r["words"]] != [[w[0] for w in l] for l in o["words"]]:
+            return False
+        return all(abs(x - y) <= 1 for br, bo in zip(r["boxes"], o["boxes"])
+                   for pr, po in zip(br, bo) for x, y in zip(pr, po))
+    st = [near("word"), near("char")]
+    if False not in st and True in st:
+        tol_pages.add(key)
+if a.det_1px_pages:
+    print(f"det 1px threshold pages: {len(tol_pages)} (allowed {a.det_1px_pages}) {sorted(tol_pages)}")
+    if len(tol_pages) <= a.det_1px_pages:
+        bad = [b for b in bad if b[0] not in tol_pages]
+        bad_words = [w for w in bad_words if w[0] not in tol_pages]
 line_level = [b for b in bad if b[2] not in ("WordInfo differs",) and not str(b[2]).startswith("txt_eq=True box_eq=True")]
 rec_bad = [b for b in bad if b[2] == "WordInfo differs"]
 if a.strict and (line_level or rec_bad or len(bad_words) > a.max_word_diffs or any(

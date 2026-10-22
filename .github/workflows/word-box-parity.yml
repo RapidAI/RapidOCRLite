@@ -108,24 +108,31 @@ jobs:
 
       - name: Compare
         run: |
+          # rapidocr main (onnxruntime) itself picks kernels per CPU: on some
+          # AVX-512 hosts its det boxes move by 1px on near-threshold pages
+          # (det/75). The hard gate therefore uses a CPU-independent reference:
+          # Lite forced-AVX2 vs main's AVX2-host result (live main on non-AVX-512
+          # runners, else the pinned tools/word_parity/ref/main_avx2.json.gz from
+          # an AMD EPYC 7763 run of the same RAPIDOCR_MAIN_REF). Native AVX-512
+          # vs live main is reported, and only tolerates up to 2 det 1px pages.
           set -o pipefail
+          REF=tools/word_parity/ref/main_avx2.json.gz
+          AVX512=no; grep -q avx512f /proc/cpuinfo && AVX512=yes
+          [ "$AVX512" = no ] && REF=parity/main.json
           {
-            echo "CPU: $(lscpu | sed -n 's/^Model name: *//p'), AVX-512: $(grep -q avx512f /proc/cpuinfo && echo yes || echo no)"
-            echo "### rapidocr main vs RapidOCRLite (native ISA)"
+            echo "CPU: $(lscpu | sed -n 's/^Model name: *//p'), AVX-512: $AVX512, AVX2 reference: $REF"
+            echo "### rapidocr main vs RapidOCRLite (native ISA, report)"
             /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json || true
-            echo "### rapidocr main vs RapidOCRLite (AVX2, first 60 pages / 100 crops)"
-            /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --subset || true
+            echo "### AVX2 reference vs RapidOCRLite (forced AVX2, first 60 pages / 100 crops)"
+            /tmp/main/bin/python tools/word_parity/compare_words.py "$REF" parity/lite_avx2.json --subset || true
           } | tee parity/summary.txt
           echo '```' >> "$GITHUB_STEP_SUMMARY"; cat parity/summary.txt >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
-          /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict --max-word-diffs 4
-          # onnxruntime (rapidocr main) picks its kernels by CPU too: on AVX-512
-          # hosts main's own det boxes move by 1px on some pages (det/75), and
-          # native RapidOCRLite follows them exactly. The forced-AVX2 run is
-          # gated against main only where main also runs its AVX2 kernels.
-          if grep -q avx512f /proc/cpuinfo; then
-            echo "AVX-512 host ($(lscpu | sed -n 's/^Model name: *//p')): forced-AVX2 run is informational only"
+          /tmp/main/bin/python tools/word_parity/compare_words.py "$REF" parity/lite_avx2.json --strict --subset --max-word-diffs 4
+          if [ "$AVX512" = no ]; then
+            /tmp/main/bin/python tools/word_parity/compare_words.py tools/word_parity/ref/main_avx2.json.gz parity/main.json --strict --subset
+            /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict --max-word-diffs 4
           else
-            /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --strict --subset --max-word-diffs 4
+            /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict --max-word-diffs 4 --det-1px-pages 2
           fi
 
       - name: Engine word boxes (C / C++ / Java) vs the Python port, CPU and lite model
