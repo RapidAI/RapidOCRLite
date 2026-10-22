@@ -19,6 +19,15 @@ public final class TextLine {
     /** Orientation class index (0 = "0", 1 = "180"), -1 when not classified. */
     private final int clsLabel;
     private final float clsScore;
+    private static final Word[] NO_WORDS = new Word[0];
+    private final Word[] words;
+    private final Word[] charBoxes;
+    private final int recSteps;
+    private final int cropWidth;
+    private final int cropHeight;
+    private final double recMaxWhRatio;
+    private final int[] charCols;
+    private final float[] charProbs;
 
     /**
      * Called by the JNI layer; application code normally only reads results.
@@ -40,6 +49,26 @@ public final class TextLine {
      */
     public TextLine(String text, float confidence, float[][] box,
                     int bboxX, int bboxY, int bboxW, int bboxH, int clsLabel, float clsScore) {
+        this(text, confidence, box, bboxX, bboxY, bboxW, bboxH, clsLabel, clsScore,
+                null, null, 0, 0, 0, 0.0, null, null);
+    }
+
+    /**
+     * Full form used by the JNI layer: also the word boxes, the character
+     * boxes and the per-character recognizer data they are computed from.
+     */
+    public TextLine(String text, float confidence, float[][] box,
+                    int bboxX, int bboxY, int bboxW, int bboxH, int clsLabel, float clsScore,
+                    Word[] words, Word[] charBoxes, int recSteps, int cropWidth, int cropHeight,
+                    double recMaxWhRatio, int[] charCols, float[] charProbs) {
+        this.words = words == null ? NO_WORDS : words;
+        this.charBoxes = charBoxes == null ? NO_WORDS : charBoxes;
+        this.recSteps = recSteps;
+        this.cropWidth = cropWidth;
+        this.cropHeight = cropHeight;
+        this.recMaxWhRatio = recMaxWhRatio;
+        this.charCols = charCols == null ? new int[0] : charCols;
+        this.charProbs = charProbs == null ? new float[0] : charProbs;
         this.clsLabel = clsLabel;
         this.clsScore = clsScore;
         this.text = text == null ? "" : text;
@@ -92,6 +121,53 @@ public final class TextLine {
     /** Probability of {@link #clsLabel()}. */
     public float clsScore() {
         return clsScore;
+    }
+
+    /**
+     * Word boxes (rapidocr main {@code return_word_box=True}): English and
+     * number runs as words, CJK as single characters. Empty for blank lines.
+     */
+    public java.util.List<Word> words() {
+        return java.util.Collections.unmodifiableList(Arrays.asList(words));
+    }
+
+    /** One box per character ({@code return_single_char_box=True}). */
+    public java.util.List<Word> charBoxes() {
+        return java.util.Collections.unmodifiableList(Arrays.asList(charBoxes));
+    }
+
+    /** {@link #charBoxes()} when {@code singleChar}, else {@link #words()}. */
+    public java.util.List<Word> words(boolean singleChar) {
+        return singleChar ? charBoxes() : words();
+    }
+
+    /** CTC output length of the line's recognizer batch; 0 when not recorded. */
+    public int recSteps() {
+        return recSteps;
+    }
+
+    /** Width of the line crop the recognizer read (the word-box geometry). */
+    public int cropWidth() {
+        return cropWidth;
+    }
+
+    public int cropHeight() {
+        return cropHeight;
+    }
+
+    /** The batch's max width/height ratio (main's max_wh_ratio). */
+    public double recMaxWhRatio() {
+        return recMaxWhRatio;
+    }
+
+    /** CTC time step of each decoded character. */
+    public int[] charCols() {
+        return charCols.clone();
+    }
+
+    /** CTC probability of each decoded character. */
+    public float[] charProbs() {
+        return charProbs.clone();
     }
 
     @Override

@@ -41,13 +41,12 @@ REMAINING_INCOMPATIBILITIES = (
     "EngineConfig CUDA/OpenVINO/Paddle/Torch/TensorRT/MNN sections are stored and not applied",
     "elapse_list is [None, None, total], not separate det/cls/rec times",
     "vis() returns Pillow RGB, not OpenCV BGR, and does not draw word boxes",
-    "return_word_box needs the CPU/hybrid/Metal recognition path; the strict Vulkan GPU-only graph and the lite model return no word boxes",
     "the 3.x model catalog is downloaded, but only PP-OCRv6 ONNX det/rec are executed",
 )
 
 
 def test_remaining_incompatibilities_are_listed():
-    assert len(REMAINING_INCOMPATIBILITIES) >= 8
+    assert len(REMAINING_INCOMPATIBILITIES) >= 7
 
 
 def test_construct_default_matches_main_public_keys():

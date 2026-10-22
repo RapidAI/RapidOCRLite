@@ -25,10 +25,14 @@ ap.add_argument("--limit-rec", type=int, default=0)
 ap.add_argument("--extra", nargs="*", default=[])
 ap.add_argument("--model-root", default=None)
 ap.add_argument("--no-datasets", action="store_true")
+ap.add_argument("--param", nargs="*", default=[], help="extra RapidOCR params KEY=VALUE")
 a = ap.parse_args()
 params = {"Global.log_level": "error"}
 if a.model_root:
     params["Global.model_root_dir"] = a.model_root
+for kv in a.param:
+    k, v = kv.split("=", 1)
+    params[k] = v
 eng = RapidOCR(params=params)
 
 

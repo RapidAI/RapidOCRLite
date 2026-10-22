@@ -119,8 +119,92 @@ jobs:
           /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite.json --strict --max-word-diffs 4
           /tmp/main/bin/python tools/word_parity/compare_words.py parity/main.json parity/lite_avx2.json --strict --subset --max-word-diffs 4
 
+      - name: Engine word boxes (C / C++ / Java) vs the Python port, CPU and lite model
+        env:
+          PYTHONPATH: python/src
+        run: |
+          set -o pipefail
+          {
+            /tmp/lite/bin/python tools/word_parity/c_words_check.py --label "[cpu]" --extra /tmp/word-pages \
+              --limit-det 120 --param Global.model_root_dir=/tmp/models-lite
+            /tmp/lite/bin/python tools/word_parity/c_words_check.py --label "[lite model]" --extra /tmp/word-pages \
+              --limit-det 120 --param Det.model_type=lite Rec.model_type=lite
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Lite model word boxes (word_results through the Python API)
+        env:
+          PYTHONPATH: python/src
+        run: |
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/litemodel.json --extra /tmp/word-pages \
+            --limit-det 40 --limit-rec 40 --param Det.model_type=lite Rec.model_type=lite
+          /tmp/lite/bin/python tools/word_parity/check_words_sane.py parity/litemodel.json | tee -a "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: word-box-parity
+          path: parity/
+
+  vulkan:
+    name: return_word_box on the strict Vulkan GPU-only graph (lavapipe) vs CPU
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Toolchain and the software Vulkan stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake g++ \
+            mesa-vulkan-drivers vulkan-tools glslang-tools
+      - name: Build with Vulkan
+        run: |
+          cmake -S . -B build-vk -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_ENABLE_VULKAN=ON
+          cmake --build build-vk -j"$(nproc)"
+          echo "PPOCR_LIBRARY=$PWD/build-vk/librapidocrlite.so" >> "$GITHUB_ENV"
+      - name: Python and pages
+        run: |
+          python -m venv /tmp/lite
+          /tmp/lite/bin/pip install -q numpy Pillow PyYAML requests tqdm datasets
+          git init -q /tmp/main-src && cd /tmp/main-src
+          git remote add origin https://github.com/RapidAI/RapidOCR.git
+          git fetch -q --depth 1 origin "${RAPIDOCR_MAIN_REF}"
+          git checkout -q FETCH_HEAD -- python/tests/test_files
+          mkdir -p /tmp/word-pages
+          for f in check_return_word_len.jpeg text_vertical_words.png issue_170.png return_word_debug.jpg \
+                   ch_en_num.jpg en.jpg text_det.jpg ch_doc_server.png japan.jpg korean.jpg short.png; do
+            cp "python/tests/test_files/$f" /tmp/word-pages/ || echo "missing $f"
+          done
+      - name: CPU and GPU-only word boxes
+        env:
+          PYTHONPATH: python/src
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          PPOCR_VULKAN_DEVICE_INDEX: "0"
+        run: |
+          mkdir -p parity
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/cpu.json --extra /tmp/word-pages \
+            --limit-det 40 --limit-rec 1 --model-root /tmp/models-lite
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/gpu.json --extra /tmp/word-pages \
+            --limit-det 40 --limit-rec 1 --model-root /tmp/models-lite \
+            --param EngineConfig.ppocr_cpp.backend=gpu Global.log_level=info
+          {
+            echo "### strict Vulkan GPU-only graph vs CPU"
+            /tmp/lite/bin/python tools/word_parity/compare_backends.py parity/cpu.json parity/gpu.json || true
+            /tmp/lite/bin/python tools/word_parity/c_words_check.py --label "[vulkan gpu-only]" --extra /tmp/word-pages \
+              --limit-det 40 --param Global.model_root_dir=/tmp/models-lite EngineConfig.ppocr_cpp.backend=gpu || true
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          /tmp/lite/bin/python tools/word_parity/compare_backends.py parity/cpu.json parity/gpu.json
+          /tmp/lite/bin/python tools/word_parity/c_words_check.py --extra /tmp/word-pages --limit-det 40 \
+            --param Global.model_root_dir=/tmp/models-lite EngineConfig.ppocr_cpp.backend=gpu
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: word-box-parity-vulkan
           path: parity/

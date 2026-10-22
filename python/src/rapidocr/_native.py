@@ -107,6 +107,14 @@ class LineChars(ctypes.Structure):
     ]
 
 
+class Word(ctypes.Structure):
+    _fields_ = [("text", ctypes.c_char_p), ("confidence", ctypes.c_double), ("box", Point * 4)]
+
+
+class Words(ctypes.Structure):
+    _fields_ = [("items", ctypes.POINTER(Word)), ("count", ctypes.c_size_t)]
+
+
 REC_ORDER_FN = ctypes.CFUNCTYPE(
     None, ctypes.POINTER(ctypes.c_double), ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p
 )
@@ -213,6 +221,12 @@ def _bind(lib: ctypes.CDLL) -> None:
     if result_chars is not None:
         result_chars.argtypes = [ctypes.POINTER(Result), ctypes.c_size_t, ctypes.POINTER(LineChars)]
         result_chars.restype = ctypes.c_int
+    result_words = getattr(lib, "rpocr_result_words", None)
+    if result_words is not None:
+        result_words.argtypes = [ctypes.POINTER(Result), ctypes.c_size_t, ctypes.c_int, ctypes.POINTER(Words)]
+        result_words.restype = ctypes.c_int
+        lib.rpocr_words_free.argtypes = [ctypes.POINTER(Words)]
+        lib.rpocr_words_free.restype = None
     set_rec_order = getattr(lib, "rpocr_set_rec_order", None)
     if set_rec_order is not None:
         set_rec_order.argtypes = [ctypes.c_void_p, REC_ORDER_FN, ctypes.c_void_p]
@@ -307,7 +321,8 @@ class NativeOCR:
     def has_chars(self) -> bool:
         return getattr(self.lib, "rpocr_result_chars", None) is not None
 
-    def run_ex(self, rgb: np.ndarray, tasks: int, chars: Optional[list] = None):
+    def run_ex(self, rgb: np.ndarray, tasks: int, chars: Optional[list] = None,
+               c_words: Optional[list] = None):
         """rpocr_run_ex: use_cls is exactly ``tasks & RPOCR_TASK_CLS``.
 
         Returns (boxes, txts, scores, cls) where cls holds one
@@ -315,6 +330,9 @@ class NativeOCR:
         not classified. When ``chars`` is a list it receives one
         (rec_steps, crop_width, crop_height, rec_max_wh_ratio, cols, probs)
         tuple per line from rpocr_result_chars (rec_steps 0: not recorded).
+        ``c_words`` (a list) receives, per line, the engine's own
+        rpocr_result_words as a (words, single_chars) pair of
+        [(text, conf, [[x, y] * 4])] lists (parity checks).
         """
         if getattr(self.lib, "rpocr_run_ex", None) is None:
             raise RuntimeError("this librapidocrlite has no rpocr_run_ex; use_cls needs a newer build")
@@ -352,6 +370,20 @@ class NativeOCR:
                         ))
                     else:
                         chars.append((0, 0, 0, 0.0, [], []))
+                if c_words is not None:
+                    pair = []
+                    for single in (0, 1):
+                        words = Words()
+                        got = []
+                        if self.lib.rpocr_result_words(ctypes.byref(result), index, single,
+                                                       ctypes.byref(words)) == RPOCR_OK:
+                            for k in range(int(words.count)):
+                                w = words.items[k]
+                                got.append((w.text.decode("utf-8", errors="replace"), float(w.confidence),
+                                            [[int(w.box[j].x), int(w.box[j].y)] for j in range(4)]))
+                            self.lib.rpocr_words_free(ctypes.byref(words))
+                        pair.append(got)
+                    c_words.append(tuple(pair))
             return boxes, txts, scores, cls
         finally:
             self.lib.rpocr_result_free(ctypes.byref(result))

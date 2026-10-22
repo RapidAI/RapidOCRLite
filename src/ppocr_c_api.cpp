@@ -474,6 +474,58 @@ int rpocr_set_rec_order(rpocr_ocr* ocr, rpocr_rec_order_fn fn, void* user) {
   return RPOCR_OK;
 }
 
+int rpocr_result_words(const rpocr_result* result, size_t index, int single_char,
+                       rpocr_words* words) {
+  if (!words) return RPOCR_ERR_INVALID_ARGUMENT;
+  words->items = nullptr;
+  words->count = 0;
+  if (!result || !result->items || index >= result->count) return RPOCR_ERR_INVALID_ARGUMENT;
+  const rpocr_text_box& item = result->items[index];
+  const ClsTrailer& t = Trailer(result)[index];
+  rpocr::Result line;
+  line.text = item.text ? item.text : "";
+  for (int k = 0; k < 4; ++k)
+    line.box[k] = {static_cast<int>(std::lround(item.box[k].x)), static_cast<int>(std::lround(item.box[k].y))};
+  line.rec_steps = t.rec_steps;
+  line.crop_width = t.crop_width;
+  line.crop_height = t.crop_height;
+  line.rec_max_wh_ratio = t.rec_max_wh_ratio;
+  if (t.char_count) {
+    line.char_cols.assign(t.char_cols, t.char_cols + t.char_count);
+    line.char_probs.assign(t.char_probs, t.char_probs + t.char_count);
+  }
+  try {
+    const auto out = rpocr::WordBoxes(line, single_char != 0);
+    if (out.empty()) return RPOCR_OK;
+    auto* items = static_cast<rpocr_word*>(std::calloc(out.size(), sizeof(rpocr_word)));
+    if (!items) return Fail(RPOCR_ERR_NOMEM, "out of memory");
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      items[i].text = Dup(out[i].text);
+      if (!items[i].text) {
+        for (std::size_t j = 0; j < i; ++j) std::free(items[j].text);
+        std::free(items);
+        return Fail(RPOCR_ERR_NOMEM, "out of memory");
+      }
+      items[i].confidence = out[i].confidence;
+      for (int k = 0; k < 4; ++k)
+        items[i].box[k] = {static_cast<float>(out[i].box[k][0]), static_cast<float>(out[i].box[k][1])};
+    }
+    words->items = items;
+    words->count = out.size();
+    return RPOCR_OK;
+  } catch (const std::exception& e) {
+    return Fail(RPOCR_ERR_RUNTIME, e.what());
+  }
+}
+
+void rpocr_words_free(rpocr_words* words) {
+  if (!words) return;
+  for (std::size_t i = 0; i < words->count; ++i) std::free(words->items[i].text);
+  std::free(words->items);
+  words->items = nullptr;
+  words->count = 0;
+}
+
 void rpocr_argsort(const double* values, size_t count, size_t* order) {
   if (!order || (!values && count > 0)) return;
   rpocr::detail::NumpyArgsort(values, count, order);

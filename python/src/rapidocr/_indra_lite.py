@@ -117,6 +117,17 @@ class IndraLiteEngine:
     def recognize(self, rgb):
         return self.run(rgb, _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC)
 
+    def has_chars(self) -> bool:
+        return self.native is not None and self.native.has_chars()
+
+    def run_ex(self, rgb, tasks, chars=None, c_words=None):
+        """run() plus the per-character data of return_word_box (native engine only)."""
+        boxes, txts, scores, cls = self.native.run_ex(rgb, tasks, chars, c_words)
+        if tasks == _native.RPOCR_TASK_REC:
+            return [], txts, scores, cls
+        boxes = [[[round(x, 1), round(y, 1)] for x, y in b] for b in boxes]
+        return boxes, txts, [round(s, 4) for s in scores], cls
+
     def active_backend(self):
         return _native.RPOCR_BACKEND_CPU
 

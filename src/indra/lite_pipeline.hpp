@@ -14,6 +14,12 @@ struct LiteLine {
   float x0{}, y0{}, x1{}, y1{};  // axis-aligned box in input pixels (0.1 px resolution like indra-ocr)
   std::string text;              // UTF-8
   float conf{};
+  // return_word_box data: per output character (UTF-32 code point of
+  // `text`), its CTC step centre as a fraction of the line width (0..1) and
+  // its CTC probability; `step` is one CTC step as a fraction of the line
+  // width. Empty when tokens and text do not line up one to one.
+  std::vector<float> char_x, char_probs;
+  float step{};
 };
 
 class LiteEngine {

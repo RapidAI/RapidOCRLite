@@ -75,7 +75,6 @@ class RapidOCR:
         self.load_img = LoadImage()
         self._engine: Optional[_native.NativeOCR] = None
         self._warned_cls = False
-        self._warned_word_lite = False
         self._warned_word_backend = False
         self._engine_has_cls = False
         self._check_engine_choice()
@@ -140,9 +139,6 @@ class RapidOCR:
             unclip_ratio=unclip_ratio,
         )
         lite = self._is_lite()
-        if self.return_word_box and lite and not self._warned_word_lite:
-            logger.warning("return_word_box is not supported by the lite (Indra) model; word_results stays empty")
-            self._warned_word_lite = True
         use_cls = bool(self.use_cls)
         if use_cls and lite:
             if not self._warned_cls:
@@ -252,16 +248,26 @@ class RapidOCR:
 
         from .cal_rec_boxes import build_word_info
 
-        if chars is None or len(chars) != len(txts) or any(c[0] <= 0 for c in chars):
+        if chars is None or len(chars) != len(txts):
             if not self._warned_word_backend:
                 logger.warning(
-                    "return_word_box needs the CPU / hybrid recognition path; this backend "
-                    "did not record per-character data, so word_results stays empty"
+                    "return_word_box: the engine returned no per-character data for "
+                    "some lines (old library?), so word_results stays empty"
                 )
                 self._warned_word_backend = True
             return None
         infos = []
         for txt, (steps, crop_w, crop_h, max_wh, cols, probs) in zip(txts, chars):
+            if steps <= 0 and txt:
+                # No per-character record for this line (a lite-model line
+                # whose tokens do not map 1:1 onto its text): spread the
+                # characters evenly over the line, 4 steps each.
+                steps, crop_w, crop_h = 4 * len(txt), max(crop_w, 1), max(crop_h, 1)
+                cols = [4 * k + 1 for k in range(len(txt))]
+                probs = [1.0] * len(txt)
+                max_wh = crop_w * 1.0 / crop_h
+            elif steps <= 0:
+                steps, crop_w, crop_h, max_wh = 1, max(crop_w, 1), max(crop_h, 1), 1.0
             infos.append(build_word_info(txt, cols, probs, steps, crop_w * 1.0 / crop_h, max_wh))
         return infos
 
@@ -337,15 +343,32 @@ class RapidOCR:
             ori_h, ori_w = original.shape[:2]
             mapped = map_boxes_to_original(np.asarray(boxes, dtype=np.float32), ratio_w, ratio_h, pad_top, ori_w, ori_h)
             return TextDetOutput(img=original, boxes=mapped, scores=list(scores), elapse=elapsed)
+        want_words = bool(self.return_word_box) and engine.has_chars()
+        chars = [] if want_words else None
         if not self.use_det:
-            _, txts, scores = engine.run(prepared, _native.RPOCR_TASK_REC)
+            if want_words:
+                _, txts, scores, _ = engine.run_ex(prepared, _native.RPOCR_TASK_REC, chars)
+            else:
+                _, txts, scores = engine.run(prepared, _native.RPOCR_TASK_REC)
             elapsed = time.perf_counter() - started
+            word_results = tuple((t, s, None) for t, s in zip(txts, scores))
+            if want_words:
+                infos = self._word_infos(txts, chars)
+                if infos is not None:
+                    word_results = tuple(infos)
             return TextRecOutput(
                 imgs=[original],
                 txts=tuple(txts),
                 scores=tuple(scores),
-                word_results=tuple((t, s, None) for t, s in zip(txts, scores)),
+                word_results=word_results,
                 elapse=elapsed,
+            )
+        if want_words:
+            boxes, txts, scores, _ = engine.run_ex(
+                prepared, _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC, chars
+            )
+            return self._word_box_output(
+                original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started
             )
         boxes, txts, scores = engine.recognize(prepared)
         kept_boxes, kept_txts, kept_scores = filter_by_score(boxes, txts, scores, self.text_score)

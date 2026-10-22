@@ -148,7 +148,7 @@ pip install ./python
 | PP-OCRv4 and v5 model zoo | PP-OCRv6 ONNX detector + recognizer |
 | angle classifier (`use_cls=True` by default) | same: on by default, PP-OCRv4 `ch_ppocr_mobile_v2.0_cls_mobile` (or PP-OCRv5 PP-LCNet via `Cls.ocr_version` / `Cls.model_type`), main's preprocessing incl. #748; CPU/hybrid/Metal (not the strict Vulkan GPU-only graph, not lite) |
 | `use_det=False` / `use_rec=False` | supported (`TextRecOutput` / `TextDetOutput`, `TextClsOutput` with only `use_cls`); all three False raises `RapidOCRError`; C ABI `rpocr_run` with `RPOCR_TASK_DET` / `RPOCR_TASK_REC` |
-| word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). CPU, hybrid and Metal; the strict Vulkan GPU-only graph and the lite model warn and return no word boxes. `vis()` does not draw them. |
+| word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). Every backend computes them the same way (per-character CTC step and probability plus the crop geometry): CPU, hybrid and Metal match main; the strict Vulkan GPU-only graph (axis-aligned crops) and the lite model (its own recognizer) are checked against CPU (see docs/API.md). `vis()` does not draw them. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]` because the native call is one timed region |
 | OpenCV drawing in `vis` | Pillow polygons |
 
@@ -179,11 +179,38 @@ line's batch), `crop_width` x `crop_height` (the rotated line crop) and
 `rec_max_wh_ratio` (the batch's max_wh_ratio; main's `line_txt_len =
 rec_steps * crop_width / crop_height / rec_max_wh_ratio`). The arrays are
 owned by the result and released by `rpocr_result_free`; `rpocr_text_box`
-and `rpocr_options` are unchanged. `rec_steps == 0` means the path that ran
-does not record the data (strict Vulkan GPU-only graph, lite model,
-detection-only). C++: `Result::{char_cols, char_probs, rec_steps,
-crop_width, crop_height, rec_max_wh_ratio}`. The Java binding does not
-expose them yet.
+and `rpocr_options` are unchanged. `rec_steps == 0` means the line has no
+record (detection-only, blank lite lines). C++: `Result::{char_cols,
+char_probs, rec_steps, crop_width, crop_height, rec_max_wh_ratio}`.
+
+The boxes themselves: `rpocr_result_words(result, i, single_char, &words)`
+(C) / `rpocr::WordBoxes(line, single_char)` (C++) run main's CalRecBoxes on
+the line box and that data (`src/word_boxes.cpp`, a port of the Python
+`cal_rec_boxes.py`); release with `rpocr_words_free`. `c_words_check.py`
+requires them to equal the Python port on every parity page. Java:
+`TextLine.words()` (return_word_box), `TextLine.charBoxes()`
+(return_single_char_box), `TextLine.words(boolean)` and the raw
+`recSteps()`, `charCols()`, `charProbs()`, `cropWidth()`, `cropHeight()`,
+`recMaxWhRatio()`; `RapidOcrDemo --words` / `--words-json` print them. CI
+compares the jar with the Python binding on the same pixels and the
+LoongArch (QEMU) jar with x86-64.
+
+Every backend records the data the same way: the time step and probability
+of each kept CTC character plus the crop geometry.
+
+- CPU, hybrid and Metal (exact path): main's batches and crops; the words
+  and boxes match main (`word-box-parity`).
+- Strict Vulkan GPU-only graph: each line is read from its axis-aligned
+  rectangle at its own width. The engine reports the rotated crop size the
+  CPU path would cut, and scales `rec_max_wh_ratio` so `line_txt_len` is the
+  line's share of the CTC steps. On lavapipe the words are compared with the
+  CPU run of the same models (`compare_backends.py`).
+- Lite model (`model_type=lite`): Indra's recognizer reports each token's
+  centre. The line box is the crop and one CTC step is one recognizer
+  stride, so `line_txt_len == rec_steps`. There is no main counterpart, so
+  CI checks the geometry (`check_words_sane.py`) and the C/Python agreement.
+  A line whose tokens do not map one to one onto its text falls back to
+  evenly spaced characters in Python and has no C boxes.
 
 ### Recognition batch order (native `np.argsort`)
 

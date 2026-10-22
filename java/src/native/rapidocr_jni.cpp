@@ -21,6 +21,9 @@ jclass g_textLineCls = nullptr;
 jmethodID g_textLineCtor = nullptr;
 jclass g_floatArrayCls = nullptr;
 jclass g_textLineArrayCls = nullptr;
+jclass g_wordCls = nullptr;
+jmethodID g_wordCtor = nullptr;
+jclass g_intArrayCls = nullptr;
 jclass g_cpuInfoCls = nullptr;
 jmethodID g_cpuInfoCtor = nullptr;
 
@@ -64,7 +67,41 @@ jobjectArray NewBox2D(JNIEnv* env, const rpocr_point box[4]) {
   return outer;
 }
 
-jobject NewTextLine(JNIEnv* env, const rpocr_text_box& item, int cls_label, float cls_score) {
+// rpocr_result_words for line `index` as a Java Word[] (empty on failure).
+jobjectArray NewWords(JNIEnv* env, const rpocr_result& result, size_t index, int single_char) {
+  rpocr_words words{};
+  const bool ok = rpocr_result_words(&result, index, single_char, &words) == RPOCR_OK;
+  const jsize n = ok ? (jsize)words.count : 0;
+  jobjectArray arr = env->NewObjectArray(n, g_wordCls, nullptr);
+  for (jsize i = 0; arr && i < n; ++i) {
+    const rpocr_word& w = words.items[i];
+    jobjectArray box = env->NewObjectArray(4, g_intArrayCls, nullptr);
+    if (!box) { arr = nullptr; break; }
+    for (int k = 0; k < 4; ++k) {
+      jintArray pt = env->NewIntArray(2);
+      if (!pt) { box = nullptr; break; }
+      const jint xy[2] = {(jint)std::lround(w.box[k].x), (jint)std::lround(w.box[k].y)};
+      env->SetIntArrayRegion(pt, 0, 2, xy);
+      env->SetObjectArrayElement(box, k, pt);
+      env->DeleteLocalRef(pt);
+    }
+    if (!box) { arr = nullptr; break; }
+    jstring text = env->NewStringUTF(w.text ? w.text : "");
+    if (!text) { arr = nullptr; break; }
+    jobject word = env->NewObject(g_wordCls, g_wordCtor, text, (jdouble)w.confidence, box);
+    env->DeleteLocalRef(text);
+    env->DeleteLocalRef(box);
+    if (!word) { arr = nullptr; break; }
+    env->SetObjectArrayElement(arr, i, word);
+    env->DeleteLocalRef(word);
+  }
+  if (ok) rpocr_words_free(&words);
+  return arr;
+}
+
+jobject NewTextLine(JNIEnv* env, const rpocr_result& result, size_t index, int cls_label,
+                    float cls_score) {
+  const rpocr_text_box& item = result.items[index];
   jstring text = env->NewStringUTF(item.text ? item.text : "");
   if (!text) return nullptr;
   jobjectArray box = NewBox2D(env, item.box);
@@ -72,10 +109,30 @@ jobject NewTextLine(JNIEnv* env, const rpocr_text_box& item, int cls_label, floa
     env->DeleteLocalRef(text);
     return nullptr;
   }
-  jobject obj = env->NewObject(g_textLineCls, g_textLineCtor, text,
-                               (jfloat)item.confidence, box, (jint)item.bbox_x,
-                               (jint)item.bbox_y, (jint)item.bbox_w,
-                               (jint)item.bbox_h, (jint)cls_label, (jfloat)cls_score);
+  rpocr_line_chars chars{};
+  if (rpocr_result_chars(&result, index, &chars) != RPOCR_OK) chars = rpocr_line_chars{};
+  jintArray cols = env->NewIntArray((jsize)chars.count);
+  jfloatArray probs = env->NewFloatArray((jsize)chars.count);
+  jobjectArray words = NewWords(env, result, index, 0);
+  jobjectArray singles = NewWords(env, result, index, 1);
+  jobject obj = nullptr;
+  if (cols && probs && words && singles) {
+    if (chars.count) {
+      std::vector<jint> c(chars.cols, chars.cols + chars.count);
+      env->SetIntArrayRegion(cols, 0, (jsize)chars.count, c.data());
+      env->SetFloatArrayRegion(probs, 0, (jsize)chars.count, chars.probs);
+    }
+    obj = env->NewObject(g_textLineCls, g_textLineCtor, text,
+                         (jfloat)item.confidence, box, (jint)item.bbox_x,
+                         (jint)item.bbox_y, (jint)item.bbox_w,
+                         (jint)item.bbox_h, (jint)cls_label, (jfloat)cls_score,
+                         words, singles, (jint)chars.rec_steps, (jint)chars.crop_width,
+                         (jint)chars.crop_height, (jdouble)chars.rec_max_wh_ratio, cols, probs);
+  }
+  if (cols) env->DeleteLocalRef(cols);
+  if (probs) env->DeleteLocalRef(probs);
+  if (words) env->DeleteLocalRef(words);
+  if (singles) env->DeleteLocalRef(singles);
   env->DeleteLocalRef(box);
   env->DeleteLocalRef(text);
   return obj;
@@ -88,7 +145,7 @@ jobjectArray ResultToArray(JNIEnv* env, const rpocr_result& result) {
     int cls_label = -1;
     float cls_score = 0.f;
     rpocr_result_cls(&result, i, &cls_label, &cls_score);
-    jobject line = NewTextLine(env, result.items[i], cls_label, cls_score);
+    jobject line = NewTextLine(env, result, i, cls_label, cls_score);
     if (!line) return nullptr;
     env->SetObjectArrayElement(arr, (jsize)i, line);
     env->DeleteLocalRef(line);
@@ -123,8 +180,20 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
   g_textLineCls = (jclass)env->NewGlobalRef(local);
   env->DeleteLocalRef(local);
   g_textLineCtor = env->GetMethodID(g_textLineCls, "<init>",
-                                    "(Ljava/lang/String;F[[FIIIIIF)V");
+      "(Ljava/lang/String;F[[FIIIIIF[Lai/rapidocr/lite/Word;[Lai/rapidocr/lite/Word;IIID[I[F)V");
   if (!g_textLineCtor) return JNI_ERR;
+
+  local = env->FindClass("ai/rapidocr/lite/Word");
+  if (!local) return JNI_ERR;
+  g_wordCls = (jclass)env->NewGlobalRef(local);
+  env->DeleteLocalRef(local);
+  g_wordCtor = env->GetMethodID(g_wordCls, "<init>", "(Ljava/lang/String;D[[I)V");
+  if (!g_wordCtor) return JNI_ERR;
+
+  local = env->FindClass("[I");
+  if (!local) return JNI_ERR;
+  g_intArrayCls = (jclass)env->NewGlobalRef(local);
+  env->DeleteLocalRef(local);
 
   local = env->FindClass("[F");
   if (!local) return JNI_ERR;
@@ -156,6 +225,10 @@ extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void* reserved) {
   if (g_floatArrayCls) env->DeleteGlobalRef(g_floatArrayCls);
   if (g_textLineArrayCls) env->DeleteGlobalRef(g_textLineArrayCls);
   if (g_cpuInfoCls) env->DeleteGlobalRef(g_cpuInfoCls);
+  if (g_wordCls) env->DeleteGlobalRef(g_wordCls);
+  if (g_intArrayCls) env->DeleteGlobalRef(g_intArrayCls);
+  g_wordCls = nullptr;
+  g_intArrayCls = nullptr;
   g_textLineCls = nullptr;
   g_floatArrayCls = nullptr;
   g_textLineArrayCls = nullptr;

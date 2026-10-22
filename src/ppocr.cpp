@@ -1078,6 +1078,33 @@ int DecodeCTCChars(const detail::OnnxLite::CtcTop1Output& t, std::size_t batch_i
   return count;
 }
 
+// Per-character data of a GPU-only line (the CPU path fills the same fields
+// in RecognizeCrops). The GPU graph samples the axis-aligned rectangle
+// `crop`, padded to `tensor_width`; the line's share of the CTC steps is
+// rec_steps * (crop.w / crop.h) / (tensor_width / rec_height). The crop
+// size reported is the rotated crop the CPU path would cut (main's
+// get_rotate_crop_image) with rec_max_wh_ratio scaled so main's
+// line_txt_len = rec_steps * crop_width / crop_height / rec_max_wh_ratio
+// keeps that share: word boxes map back through the line box like on CPU.
+void FillGpuChars(Result& r, const detail::OnnxLite::CtcTop1Output& t, std::size_t item,
+                  const Box& box, const CropBounds& crop, int tensor_width, int rec_height) {
+  r.rec_steps = DecodeCTCChars(t, item, r.char_cols, r.char_probs);
+  const auto norm = [&](int a, int b) {
+    const float dx = box.p[a].x - box.p[b].x, dy = box.p[a].y - box.p[b].y;
+    return std::sqrt(dx * dx + dy * dy);
+  };
+  int w = static_cast<int>(std::max(norm(0, 1), norm(2, 3)));
+  int h = static_cast<int>(std::max(norm(0, 3), norm(1, 2)));
+  if (w <= 0 || h <= 0) w = crop.width, h = crop.height;
+  if (h * 1.0 / w >= 1.5) std::swap(w, h);
+  r.crop_width = w;
+  r.crop_height = h;
+  const double tensor_ratio = std::max(tensor_width / static_cast<double>(rec_height),
+                                       crop.width / static_cast<double>(crop.height));
+  r.rec_max_wh_ratio = tensor_ratio * (w / static_cast<double>(h)) /
+                       (crop.width / static_cast<double>(crop.height));
+}
+
 Result MakeResult(const Box& b, std::string text, float confidence) {
   Result x;x.text=std::move(text);x.confidence=confidence;
   float minx=b.p[0].x,maxx=minx,miny=b.p[0].y,maxy=miny;
@@ -1310,6 +1337,7 @@ void RecognizeGpuOnlyCropBatch(detail::OnnxLite& rec, const Options& opt,
       std::cerr << '\n';
     }
     output[job.page][job.result] = MakeResult(*job.box, std::move(text), confidence);
+    FillGpuChars(output[job.page][job.result], ctc, item, *job.box, job.crop, width, opt.rec_height);
   }
 }
 
@@ -1346,6 +1374,7 @@ bool RecognizeGpuOnlyMaskedBatch(detail::OnnxLite& rec, const Options& opt,
     const auto& job = jobs[item];
     auto [text, confidence] = DecodeCTC(ctc, item, dict);
     output[job.page][job.result] = MakeResult(*job.box, std::move(text), confidence);
+    FillGpuChars(output[job.page][job.result], ctc, item, *job.box, job.crop, widths[item], opt.rec_height);
   }
   return true;
 }
@@ -1481,6 +1510,8 @@ std::vector<Result> RecognizeGpuOnlyCrops(detail::OnnxLite& rec, const Options& 
           auto [text, confidence] = DecodeCTC(ctcs[i], item, dict);
           grouped_output[job.page][job.result] =
               MakeResult(*job.box, std::move(text), confidence);
+          FillGpuChars(grouped_output[job.page][job.result], ctcs[i], item, *job.box, job.crop,
+                       static_cast<int>(inputs[i].shape.back()), opt.rec_height);
         }
       }
       if (decoded) {
@@ -2286,6 +2317,19 @@ std::vector<Result> LiteResults(const std::vector<indra::LiteLine>& lines) {
     const int x1 = static_cast<int>(std::lround(l.x1)), y1 = static_cast<int>(std::lround(l.y1));
     r.bbox = {x0, y0, x1 - x0, y1 - y0};
     r.box = {{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}};
+    // return_word_box: the line box is the crop; one CTC step per `step`
+    // of its width, so main's line_txt_len equals rec_steps.
+    if (!l.char_x.empty() && l.step > 0.F && x1 > x0 && y1 > y0) {
+      r.crop_width = x1 - x0;
+      r.crop_height = y1 - y0;
+      r.rec_steps = std::max(1, static_cast<int>(std::lround(1.0 / l.step)));
+      r.rec_max_wh_ratio = r.crop_width / static_cast<double>(r.crop_height);
+      for (std::size_t k = 0; k < l.char_x.size(); ++k) {
+        r.char_cols.push_back(std::clamp(static_cast<int>(std::floor(l.char_x[k] * r.rec_steps)), 0,
+                                         r.rec_steps - 1));
+        r.char_probs.push_back(l.char_probs[k]);
+      }
+    }
     out.push_back(std::move(r));
   }
   return out;

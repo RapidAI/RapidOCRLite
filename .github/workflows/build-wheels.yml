@@ -1317,6 +1317,36 @@ jobs:
       - name: smoke test
         shell: bash
         run: java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cache tiny models
+        uses: actions/cache@v4
+        with:
+          path: ci-models
+          key: rapidocr-ci-models-tiny-v1
+      - name: Download tiny models when the cache is empty
+        run: python python/tests/fetch_ci_models.py
+      - name: Java word boxes vs the Python binding
+        shell: bash
+        run: |
+          set -euo pipefail
+          pages="python/tests/data/hello.png $(ls docs/lite_examples/images/*.png | grep -v -e _redraw -e _boxes)"
+          mkdir -p /tmp/wpages
+          for f in text_vertical_words.png issue_170.png ch_doc_server.png short.png; do
+            curl -fsSL -o "/tmp/wpages/$f" \
+              "https://raw.githubusercontent.com/RapidAI/RapidOCR/8ac45f4e731f50c37a1f5f9cf89294e08c1b2c15/python/tests/test_files/$f" \
+              && pages="$pages /tmp/wpages/$f" || echo "missing $f"
+          done
+          java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --words \
+            --words-json java-words.json \
+            --ppocr ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt $pages | tail -40
+          python -m pip install -q numpy Pillow PyYAML
+          lib=$(ls java/build/native/linux-x86_64/*.so | grep -v jni | head -1)
+          PPOCR_LIBRARY="$PWD/$lib" PYTHONPATH=python/src python tools/word_parity/java_words_check.py \
+            java-words.json ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
+            ci-models/ppocrv6_tiny_dict.txt | tee -a "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: java-native-linux-x86_64
@@ -1434,7 +1464,8 @@ jobs:
       - name: x86_64 reference OCR
         run: |
           set -euo pipefail
-          java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar \
+          # NumPy's scalar argsort, the order LoongArch uses: same batches, same word boxes
+          PPOCR_ARGSORT_ISA=scalar java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --words \
             --ppocr ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
             ci-models/ppocrv6_tiny_dict.txt docs/lite_examples/images/ch_en_num.jpg | tee ocr-x86_64.txt
       - uses: docker/setup-qemu-action@v3
@@ -1453,7 +1484,7 @@ jobs:
               apt-get update -q
               DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends openjdk-21-jre-headless
               java -version
-              java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu \
+              java -Dsun.stdout.encoding=UTF-8 -jar java/dist/rapidocrlite-java-*.jar --cpu --words \
                 --ppocr ci-models/PP-OCRv6_det_tiny.onnx ci-models/PP-OCRv6_rec_tiny.onnx \
                 ci-models/ppocrv6_tiny_dict.txt docs/lite_examples/images/ch_en_num.jpg' | tee ocr-loongarch64.txt
           grep -q "isa=lasx" ocr-loongarch64.txt
@@ -1463,6 +1494,12 @@ jobs:
           test -s a.txt
           diff a.txt b.txt
           echo "loongarch64 jar OCR matches x86_64 ($(wc -l < a.txt) lines)"
+          # word boxes (return_word_box) must match too
+          grep '^    w ' ocr-x86_64.txt > aw.txt
+          grep '^    w ' ocr-loongarch64.txt > bw.txt
+          test -s aw.txt
+          diff aw.txt bw.txt
+          echo "loongarch64 jar word boxes match x86_64 ($(wc -l < aw.txt) words)"
       - uses: actions/upload-artifact@v4
         with:
           name: java-native-linux-loongarch64

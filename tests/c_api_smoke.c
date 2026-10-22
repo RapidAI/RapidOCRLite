@@ -72,6 +72,13 @@ int main(void) {
     for (int i = 0; i < 6; ++i) Expect(got[i] == want[i], "argsort order");
     Expect(rpocr_argsort_isa() >= 0 && rpocr_argsort_isa() <= 2, "argsort isa");
   }
+  {
+    rpocr_words words;
+    Expect(rpocr_result_words(NULL, 0, 0, &words) == RPOCR_ERR_INVALID_ARGUMENT, "words null result");
+    Expect(words.items == NULL && words.count == 0, "words cleared");
+    rpocr_words_free(&words);
+    rpocr_words_free(NULL);
+  }
   rpocr_image_buffer image = {0};
   Expect(rpocr_load_ppm("missing.ppm", &image) != RPOCR_OK, "missing ppm");
 

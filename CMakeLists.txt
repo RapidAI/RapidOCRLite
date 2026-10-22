@@ -39,6 +39,7 @@ set(PPOCR_SOURCES
     src/cv_compat.cpp
     src/clipper/clipper.cpp
     src/np_argsort.cpp
+    src/word_boxes.cpp
 )
 
 add_library(ppocr_objects OBJECT ${PPOCR_SOURCES})
@@ -243,8 +244,11 @@ endif()
 # No fast-math: NaN placement must follow NumPy.
 if(MSVC)
   set_source_files_properties(src/np_argsort.cpp PROPERTIES COMPILE_OPTIONS "/fp:precise")
+  set_source_files_properties(src/word_boxes.cpp PROPERTIES COMPILE_OPTIONS "/fp:precise")
 else()
   set_source_files_properties(src/np_argsort.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math")
+  # word boxes follow numpy / OpenCV arithmetic: no fused multiply-add.
+  set_source_files_properties(src/word_boxes.cpp PROPERTIES COMPILE_OPTIONS "-fno-fast-math;-ffp-contract=off")
 endif()
 if(PPOCR_CPU MATCHES "x86_64|amd64|x64|i[3-6]86")
   target_sources(ppocr_objects PRIVATE src/np_argsort_avx2.cpp)

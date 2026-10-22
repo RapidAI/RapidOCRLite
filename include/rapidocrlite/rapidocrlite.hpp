@@ -35,6 +35,21 @@ struct UnsupportedError : std::runtime_error {
 struct Result {
   std::string text;
   float confidence{};
+
+// One word (or character) box of a line, rapidocr main's word_results item:
+// (text, confidence, box). The confidence is main's per-character score
+// (round(prob, 5)) paired the way main's zip pairs it.
+struct Word {
+  std::string text;
+  double confidence{};
+  std::array<std::array<int, 2>, 4> box{};  // main's order_points order
+};
+
+// main's CalRecBoxes for one line (return_word_box; single_char =
+// return_single_char_box), from the line's box and per-character data.
+// Empty for blank lines and when the line has no per-character data.
+std::vector<Word> WordBoxes(const Result& line, bool single_char = false);
+
   std::array<int, 4> bbox{};                 // x, y, width, height
   std::array<std::array<int, 2>, 4> box{};   // TL, TR, BR, BL
   // Text-line orientation (rapidocr main TextClassifier). -1: the classifier

@@ -252,6 +252,30 @@ RPOCR_API int rpocr_set_rec_order(rpocr_ocr* ocr, rpocr_rec_order_fn fn, void* u
    The PPOCR_ARGSORT_ISA environment variable (scalar, avx2, avx512) forces a
    lower variant. rpocr_argsort_isa returns the variant in use: 0 scalar,
    1 avx2, 2 avx512. */
+/* Word and character boxes, rapidocr main's word_results for line `index`
+   (CalRecBoxes on the line box and its rpocr_result_chars data):
+   single_char = 0 is return_word_box (English / number runs as words, CJK
+   as characters), 1 adds return_single_char_box (one box per character).
+   `words` receives an array owned by the caller, released with
+   rpocr_words_free; count 0 for blank lines and lines without character
+   data. Boxes are integer pixel corners in main's order_points order;
+   confidence is main's per-character round(prob, 5). Identical to the
+   Python binding's word_results for the same result (the Python binding
+   also maps its resized input back to the original image first). */
+typedef struct rpocr_word {
+  char* text;
+  double confidence;
+  rpocr_point box[4];
+} rpocr_word;
+
+typedef struct rpocr_words {
+  rpocr_word* items;
+  size_t count;
+} rpocr_words;
+
+RPOCR_API int rpocr_result_words(const rpocr_result* result, size_t index, int single_char,
+                                 rpocr_words* words);
+RPOCR_API void rpocr_words_free(rpocr_words* words);
 RPOCR_API void rpocr_argsort(const double* values, size_t count, size_t* order);
 RPOCR_API int rpocr_argsort_isa(void);
 /* 1 when this handle has a classifier model loaded, 0 otherwise. */

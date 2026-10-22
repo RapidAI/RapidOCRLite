@@ -289,8 +289,41 @@ struct Vocab {
 
 // ---------------------------------------------------------------- data
 struct Box5 { float v[5]; };
-struct Tok { bool is_char; int64_t id; std::u32string ch; double x; };
+struct Tok { bool is_char; int64_t id; std::u32string ch; double x; float p = 0.f; double step = 0; };
 struct RecOut { std::string text; double conf = 0; std::vector<Tok> toks; };
+
+// Per-character positions of a line for return_word_box: tokens as the text
+// shows them (" ".join(text.split()): leading / trailing spaces dropped,
+// space runs collapsed), positions relative to [b0, b2]. Leaves `l` empty
+// when the token count does not match the text's code points.
+inline void LiteChars(LiteLine& l, const std::vector<Tok>& toks, double b0, double b2,
+                      const std::u32string& text, bool (*is_space)(const Tok&, const void*), const void* ctx) {
+  l.char_x.clear(); l.char_probs.clear(); l.step = 0;
+  const double width = b2 - b0;
+  if (width <= 0 || toks.empty()) return;
+  std::vector<const Tok*> kept; bool pending_space = false;
+  for (const auto& t : toks) {
+    if (is_space(t, ctx)) { if (!kept.empty()) pending_space = true; continue; }
+    if (pending_space) { kept.push_back(nullptr); pending_space = false; }
+    kept.push_back(&t);
+  }
+  if (kept.size() != text.size()) return;
+  double step = 0;
+  for (const auto* t : kept) if (t) { step = t->step; break; }
+  if (step <= 0) return;
+  for (size_t k = 0; k < kept.size(); ++k) {
+    const Tok* t = kept[k];
+    if (!t) {  // a collapsed space: between its neighbours, as CTC emits it
+      const Tok* a = kept[k - 1]; const Tok* b = kept[k + 1];
+      l.char_x.push_back((float)(((a->x + b->x) / 2 - b0) / width));
+      l.char_probs.push_back(std::min(a->p, b->p));
+      continue;
+    }
+    l.char_x.push_back((float)((t->x - b0) / width));
+    l.char_probs.push_back(t->p);
+  }
+  l.step = (float)(step / width);
+}
 struct Crop { int w = 0; std::vector<float> d; };  // [H][w] ink map
 
 constexpr double kAdaptiveMinH = 9.0, kAdaptiveTargetH = 12.0, kSplitGap = 3.0, kGutterGap = 1.6;
@@ -506,7 +539,7 @@ struct LiteEngine::Impl {
           for (long t = 0; t < n; t++) {
             if (seq[t] == 0 || (t > 0 && seq[t] == seq[t - 1])) continue;
             kept.push_back(seq[t]); kp.push_back(p[t]);
-            Tok tk; tk.x = ix0 + ((double)t + 0.5) * stride * f;
+            Tok tk; tk.x = ix0 + ((double)t + 0.5) * stride * f; tk.p = p[t]; tk.step = stride * f;
             if (g.as_chars) { tk.is_char = true; tk.id = 0; tk.ch = g.voc->chars32[(size_t)seq[t] - 1]; }
             else { tk.is_char = false; tk.id = seq[t]; }
             toks.push_back(std::move(tk));
@@ -521,6 +554,7 @@ struct LiteEngine::Impl {
   }
 
   // ---- line splitting
+  static bool SpaceTok(const Tok& t, const void* self) { return static_cast<const Impl*>(self)->IsSpaceTok(t); }
   bool IsSpaceTok(const Tok& t) const {
     return t.is_char ? (t.ch.size() == 1 && t.ch[0] == U' ') : (t.id == vocab.space_id);
   }
@@ -860,10 +894,12 @@ struct LiteEngine::Impl {
     auto rec = Recognize(gray, w, h, boxes);
     double t4 = NowMs();
     std::vector<std::array<float, 4>> nb; std::vector<std::string> texts; std::vector<double> confs;
+    std::vector<std::vector<Tok>> seg_toks;
     auto cuts = boxes.empty() ? std::vector<std::vector<double>>() : GutterCuts(boxes, rec);
     for (size_t i = 0; i < boxes.size(); i++)
       for (auto& sg : SplitLine(boxes[i].v, rec[i].toks, kSplitGap, cuts[i])) {
         nb.push_back({sg.b[0], sg.b[1], sg.b[2], sg.b[3]}); texts.push_back(sg.text); confs.push_back(rec[i].conf);
+        seg_toks.push_back(std::move(sg.toks));
       }
     double t5 = NowMs();
     auto order_ = ReadingOrder(nb, texts, w, h);
@@ -887,6 +923,8 @@ struct LiteEngine::Impl {
       }
       LiteLine l; l.x0 = (float)v[0]; l.y0 = (float)v[1]; l.x1 = (float)v[2]; l.y1 = (float)v[3];
       l.text = texts[i]; l.conf = (float)PyRound(confs[i], 4);
+      // Fractions of the (deskewed) segment width carry over to the output box.
+      LiteChars(l, seg_toks[i], nb[i][0], nb[i][2], Utf8To32(l.text), &Impl::SpaceTok, this);
       out.push_back(std::move(l));
     }
     return out;
@@ -956,6 +994,7 @@ std::vector<LiteLine> LiteEngine::Run(const std::uint8_t* rgb, int w, int h, int
     Box5 b{{(float)p, (float)p, (float)(p + w), (float)(p + h), 0.f}};
     auto r = p_->Recognize(gp, W, H, {b});
     LiteLine l; l.x0 = 0; l.y0 = 0; l.x1 = (float)w; l.y1 = (float)h; l.text = r[0].text; l.conf = (float)r[0].conf;
+    LiteChars(l, r[0].toks, (double)p, (double)(p + w), Utf8To32(l.text), &Impl::SpaceTok, p_.get());
     out.push_back(l);
     return out;
   }
