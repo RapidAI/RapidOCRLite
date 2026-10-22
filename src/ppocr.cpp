@@ -1078,7 +1078,7 @@ int DecodeCTCChars(const detail::OnnxLite::CtcTop1Output& t, std::size_t batch_i
 }
 
 Result MakeResult(const Box& b, std::string text, float confidence) {
-  Result x{std::move(text),confidence};
+  Result x;x.text=std::move(text);x.confidence=confidence;
   float minx=b.p[0].x,maxx=minx,miny=b.p[0].y,maxy=miny;
   for(int i=0;i<4;++i){x.box[i]={int(std::lround(b.p[i].x)),int(std::lround(b.p[i].y))};minx=std::min(minx,b.p[i].x);maxx=std::max(maxx,b.p[i].x);miny=std::min(miny,b.p[i].y);maxy=std::max(maxy,b.p[i].y);}
   x.bbox={int(std::lround(minx)),int(std::lround(miny)),int(std::lround(maxx-minx)),int(std::lround(maxy-miny))};

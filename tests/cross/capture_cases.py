@@ -44,11 +44,11 @@ def run(self, rgb, tasks):
 
 _native.NativeOCR.__init__ = init
 _native.NativeOCR.set_det_thresholds = thr
-def run_ex(self, rgb, tasks):
+def run_ex(self, rgb, tasks, *args, **kwargs):
     captured["image"] = np.ascontiguousarray(rgb, dtype=np.uint8)
     # use_cls is off here, so the bits equal rpocr_run's (the replay calls rpocr_run).
     captured["tasks"] = int(tasks) & ~_native.RPOCR_TASK_CLS
-    return orig_run_ex(self, rgb, tasks)
+    return orig_run_ex(self, rgb, tasks, *args, **kwargs)
 
 
 _native.NativeOCR.run = run

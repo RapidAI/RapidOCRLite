@@ -202,7 +202,11 @@ class RapidOCR:
         want_words = bool(self.return_word_box)
         chars = [] if want_words else None
         if not self.use_det:
-            _, txts, scores, cls = engine.run_ex(prepared, _native.RPOCR_TASK_REC | cls_bit, chars)
+            rec_tasks = _native.RPOCR_TASK_REC | cls_bit
+            if want_words:
+                _, txts, scores, cls = engine.run_ex(prepared, rec_tasks, chars)
+            else:
+                _, txts, scores, cls = engine.run_ex(prepared, rec_tasks)
             elapsed = time.perf_counter() - started
             img = corrected(original, cls[0]) if (use_cls and cls) else original
             word_results = tuple((t, s, None) for t, s in zip(txts, scores))
@@ -218,9 +222,11 @@ class RapidOCR:
                 word_results=word_results,
                 elapse=elapsed,
             )
-        boxes, txts, scores, _ = engine.run_ex(
-            prepared, _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC | cls_bit, chars
-        )
+        full_tasks = _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC | cls_bit
+        if want_words:
+            boxes, txts, scores, _ = engine.run_ex(prepared, full_tasks, chars)
+        else:
+            boxes, txts, scores, _ = engine.run_ex(prepared, full_tasks)
         if want_words:
             return self._word_box_output(
                 original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started
