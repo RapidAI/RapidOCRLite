@@ -755,6 +755,8 @@ def main(arg_list: Optional[list] = None) -> None:
             print(f"{text}\t{score:.4f}")
     if args.return_word_box:
         for line in result.word_results or ():
+            if not line or not isinstance(line[0], tuple):
+                continue
             for word, score, box in line:
                 print(f"{word}\t{score:.4f}\t{box}")
 

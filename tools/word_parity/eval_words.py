@@ -44,6 +44,15 @@ def plain(v):
     return v
 
 
+def words_of(r):
+    wr = getattr(r, "word_results", None)
+    if wr is None:
+        return None
+    if len(r) == 0:  # empty result: keep the default verbatim
+        return plain(list(wr))
+    return [[[w[0], float(w[1]), plain(w[2])] for w in line] for line in wr]
+
+
 def dump_full(img):
     out = {}
     for mode, single in (("word", False), ("char", True)):
@@ -52,7 +61,7 @@ def dump_full(img):
             "txts": list(r.txts or ()),
             "boxes": plain(r.boxes) if getattr(r, "boxes", None) is not None else [],
             "scores": [float(x) for x in (r.scores or ())],
-            "words": [[[w[0], float(w[1]), plain(w[2])] for w in line] for line in (r.word_results or ())],
+            "words": words_of(r),
         }
     return out
 

@@ -35,6 +35,12 @@ for key, rp in ref["pages"].items():
                 stats["page_equal"] += 1
             continue
         r, o = rp[mode], op[mode]
+        if not r["txts"] or not o["txts"]:
+            if r == o:
+                stats["page_equal"] += 1
+            else:
+                bad.append((key, mode, "empty page differs", r, o))
+            continue
         ok = r["txts"] == o["txts"] and r["boxes"] == o["boxes"] and len(r["words"]) == len(o["words"])
         for lr, lo in zip(r["words"], o["words"]):
             if len(lr) != len(lo):

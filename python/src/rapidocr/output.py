@@ -10,15 +10,16 @@ import numpy as np
 class RapidOCROutput:
     """Same fields as ``rapidocr.utils.output.RapidOCROutput`` on ``main``.
 
-    ``word_results`` stays empty: the native engine does not return per-word
-    boxes. ``elapse`` is the summed runtime in seconds, matching ``main``.
+    ``word_results`` holds main's per-line ``(word, conf, box)`` tuples when
+    ``return_word_box`` is on and is ``()`` otherwise; an empty result keeps
+    main's default ``(("", 1.0, None),)``. ``elapse`` is the summed runtime in seconds, matching ``main``.
     """
 
     img: Optional[np.ndarray] = None
     boxes: Optional[np.ndarray] = None
     txts: Optional[Tuple[str, ...]] = None
     scores: Optional[Tuple[float, ...]] = None
-    word_results: Tuple[Tuple[Any, ...], ...] = ()
+    word_results: Tuple[Tuple[Any, ...], ...] = (("", 1.0, None),)
     elapse_list: List[Optional[float]] = field(default_factory=list)
     elapse: float = field(init=False)
 
