@@ -61,6 +61,7 @@ int main(void) {
            "chars of empty result");
   }
   Expect(rpocr_cls_loaded(NULL) == 0, "cls_loaded null");
+  Expect(rpocr_set_rec_order(NULL, NULL, NULL) == RPOCR_ERR_INVALID_ARGUMENT, "rec order null");
   rpocr_image_buffer image = {0};
   Expect(rpocr_load_ppm("missing.ppm", &image) != RPOCR_OK, "missing ppm");
 

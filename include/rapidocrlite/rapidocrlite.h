@@ -231,6 +231,18 @@ typedef struct rpocr_line_chars {
 } rpocr_line_chars;
 RPOCR_API int rpocr_result_chars(const rpocr_result* result, size_t index,
                                  rpocr_line_chars* chars);
+/* Recognition batch order (5.0.0a15). rapidocr main batches line crops in
+   np.argsort(width / height) order, numpy's unstable sort, so lines with
+   equal ratios can share a batch differently from this library's stable
+   sort, which changes batch padding and with it word boxes and, slightly,
+   scores. A callback set here receives the `count` ratios (double
+   width / height of each crop, detection order) and fills `order` with a
+   permutation of 0..count-1; an invalid permutation keeps the stable order.
+   NULL restores it. Only the exact (non-fast) CPU / hybrid / Metal
+   recognition path uses it. The Python package installs np.argsort. */
+typedef void (*rpocr_rec_order_fn)(const double* ratios, size_t count, size_t* order,
+                                   void* user);
+RPOCR_API int rpocr_set_rec_order(rpocr_ocr* ocr, rpocr_rec_order_fn fn, void* user);
 /* 1 when this handle has a classifier model loaded, 0 otherwise. */
 RPOCR_API int rpocr_cls_loaded(const rpocr_ocr* ocr);
 /* outs must point at count result objects. Input order is preserved. */

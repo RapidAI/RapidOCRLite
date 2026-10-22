@@ -458,6 +458,21 @@ int rpocr_result_chars(const rpocr_result* result, size_t index, rpocr_line_char
   return RPOCR_OK;
 }
 
+int rpocr_set_rec_order(rpocr_ocr* ocr, rpocr_rec_order_fn fn, void* user) {
+  ClearError();
+  if (!ocr) return Fail(RPOCR_ERR_INVALID_ARGUMENT, "null handle");
+  if (ocr->lite) return RPOCR_OK;  // the lite pipeline has its own recognizer
+  if (!fn) {
+    ocr->engine().SetRecOrder({});
+    return RPOCR_OK;
+  }
+  ocr->engine().SetRecOrder([fn, user](const std::vector<double>& ratios,
+                                       std::vector<std::size_t>& order) {
+    fn(ratios.data(), ratios.size(), order.data(), user);
+  });
+  return RPOCR_OK;
+}
+
 int rpocr_cls_loaded(const rpocr_ocr* ocr) {
   if (!ocr || ocr->lite) return 0;
   return ocr->engine().ClsLoaded() ? 1 : 0;

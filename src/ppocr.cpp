@@ -1137,6 +1137,7 @@ struct OCR::Impl {
   bool cls_loaded{};
   // Handle default for use_cls (Options::use_cls after PPOCR_USE_CLS).
   bool cls_default{};
+  OCR::RecOrderFn rec_order;
   void LoadClassifier(const Options& o);
   // Indra lite pipeline (det_model is a lite folder); det / rec stay empty.
   std::shared_ptr<indra::LiteEngine> lite;
@@ -1959,6 +1960,9 @@ void OCR::Impl::LoadClassifier(const Options& o) {
 }
 bool OCR::ClsEnabled() const noexcept { return impl_ && impl_->cls_loaded && impl_->cls_default; }
 bool OCR::ClsLoaded() const noexcept { return impl_ && impl_->cls_loaded; }
+void OCR::SetRecOrder(RecOrderFn fn) {
+  if (impl_) impl_->rec_order = std::move(fn);
+}
 
 // rapidocr 3.10 recognition front end (TextRecognizer.__call__ after
 // get_rotate_crop_image): crops sorted by w/h, consecutive groups of
@@ -2017,6 +2021,20 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
   });
   const int rec_h = opt.rec_height;
   const int rec_w = rec_h * 320 / 48;
+  const auto apply_rec_order = [&] {
+    if (!rec_order || n < 2) return;
+    std::vector<double> ratios(n);
+    for (std::size_t i = 0; i < n; ++i) ratios[i] = crop_w(i) / static_cast<double>(crop_h(i));
+    std::vector<std::size_t> custom(n, n);
+    rec_order(ratios, custom);
+    if (custom.size() != n) return;
+    std::vector<char> seen(n, 0);
+    for (const std::size_t i : custom) {
+      if (i >= n || seen[i]) return;
+      seen[i] = 1;
+    }
+    order.swap(custom);
+  };
   const std::size_t max_batch = static_cast<std::size_t>(std::max(1, opt.rec_batch_size));
   struct Batch { int width; const std::size_t* indices; std::size_t count; double max_ratio; };
   std::vector<Batch> batches;
@@ -2071,6 +2089,7 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
       first += count;
     }
   }
+  if (!fast) apply_rec_order();
   for (std::size_t first = 0; !fast && first < n; first += max_batch) {
     const std::size_t count = std::min(max_batch, n - first);
     double max_ratio = rec_w / static_cast<double>(rec_h);

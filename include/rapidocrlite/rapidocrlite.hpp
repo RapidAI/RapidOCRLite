@@ -3,6 +3,8 @@
 #include "rapidocrlite/export.h"
 
 #include <array>
+#include <cstddef>
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
@@ -262,6 +264,17 @@ class RPOCR_API OCR {
   // default for this handle (after PPOCR_USE_CLS).
   [[nodiscard]] bool ClsEnabled() const noexcept;
   [[nodiscard]] bool ClsLoaded() const noexcept;
+  // Order in which the exact (non-fast) recognition path batches crops.
+  // rapidocr main sorts them with np.argsort(width / height), numpy's
+  // default unstable sort, so equal ratios can land in different batches
+  // than the default std::stable_sort; batch padding then changes
+  // max_wh_ratio, the word boxes and (slightly) the scores. fn receives each
+  // crop's width / height and must fill `order` (pre-sized) with a
+  // permutation; anything else keeps the stable order. Empty fn restores it.
+  // Set it before recognizing; the call is not synchronized with Run.
+  using RecOrderFn =
+      std::function<void(const std::vector<double>& ratios, std::vector<std::size_t>& order)>;
+  void SetRecOrder(RecOrderFn fn);
   // Runs a batch of independent page images. Results preserve input order;
   // each nested vector is identical to calling Recognize() for that image.
   // This is intentionally a page-level scheduler rather than padding unlike

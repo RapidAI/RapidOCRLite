@@ -107,6 +107,22 @@ class LineChars(ctypes.Structure):
     ]
 
 
+REC_ORDER_FN = ctypes.CFUNCTYPE(
+    None, ctypes.POINTER(ctypes.c_double), ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p
+)
+
+
+def _numpy_rec_order(ratios, count, order, _user):
+    # rapidocr main TextRecognizer: indices = np.argsort(np.array(width_list))
+    values = np.ctypeslib.as_array(ratios, shape=(int(count),)).copy()
+    indices = np.argsort(values)
+    for k, index in enumerate(indices.tolist()):
+        order[k] = index
+
+
+_REC_ORDER_CALLBACK = REC_ORDER_FN(_numpy_rec_order)
+
+
 class BackendInfo(ctypes.Structure):
     _fields_ = [
         ("vulkan_loader_available", ctypes.c_int),
@@ -208,6 +224,10 @@ def _bind(lib: ctypes.CDLL) -> None:
     if result_chars is not None:
         result_chars.argtypes = [ctypes.POINTER(Result), ctypes.c_size_t, ctypes.POINTER(LineChars)]
         result_chars.restype = ctypes.c_int
+    set_rec_order = getattr(lib, "rpocr_set_rec_order", None)
+    if set_rec_order is not None:
+        set_rec_order.argtypes = [ctypes.c_void_p, REC_ORDER_FN, ctypes.c_void_p]
+        set_rec_order.restype = ctypes.c_int
     cls_loaded = getattr(lib, "rpocr_cls_loaded", None)
     if cls_loaded is not None:
         cls_loaded.argtypes = [ctypes.c_void_p]
@@ -250,6 +270,10 @@ class NativeOCR:
         if not handle:
             raise RuntimeError(self._error() or "rpocr_create failed")
         self.handle = handle
+        # Batch lines in np.argsort order, as rapidocr main does (unstable on ties).
+        set_rec_order = getattr(self.lib, "rpocr_set_rec_order", None)
+        if set_rec_order is not None:
+            set_rec_order(handle, _REC_ORDER_CALLBACK, None)
 
     def active_backend(self) -> Optional[int]:
         """RPOCR_BACKEND_* that runs the full pipeline, or None on an old build."""
