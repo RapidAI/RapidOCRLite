@@ -47,7 +47,7 @@ jobs:
         env:
           PYTHONPATH: python/src
         run: |
-          python -m pip install -q numpy
+          python -m pip install -q numpy Pillow PyYAML
           python -c "import numpy; numpy.show_runtime()" || true
           if [ "$(uname -m)" = x86_64 ]; then v=all; else v=native; fi
           python tools/argsort_fuzz/fuzz.py --cases 20000 --variant "$v"
