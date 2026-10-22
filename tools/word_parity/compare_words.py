@@ -117,11 +117,14 @@ for key, rp in ref["pages"].items():
         continue
     def near(m):
         r, o = rp[m], op[m]
-        if r == o:
+        wg = lambda w: (w[0], w[2]) if isinstance(w, list) and len(w) > 2 else w
+        geo = lambda d: (d["txts"], d["boxes"], [[wg(w) for w in l] for l in d["words"]])
+        if geo(r) == geo(o) or (r["txts"] == o["txts"] and r["boxes"] == o["boxes"]):
             return None
         if r["txts"] != o["txts"] or len(r["boxes"]) != len(o["boxes"]):
             return False
-        if [[w[0] for w in l] for l in r["words"]] != [[w[0] for w in l] for l in o["words"]]:
+        wt = lambda w: w[0] if isinstance(w, list) else w
+        if [[wt(w) for w in l] for l in r["words"]] != [[wt(w) for w in l] for l in o["words"]]:
             return False
         return all(abs(x - y) <= 1 for br, bo in zip(r["boxes"], o["boxes"])
                    for pr, po in zip(br, bo) for x, y in zip(pr, po))
