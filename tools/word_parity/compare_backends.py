@@ -20,6 +20,9 @@ ap.add_argument("--tol", type=float, default=3.0)
 ap.add_argument("--min-same", type=float, default=0.98)
 ap.add_argument("--rel", type=float, default=0.35)
 ap.add_argument("--min-within", type=float, default=0.99)
+ap.add_argument("--exact", action="store_true",
+                help="every page and mode: texts, line boxes and word boxes identical")
+ap.add_argument("--label", default="")
 a = ap.parse_args()
 A = json.load(open(a.cpu))["pages"]
 B = json.load(open(a.other))["pages"]
@@ -55,6 +58,29 @@ for key, pa in A.items():
                     ((bx[2][0] - bx[1][0]) ** 2 + (bx[2][1] - bx[1][1]) ** 2) ** 0.5)
             within += dev <= max(a.tol, a.rel * h)
             exact += dev == 0
+if a.exact:
+    pages = diffs = lines = 0
+    for key, pa in A.items():
+        pb = B.get(key)
+        pages += 1
+        if pb is None or ("error" in pa) != ("error" in pb):
+            diffs += 1; print("page differs:", key); continue
+        if "error" in pa:
+            continue
+        for mode in ("word", "char"):
+            ma, mb = pa[mode], pb[mode]
+            lines += len(ma["txts"])
+            # Confidences come from GPU float arithmetic; compare texts and boxes.
+            strip = lambda ws: [[[w[0], w[2]] if isinstance(w, list) and len(w) == 3 else w
+                                  for w in wl] if isinstance(wl, list) else wl for wl in ws]
+            for f in ("txts", "boxes", "words"):
+                x, y = ma[f], mb[f]
+                if f == "words":
+                    x, y = strip(x), strip(y)
+                if json.dumps(x) != json.dumps(y):
+                    diffs += 1; print(f"{key} {mode} {f} differ"); break
+    print(f"{a.label}exact: {pages} pages, {lines} line-modes, differing page-modes: {diffs}")
+    raise SystemExit(0 if diffs == 0 and pages else 1)
 frac = same_txt / paired if paired else 0.0
 print(f"lines with identical text and box: {paired}; same word texts: {same_txt} ({frac:.2%}); "
       f"boxes within max({a.tol:g}px, {a.rel:g}h): {within}, identical: {exact}; words {words}; max corner deviation {max_dev:g}px")

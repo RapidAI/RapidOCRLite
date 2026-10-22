@@ -148,7 +148,7 @@ jobs:
   vulkan:
     name: return_word_box on the strict Vulkan GPU-only graph (lavapipe) vs CPU
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
         with:
@@ -182,29 +182,141 @@ jobs:
                    ch_en_num.jpg en.jpg text_det.jpg ch_doc_server.png japan.jpg korean.jpg short.png; do
             cp "python/tests/test_files/$f" /tmp/word-pages/ || echo "missing $f"
           done
-      - name: CPU and GPU-only word boxes
+      - name: CPU and GPU-only word boxes (exact front end)
         env:
           PYTHONPATH: python/src
           VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
           PPOCR_VULKAN_DEVICE_INDEX: "0"
         run: |
           mkdir -p parity
-          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/cpu.json --extra /tmp/word-pages \
-            --limit-det 40 --no-rec --model-root /tmp/models-lite
-          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/gpu.json --extra /tmp/word-pages \
-            --limit-det 40 --no-rec --model-root /tmp/models-lite \
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/cpu.json --extra /tmp/word-pages --limit-det 40 --no-rec --model-root /tmp/models-lite
+          s=$(date +%s); /tmp/lite/bin/python tools/word_parity/eval_words.py parity/gpu.json --extra /tmp/word-pages --limit-det 40 --no-rec --model-root /tmp/models-lite \
             --param EngineConfig.ppocr_cpp.backend=gpu Global.log_level=info
+          echo "GPU-only exact front end: $(( $(date +%s) - s )) s for the CPU-dump page set (lavapipe)" | tee parity/vk_time.txt
           {
-            echo "### strict Vulkan GPU-only graph vs CPU"
-            /tmp/lite/bin/python tools/word_parity/compare_backends.py parity/cpu.json parity/gpu.json || true
-            /tmp/lite/bin/python tools/word_parity/c_words_check.py --label "[vulkan gpu-only]" --extra /tmp/word-pages \
-              --limit-det 40 --param Global.model_root_dir=/tmp/models-lite EngineConfig.ppocr_cpp.backend=gpu || true
+            echo "### strict Vulkan GPU-only graph vs CPU (must be identical)"
+            cat parity/vk_time.txt
+            /tmp/lite/bin/python tools/word_parity/compare_backends.py --exact --label "[vulkan gpu-only] " parity/cpu.json parity/gpu.json | tail -20 || true
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          /tmp/lite/bin/python tools/word_parity/compare_backends.py parity/cpu.json parity/gpu.json
-          /tmp/lite/bin/python tools/word_parity/c_words_check.py --extra /tmp/word-pages --limit-det 40 \
-            --param Global.model_root_dir=/tmp/models-lite EngineConfig.ppocr_cpp.backend=gpu
+          /tmp/lite/bin/python tools/word_parity/compare_backends.py --exact parity/cpu.json parity/gpu.json > /dev/null
+          /tmp/lite/bin/python tools/word_parity/c_words_check.py --label "[vulkan gpu-only]" --extra /tmp/word-pages \
+            --limit-det 40 --param Global.model_root_dir=/tmp/models-lite EngineConfig.ppocr_cpp.backend=gpu \
+            | tee -a "$GITHUB_STEP_SUMMARY"; test "${PIPESTATUS[0]}" = 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: word-box-parity-vulkan
+          path: parity/
+
+  vulkan-hybrid:
+    name: return_word_box on hybrid (lavapipe) vs CPU, and the legacy GPU-only device front end
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Toolchain and the software Vulkan stack
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake g++ \
+            mesa-vulkan-drivers vulkan-tools glslang-tools
+      - name: Build with Vulkan
+        run: |
+          cmake -S . -B build-vk -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON \
+            -DPPOCR_BUILD_TESTS=OFF -DPPOCR_BUILD_EXAMPLES=OFF \
+            -DPPOCR_ENABLE_VULKAN=ON
+          cmake --build build-vk -j"$(nproc)"
+          echo "PPOCR_LIBRARY=$PWD/build-vk/librapidocrlite.so" >> "$GITHUB_ENV"
+      - name: Python and pages
+        run: |
+          python -m venv /tmp/lite
+          /tmp/lite/bin/pip install -q numpy Pillow PyYAML requests tqdm datasets
+          git init -q /tmp/main-src && cd /tmp/main-src
+          git remote add origin https://github.com/RapidAI/RapidOCR.git
+          git fetch -q --depth 1 origin "${RAPIDOCR_MAIN_REF}"
+          git checkout -q FETCH_HEAD -- python/tests/test_files
+          mkdir -p /tmp/word-pages
+          for f in check_return_word_len.jpeg text_vertical_words.png issue_170.png return_word_debug.jpg \
+                   ch_en_num.jpg en.jpg text_det.jpg ch_doc_server.png japan.jpg korean.jpg short.png; do
+            cp "python/tests/test_files/$f" /tmp/word-pages/ || echo "missing $f"
+          done
+      - name: Hybrid exact; legacy GPU-only device front end (timing, informational)
+        env:
+          PYTHONPATH: python/src
+          VK_ICD_FILENAMES: /usr/share/vulkan/icd.d/lvp_icd.json
+          PPOCR_VULKAN_DEVICE_INDEX: "0"
+        run: |
+          mkdir -p parity
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/cpu.json --extra /tmp/word-pages --limit-det 40 --no-rec --model-root /tmp/models-lite
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/hybrid.json --extra /tmp/word-pages --limit-det 40 --no-rec --model-root /tmp/models-lite --param EngineConfig.ppocr_cpp.backend=hybrid
+          s=$(date +%s); PPOCR_VULKAN_DEVICE_FRONTEND=1 /tmp/lite/bin/python tools/word_parity/eval_words.py parity/gpu_legacy.json --extra /tmp/word-pages --limit-det 40 --no-rec --model-root /tmp/models-lite \
+            --param EngineConfig.ppocr_cpp.backend=gpu
+          echo "GPU-only legacy device front end (PPOCR_VULKAN_DEVICE_FRONTEND=1): $(( $(date +%s) - s )) s (lavapipe)" | tee parity/vk_legacy_time.txt
+          {
+            echo "### hybrid vs CPU (must be identical)"
+            /tmp/lite/bin/python tools/word_parity/compare_backends.py --exact --label "[hybrid] " parity/cpu.json parity/hybrid.json | tail -20 || true
+            echo "### legacy GPU-only device front end vs CPU (informational)"
+            cat parity/vk_legacy_time.txt
+            /tmp/lite/bin/python tools/word_parity/compare_backends.py parity/cpu.json parity/gpu_legacy.json || true
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          /tmp/lite/bin/python tools/word_parity/compare_backends.py --exact parity/cpu.json parity/hybrid.json > /dev/null
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: word-box-parity-hybrid
+          path: parity/
+
+  metal:
+    name: return_word_box on Metal (macos-14) vs CPU
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build with Metal
+        run: |
+          brew install glslang spirv-cross ninja
+          cmake -S . -B build-metal -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DPPOCR_BUILD_STATIC=OFF -DPPOCR_BUILD_SHARED=ON -DPPOCR_BUILD_TESTS=OFF \
+            -DPPOCR_BUILD_EXAMPLES=OFF -DPPOCR_ENABLE_VULKAN=OFF -DPPOCR_ENABLE_METAL=ON
+          cmake --build build-metal -j"$(sysctl -n hw.ncpu)"
+          echo "PPOCR_LIBRARY=$(ls $PWD/build-metal/librapidocrlite*.dylib | head -1)" >> "$GITHUB_ENV"
+      - name: Python and pages
+        run: |
+          python -m venv /tmp/lite
+          /tmp/lite/bin/pip install -q numpy Pillow PyYAML requests tqdm datasets
+          git init -q /tmp/main-src && cd /tmp/main-src
+          git remote add origin https://github.com/RapidAI/RapidOCR.git
+          git fetch -q --depth 1 origin "${RAPIDOCR_MAIN_REF}"
+          git checkout -q FETCH_HEAD -- python/tests/test_files
+          mkdir -p /tmp/word-pages
+          for f in check_return_word_len.jpeg text_vertical_words.png issue_170.png return_word_debug.jpg \
+                   ch_en_num.jpg en.jpg text_det.jpg ch_doc_server.png japan.jpg korean.jpg short.png; do
+            cp "python/tests/test_files/$f" /tmp/word-pages/ || echo "missing $f"
+          done
+      - name: CPU and Metal word boxes
+        env:
+          PYTHONPATH: python/src
+        run: |
+          mkdir -p parity
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/cpu.json --extra /tmp/word-pages --limit-det 40 --no-rec --model-root /tmp/models-lite
+          /tmp/lite/bin/python tools/word_parity/eval_words.py parity/metal.json --extra /tmp/word-pages --limit-det 40 --no-rec --model-root /tmp/models-lite --param EngineConfig.ppocr_cpp.backend=metal Global.log_level=info
+          {
+            echo "### Metal vs CPU (must be identical)"
+            /tmp/lite/bin/python tools/word_parity/compare_backends.py --exact --label "[metal] " parity/cpu.json parity/metal.json | tail -20 || true
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          /tmp/lite/bin/python tools/word_parity/compare_backends.py --exact parity/cpu.json parity/metal.json > /dev/null
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: word-box-parity-metal
           path: parity/

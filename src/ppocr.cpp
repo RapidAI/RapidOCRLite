@@ -1701,6 +1701,16 @@ bool MetalDeviceFrontEnd() {
   return v;
 }
 
+// The strict Vulkan GPU-only graph uses the same exact front end as Metal
+// (CPU DetInput / DBPost / RotateCropImage / batching, det and rec graphs on
+// the GPU), so its text, boxes and word boxes equal the CPU engine.
+// PPOCR_VULKAN_DEVICE_FRONTEND=1 keeps the previous all-device route
+// (device RGB resize, axis-aligned bilinear crops).
+bool VulkanDeviceFrontEnd() {
+  static const bool v = std::getenv("PPOCR_VULKAN_DEVICE_FRONTEND") != nullptr;
+  return v;
+}
+
 // GPU-only detector batch for pages that naturally share the same PP-OCR
 // resize shape.  The RGB front end and detector graph both run with a real N
 // dimension; per-page DB post-processing remains the required control-plane
@@ -2372,7 +2382,8 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec,
   const bool classify = use_cls && impl_->cls_loaded;
   const bool full = use_det && use_rec;
   const bool gpu_graph = impl_->opt.backend == Backend::gpu_only;
-  if (classify && gpu_graph && !(impl_->metal && !MetalDeviceFrontEnd())) {
+  const bool exact_front = gpu_graph && (impl_->metal ? !MetalDeviceFrontEnd() : !VulkanDeviceFrontEnd());
+  if (classify && gpu_graph && !exact_front) {
     static std::once_flag logged_cls;
     std::call_once(logged_cls, [] {
       std::fprintf(stderr, "ppocr: the strict GPU-only graph does not run the text-line "
@@ -2400,7 +2411,7 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec,
   if (impl_->opt.backend != Backend::cpu_only) gpu_lock.lock();
   if(image.empty()) Fail("invalid RGB image");
   if(impl_->det.outputs().empty()) Fail("detector has no output");
-  if (impl_->metal && full && !MetalDeviceFrontEnd()) {
+  if (exact_front && full) {
     const bool profile_e2e = std::getenv("PPOCR_PROFILE_E2E") != nullptr;
     const auto boxes = DetectGpuExactInput(impl_->det, impl_->rec, impl_->opt, image,
                                            impl_->keep_gpu_constants);
@@ -2585,8 +2596,9 @@ std::vector<std::vector<Result>> OCR::RecognizeBatch(
     for (std::size_t i = 0; i < images.size(); ++i) output[i] = Run(images[i], true, true);
     return output;
   }
-  // Metal: the same exact front end as Run (see DetectGpuExactInput), page by page.
-  if (impl_->metal && !MetalDeviceFrontEnd()) {
+  // Metal / Vulkan GPU-only: the same exact front end as Run (see DetectGpuExactInput), page by page.
+  if (impl_->opt.backend == Backend::gpu_only &&
+      (impl_->metal ? !MetalDeviceFrontEnd() : !VulkanDeviceFrontEnd())) {
     for (std::size_t i = 0; i < images.size(); ++i) output[i] = Run(images[i], true, true);
     return output;
   }
