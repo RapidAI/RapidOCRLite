@@ -807,6 +807,30 @@ options.backend = rpocr::Backend::metal;  // rpocr::MetalAvailable() 报告是�
 
 C 接口用 `RPOCR_BACKEND_METAL`，`rpocr_metal_available()` 报告是否支持。没有 Metal 时（其他平台、未启用 Metal 的构建、`PPOCR_DISABLE_METAL=1`）三种接口都回退到 CPU，不会失败。驱动按进程选定一次：同一进程里不能混用 Metal 和 Vulkan。`ppocr_metal_check` 对比 Metal 与 CPU 并做多线程确定性检查；`tests/run_metal_macos.sh` 在 Metal API validation（`MTL_DEBUG_LAYER=1`）下运行它。
 
+### 🔤 单词框与单字框（`return_word_box`、`return_single_char_box`）
+
+移植自 rapidocr main 的 `cal_rec_boxes.py`（`CTCLabelDecode.get_word_info` + `CalRecBoxes`），`word_results` 输出格式与 main 完全相同。`return_word_box=True` 时英文/数字连续串按词输出、中日韩文字按单字输出；再加 `return_single_char_box=True` 则每个字符一个框。CPU（AVX-512 / AVX2 / NEON）、hybrid、Vulkan、Metal、`model_type="lite"`、C/C++ API 和 Java 都支持。CI（`word-box-parity.yml`）要求词和整数框与 main 一致，并要求 hybrid、Metal 和严格 Vulkan GPU-only 图与 CPU 结果完全相同；lite 模型在 main 中没有对应实现，CI 校验其几何合理性以及 C/Python 结果一致。
+
+```python
+from rapidocr import RapidOCR
+
+engine = RapidOCR()
+result = engine("hello.png", return_word_box=True)            # 或 params={"Global.return_word_box": True}
+for line in result.word_results:                               # 每个保留的文本行一个元组
+    for word, conf, box in line:                               # box: [[x, y]] * 4，整数像素
+        print(word, conf, box)
+
+chars = engine("hello.png", return_word_box=True, return_single_char_box=True)
+```
+
+`use_det=False` 时与 main 一样返回 `TextRecOutput`，其 `word_results` 每行是一个 `WordInfo`。`vis()` 不绘制单词框。
+
+- C：`rpocr_result_words(result, i, single_char, &words)`（用 `rpocr_words_free` 释放）；原始逐字 CTC 数据用 `rpocr_result_chars(result, i, &chars)`。C++：`rpocr::WordBoxes(line, single_char)`。
+- Java：`TextLine.words()`（return_word_box）、`TextLine.charBoxes()`（return_single_char_box）、`TextLine.words(boolean)`；每个 `Word` 有 `text()`、`confidence()`、`box()`（4×2 整数）。见 [`java/README.md`](java/README.md)。
+- `PPOCR_VULKAN_DEVICE_FRONTEND=1` / `PPOCR_METAL_DEVICE_FRONTEND=1` 恢复旧的全 GPU 路径（设备端缩放、轴对齐裁剪）：更快，但与 CPU 不逐位一致（词边界可能偏几个 CTC 列）。`PPOCR_FORCE_ISA=avx2` 可在 AVX-512 机器上得到 main 的 AVX2 结果（见精度一节）。
+
+详见 [`docs/API.md`](docs/API.md#word-and-character-boxes-return_word_box-5000a15)。
+
 ### 🔄 文本行方向分类（`use_cls`，默认开启）
 
 与 rapidocr main 一致，引擎在检测和识别之间把每个文本行分为 0° 或 180°，倒置的行先旋转再识别。`Global.use_cls` 默认为 `true`；首次运行会把 `ch_ppocr_mobile_v2.0_cls_mobile.onnx`（PP-OCRv4 `Cls`，0.6 MB）下载到 `Global.model_root_dir`，方式与检测/识别模型相同。
@@ -822,7 +846,7 @@ C 接口用 `RPOCR_BACKEND_METAL`，`rpocr_metal_available()` 报告是否支持
 
 `use_det=False, use_rec=False, use_cls=True` 与 main 一样返回 `TextClsOutput`（`img_list`、`cls_res`）。分类器在 CPU、hybrid 和 Metal 后端运行；严格 Vulkan GPU-only 图和 `model_type="lite"` 不做分类（只记录一次日志）。
 
-速度：在 SWHL 检测集前 100 页上（GitHub Actions runner，PP-OCRv6 small，3 次交替运行的每页中位数），分类器在 x86 AVX-512 上每页增加 9.1 ms（403.7 → 412.8 ms，+2.2%；AVX2 +12.2 ms，+3.1%），在 macOS arm64 NEON 上增加 19.2 ms（511.7 → 530.9 ms，+3.8%；macOS runner 波动较大）；单个切片的一次分类调用为 2.10 ms（x86）/ 3.19 ms（arm64）。分类图融合之前同样的测试为每页 +19.2 ms（x86）、每个识别切片 +2.65 ms（现在 +1.59 ms）。文字从不倒置时可以关闭。开启时 SWHL 精度与 rapidocr main 完全相同（检测 H-mean 0.8492；识别 exact 0.8387、char 0.9516），关闭时为 0.8492；0.8419、0.9515；310 个识别切片上的方向标签在 AVX-512、AVX2、标量下都与 main 一致。
+速度：在 SWHL 检测集前 100 页上（GitHub Actions runner，PP-OCRv6 small，3 次交替运行的每页中位数），分类器在 x86 AVX-512 上每页增加 9.1 ms（403.7 → 412.8 ms，+2.2%；AVX2 +12.2 ms，+3.1%），在 macOS arm64 NEON 上增加 19.2 ms（511.7 → 530.9 ms，+3.8%；macOS runner 波动较大）；单个切片的一次分类调用为 2.10 ms（x86）/ 3.19 ms（arm64）。分类图融合之前同样的测试为每页 +19.2 ms（x86）、每个识别切片 +2.65 ms（现在 +1.59 ms）。在 Apple M4（NEON）上分类器每页开销约 2.4–3.8 ms。文字从不倒置时可以关闭。开启时 SWHL 精度与 rapidocr main 完全相同（检测 H-mean 0.8492；识别 exact 0.8387、char 0.9516），关闭时为 0.8492；0.8419、0.9515；310 个识别切片上的方向标签在 AVX-512、AVX2、标量下都与 main 一致。
 
 ### ⚙️ 配置
 
@@ -864,7 +888,7 @@ C++ 默认值在 `include/rapidocrlite/rapidocrlite.hpp` 的 `rpocr::Options` �
 | PP-OCRv4 与 PP-OCRv5 模型库 | PP-OCRv6 ONNX 检测器和识别器。 |
 | 方向分类器（默认 `use_cls=True`） | 相同：默认开启，模型、预处理和阈值一致；在精度测试集上输出与 main 相同（见 `tools/cls_parity`）。严格 Vulkan GPU-only 图和 lite 模型不运行它。 |
 | `use_det=False` 或 `use_rec=False` | 与 3.x 一样支持：`use_rec=False` 返回 `TextDetOutput`（框和 DB 分数）；`use_det=False` 把整张图当一行识别，返回 `TextRecOutput`。use_det/use_cls/use_rec 全为 False 抛 `RapidOCRError`；只开 use_cls 返回 `TextClsOutput`。这两种模式走 CPU 图，`backend: metal` 时也可用（完整流程仍走 Metal）；严格 Vulkan GPU 后端会拒绝。与 rapidocr 3.x main 一样，调用时传入的参数会保存在引擎上，对之后的调用继续生效。 |
-| 单词框和单字框 | `return_word_box` / `return_single_char_box` 输出与 main 相同的 `word_results`（每行 `(词, 置信度, 框)`；`return_single_char_box` 时每个字符一项；`use_det=False` 返回 main 的 `WordInfo`）。在 main 的单词框测试图和 SWHL 测试集上词与整数框和 main 完全一致（见 `tools/word_parity`）。所有后端按同一方式计算（逐字 CTC 时间步与概率加裁剪几何）：CPU、hybrid、Metal 与 main 一致；严格 Vulkan GPU-only 图（轴对齐裁剪）和 lite 模型（自有识别器）与 CPU 对比校验（见 docs/API.md）。`vis()` 不绘制单词框。 |
+| 单词框和单字框 | `return_word_box` / `return_single_char_box` 输出与 main 相同的 `word_results`（每行 `(词, 置信度, 框)`；`return_single_char_box` 时每个字符一项；`use_det=False` 返回 main 的 `WordInfo`）。在 main 的单词框测试图和 SWHL 测试集上词与整数框和 main 完全一致（见 `tools/word_parity`）。所有后端按同一方式计算（逐字 CTC 时间步与概率加裁剪几何）：CPU、hybrid、Metal 和严格 Vulkan GPU-only 图与 main 一致（GPU 后端经校验与 CPU 完全相同）；lite 模型（自有识别器）与 CPU 对比校验（见 docs/API.md）。`vis()` 不绘制单词框。 |
 | `elapse_list` 为 `[det, cls, rec]` | `[None, None, total]`。空白页是 `RapidOCROutput()`（`boxes` / `txts` / `img` 为 `None`）。 |
 | `vis()` 用 OpenCV 按 BGR 绘制 | `vis()` 用 Pillow 绘制并返回 RGB。 |
 | `EngineConfig` 的 CUDA、OpenVINO、TensorRT、MNN 等 | 这些键可以载入和读取，不会生效。上面的 Vulkan 键会生效。 |

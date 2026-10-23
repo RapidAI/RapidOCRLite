@@ -69,6 +69,14 @@ List<List<TextLine>> pages = ocr.recognizeBatch(List.of(img1, img2));
 // PPM 走 SDK 自带的 rpocr_load_ppm（无损回归测试用）
 List<TextLine> lines = ocr.recognizePpm("tests/lite_crop.ppm");
 
+// 单词框 / 单字框（与 rapidocr main 的 return_word_box / return_single_char_box 相同）
+for (TextLine line : ocr.recognize(Path.of("poster.jpg"))) {
+    for (Word w : line.words()) {                      // charBoxes() 为逐字框，words(true) 同
+        int[][] b = w.box();                           // 4×2 整数角点
+        System.out.println(w.text() + " " + w.confidence() + " @" + b[0][0] + "," + b[0][1]);
+    }
+}
+
 // 引擎信息
 RapidOcr.cpuInfo();      // isa=avx512, threads=16, ...
 RapidOcr.lastError();    // 最近一次引擎错误

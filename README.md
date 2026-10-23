@@ -410,6 +410,30 @@ options.backend = rpocr::Backend::metal;  // rpocr::MetalAvailable() reports sup
 
 In C, set `RPOCR_BACKEND_METAL`; `rpocr_metal_available()` reports support. Without Metal (other platforms, a build without it, `PPOCR_DISABLE_METAL=1`) all three fall back to CPU and do not fail. The driver is chosen once per process: Metal and Vulkan do not mix in one process. `ppocr_metal_check` compares Metal to CPU and runs a multithreaded determinism check; `tests/run_metal_macos.sh` runs it under Metal API validation (`MTL_DEBUG_LAYER=1`).
 
+### 🔤 Word and character boxes (`return_word_box`, `return_single_char_box`)
+
+Ported from rapidocr main (`cal_rec_boxes.py`: `CTCLabelDecode.get_word_info` + `CalRecBoxes`); `word_results` has the same format as main. `return_word_box=True` gives English/number runs as words and CJK as single characters; adding `return_single_char_box=True` gives one box per character. Available on CPU (AVX-512 / AVX2 / NEON), hybrid, Vulkan, Metal, `model_type="lite"`, the C/C++ API and Java. CI (`word-box-parity.yml`) requires the same words and integer boxes as main, and hybrid, Metal and the strict Vulkan GPU-only graph to equal the CPU run exactly; the lite model has no main counterpart and is checked for sane geometry and C/Python agreement.
+
+```python
+from rapidocr import RapidOCR
+
+engine = RapidOCR()
+result = engine("hello.png", return_word_box=True)            # or params={"Global.return_word_box": True}
+for line in result.word_results:                               # one tuple per kept line
+    for word, conf, box in line:                               # box: [[x, y]] * 4, integer pixels
+        print(word, conf, box)
+
+chars = engine("hello.png", return_word_box=True, return_single_char_box=True)
+```
+
+With `use_det=False` the result is main's `TextRecOutput` whose `word_results` holds a `WordInfo` per line. `vis()` does not draw word boxes.
+
+- C: `rpocr_result_words(result, i, single_char, &words)` (release with `rpocr_words_free`); the raw per-character CTC data is `rpocr_result_chars(result, i, &chars)`. C++: `rpocr::WordBoxes(line, single_char)`.
+- Java: `TextLine.words()` (return_word_box), `TextLine.charBoxes()` (return_single_char_box), `TextLine.words(boolean)`; each `Word` has `text()`, `confidence()`, `box()` (4×2 int). See [`java/README.md`](java/README.md).
+- `PPOCR_VULKAN_DEVICE_FRONTEND=1` / `PPOCR_METAL_DEVICE_FRONTEND=1` restore the old all-GPU route (device resize, axis-aligned crops): faster, but not bit-exact with CPU (word edges can move by a few CTC columns). `PPOCR_FORCE_ISA=avx2` gives main's AVX2 result on an AVX-512 machine (see the accuracy section).
+
+Details: [`docs/API.md`](docs/API.md#word-and-character-boxes-return_word_box-5000a15).
+
 ### 🔄 Text-line orientation (`use_cls`, on by default)
 
 Like rapidocr main, the engine classifies every detected line as 0° or 180° between detection and recognition and turns upside-down lines before reading them. `Global.use_cls` is `true` by default; the first run downloads `ch_ppocr_mobile_v2.0_cls_mobile.onnx` (PP-OCRv4 `Cls`, 0.6 MB) into `Global.model_root_dir`, the same way as the det/rec models.
@@ -425,7 +449,7 @@ Turn it off:
 
 `use_det=False, use_rec=False, use_cls=True` returns `TextClsOutput` (`img_list`, `cls_res`) as on main. The classifier runs on the CPU, hybrid and Metal backends; the strict Vulkan GPU-only graph and `model_type="lite"` do not classify (logged once).
 
-Speed: on the first 100 SWHL det pages (GitHub Actions runners, PP-OCRv6 small, per-page median of 3 interleaved runs) the classifier adds 9.1 ms per page on x86 AVX-512 (403.7 → 412.8 ms, +2.2%; AVX2 +12.2 ms, +3.1%) and 19.2 ms on macOS arm64 NEON (511.7 → 530.9 ms, +3.8%; the macOS runner is noisy); one classifier call on a single crop takes 2.10 ms (x86) / 3.19 ms (arm64). Before the classifier graph fusions the same runs measured +19.2 ms (x86) and 2.65 ms per rec crop (now 1.59 ms). Turn it off when your text is never upside down. Accuracy on the SWHL sets is identical to rapidocr main with cls on (det H-mean 0.8492; rec exact 0.8387, char 0.9516) and off (0.8492; 0.8419, 0.9515); cls labels match main on all 310 rec crops on AVX-512, AVX2 and scalar.
+Speed: on the first 100 SWHL det pages (GitHub Actions runners, PP-OCRv6 small, per-page median of 3 interleaved runs) the classifier adds 9.1 ms per page on x86 AVX-512 (403.7 → 412.8 ms, +2.2%; AVX2 +12.2 ms, +3.1%) and 19.2 ms on macOS arm64 NEON (511.7 → 530.9 ms, +3.8%; the macOS runner is noisy); one classifier call on a single crop takes 2.10 ms (x86) / 3.19 ms (arm64). Before the classifier graph fusions the same runs measured +19.2 ms (x86) and 2.65 ms per rec crop (now 1.59 ms). On an Apple M4 (NEON) the classifier costs about 2.4–3.8 ms per page. Turn it off when your text is never upside down. Accuracy on the SWHL sets is identical to rapidocr main with cls on (det H-mean 0.8492; rec exact 0.8387, char 0.9516) and off (0.8492; 0.8419, 0.9515); cls labels match main on all 310 rec crops on AVX-512, AVX2 and scalar.
 
 ### ⚙️ Configuration
 
@@ -467,7 +491,7 @@ keep the same names. `result.txts`, `result.scores`, `result.boxes`, `result.ela
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer. |
 | Angle classifier (`use_cls=True` by default) | Same: on by default, same model, preprocessing and threshold; output equals main on the accuracy sets (see `tools/cls_parity`). Not run by the strict Vulkan GPU-only graph or the lite model. |
 | `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput` (boxes, DB scores); `use_det=False` returns `TextRecOutput` for the whole image. All three of use_det/use_cls/use_rec False raises `RapidOCRError`; use_cls alone returns `TextClsOutput`. These modes run on the CPU graph, also with `backend: metal` (Metal keeps the full pipeline); the strict Vulkan GPU backend rejects them. Per-call arguments are stored on the engine and stay in effect for later calls, as in rapidocr 3.x main. |
-| Word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). Every backend computes them the same way (per-character CTC step and probability plus the crop geometry): CPU, hybrid and Metal match main; the strict Vulkan GPU-only graph (axis-aligned crops) and the lite model (its own recognizer) are checked against CPU (see docs/API.md). `vis()` does not draw them. |
+| Word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). Every backend computes them the same way (per-character CTC step and probability plus the crop geometry): CPU, hybrid, Metal and the strict Vulkan GPU-only graph match main (GPU backends checked to equal CPU exactly); the lite model (its own recognizer) is checked against CPU (see docs/API.md). `vis()` does not draw them. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. An empty page is `RapidOCROutput()` (`boxes` / `txts` / `img` are `None`). |
 | `vis()` draws with OpenCV in BGR | `vis()` draws with Pillow and returns RGB. |
 | `EngineConfig` CUDA, OpenVINO, TensorRT, MNN, … | Those keys load and can be read. They are not applied. Vulkan keys above are applied. |
