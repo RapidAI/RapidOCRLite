@@ -204,7 +204,7 @@ from rapidocr import RapidOCR
 
 ```bash
 pip install numpy Pillow PyYAML requests tqdm   # or your distro's python3-* packages
-pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a14/rapidocrlite-5.0.0a14-cp312-cp312-manylinux_2_38_loongarch64.whl
+pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a15/rapidocrlite-5.0.0a15-cp312-cp312-manylinux_2_38_loongarch64.whl
 ```
 
 From a checkout of this branch (CMake ≥ 3.20, a C++20 compiler, and the Python dependencies in `pyproject.toml`):

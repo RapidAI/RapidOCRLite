@@ -153,3 +153,4 @@ x86 GEMM (MLAS-class) and executor-overhead items not started this round.
 - 2026-10-20 14:30 Release 5.0.0a12: version bump; first release with manylinux_2_38_loongarch64 wheels (cp39-cp313, GitHub Release only, QEMU-verified).
 - 2026-10-20 16:00 Release 5.0.0a13: version bump; Java fat jar gains native/linux-loongarch64 (zig cross, QEMU loong64 OCR parity with x86_64).
 - 2026-10-22 09:55 Release 5.0.0a14: version bump; text-line orientation classifier (use_cls, rapidocr main parity) with fused cls graph, Metal full-page parity with CPU/main (7c5ccf6).
+- 2026-10-23 16:05 Release 5.0.0a15: version bump; return_word_box / return_single_char_box (rapidocr main parity) on every backend and in C/C++/Java (be6609d, bc18a30), NumPy-exact argsort recognition batch order (75222a4), Vulkan GPU-only exact CPU front end (4a52840).

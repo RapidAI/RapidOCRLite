@@ -1,6 +1,6 @@
 # RapidOCRLite Java 绑定（rapidocrlite-java）
 
-对 [RapidOCRLite v5.0.0a14](https://github.com/RapidAI/RapidOCRLite/releases/tag/v5.0.0a14)
+对 [RapidOCRLite v5.0.0a15](https://github.com/RapidAI/RapidOCRLite/releases/tag/v5.0.0a15)
 官方 SDK 的 Java 封装（JNI），让 Java 程序可以直接调用 OCR 引擎，支持
 **Windows / Linux / macOS 三大平台**。**分发物是一个可运行 jar，内置各平台原生库，
 目标机器无需安装任何工具链或配置环境变量。**
@@ -18,18 +18,18 @@
 
 ```bash
 # 打印引擎 CPU 信息（验证原生库能加载）
-java -jar rapidocrlite-java-5.0.0a14.jar --cpu
+java -jar rapidocrlite-java-5.0.0a15.jar --cpu
 
 # Indra lite 模型（传包含 meta.json 的模型目录）
-java -Dsun.stdout.encoding=UTF-8 -jar rapidocrlite-java-5.0.0a14.jar \
+java -Dsun.stdout.encoding=UTF-8 -jar rapidocrlite-java-5.0.0a15.jar \
     --lite models/lite poster.jpg
 
 # PP-OCRv6 模型（det/rec onnx + 字典）
-java -jar rapidocrlite-java-5.0.0a14.jar \
+java -jar rapidocrlite-java-5.0.0a15.jar \
     --ppocr PP-OCRv6_det_small.onnx PP-OCRv6_rec_small.onnx ppocrv6_dict.txt doc.jpg
 
 # 网络图片（http/https URL 直接下载识别）
-java -jar rapidocrlite-java-5.0.0a14.jar \
+java -jar rapidocrlite-java-5.0.0a15.jar \
     --lite models/lite https://example.com/poster.jpg
 ```
 
@@ -95,7 +95,7 @@ RapidOcr.lastError();    // 最近一次引擎错误
 ## 打包内容与原生库加载
 
 ```
-rapidocrlite-java-5.0.0a14.jar（约 7.3 MB）
+rapidocrlite-java-5.0.0a15.jar（约 7.3 MB）
 ├── ai/rapidocr/lite/*.class              # Java API + 演示 Main-Class
 └── native/
     ├── win-x86_64/    rapidocrlite_jni.dll + rapidocrlite.dll
@@ -142,7 +142,7 @@ PACKAGE_ONLY=1 sh build.sh         # 只打包已有 build/native/（CI 合并�
 
 ### 获取 SDK
 
-从 [RapidOCRLite v5.0.0a14 release](https://github.com/RapidAI/RapidOCRLite/releases/tag/v5.0.0a14)
+从 [RapidOCRLite v5.0.0a15 release](https://github.com/RapidAI/RapidOCRLite/releases/tag/v5.0.0a15)
 下载对应平台的 SDK 解压到 `sdk/` 下（目录名须与 `build.sh` 期望的一致；CI 中由仓库根目录的
 `.github/workflows/build-wheels.yml` 自动完成）：
 
@@ -150,17 +150,17 @@ PACKAGE_ONLY=1 sh build.sh         # 只打包已有 build/native/（CI 合并�
 # Linux x64 / arm64、macOS arm64 / x86_64：tar.gz 自带顶层目录，直接解压，勿加 --strip-components
 mkdir -p sdk/linux_x86_64 sdk/linux_aarch64 sdk/macosx_arm64 sdk/macosx_x86_64
 curl -sSL -o /tmp/sdk.tar.gz \
-  https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a14/RapidOCRLite-SDK-linux_x86_64-5.0.0a14.tar.gz
+  https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a15/RapidOCRLite-SDK-linux_x86_64-5.0.0a15.tar.gz
 tar xzf /tmp/sdk.tar.gz -C sdk/linux_x86_64
 # linux_aarch64 / macosx_arm64 / macosx_x86_64 同理：
-#   RapidOCRLite-SDK-linux_aarch64-5.0.0a14.tar.gz → sdk/linux_aarch64
-#   RapidOCRLite-SDK-linux_loongarch64-5.0.0a14.tar.gz → sdk/linux_loongarch64
-#   RapidOCRLite-SDK-macosx_arm64-5.0.0a14.tar.gz  → sdk/macosx_arm64
-#   RapidOCRLite-SDK-macosx_x86_64-5.0.0a14.tar.gz → sdk/macosx_x86_64
+#   RapidOCRLite-SDK-linux_aarch64-5.0.0a15.tar.gz → sdk/linux_aarch64
+#   RapidOCRLite-SDK-linux_loongarch64-5.0.0a15.tar.gz → sdk/linux_loongarch64
+#   RapidOCRLite-SDK-macosx_arm64-5.0.0a15.tar.gz  → sdk/macosx_arm64
+#   RapidOCRLite-SDK-macosx_x86_64-5.0.0a15.tar.gz → sdk/macosx_x86_64
 
 # Windows x64：zip 解包后，把其中 bin/lib/include 复制到 sdk/win_amd64/
 curl -sSL -o sdk.zip \
-  https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a14/RapidOCRLite-SDK-win_amd64-5.0.0a14.zip
+  https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a15/RapidOCRLite-SDK-win_amd64-5.0.0a15.zip
 ```
 
 ```
@@ -237,7 +237,7 @@ Debian `openjdk-21-jre-headless`）中识别同一张图：`isa=lasx`，15 行�
 ## 注意事项
 
 - **模型需自备**：SDK 不含模型。PP-OCRv6 从 ModelScope `RapidAI/RapidOCR` 下载；
-  Indra lite 模型在官方 sdist（`rapidocrlite-5.0.0a14.tar.gz`）的
+  Indra lite 模型在官方 sdist（`rapidocrlite-5.0.0a15.tar.gz`）的
   `python/src/rapidocr/models/lite/` 内（约 18 MB）。
 - **lite 模型许可证为 modified OpenRAIL-M**（非 Apache-2.0）：营收/资金超 2000 万美元
   或用于竞争产品时受限，商用前请读 `models/lite/LICENSE`。
