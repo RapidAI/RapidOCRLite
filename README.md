@@ -447,7 +447,7 @@ Turn it off:
 - Environment: `PPOCR_USE_CLS=0` (Python, C, C++ and Java; `1` forces it on).
 - C: `opts.use_cls = 0` (appended `rpocr_options` fields; see [`docs/API.md`](docs/API.md)). C/C++/Java classify only when a classifier model is given (`cls_model`, `OcrOptions.clsModel(...)`, or `PPOCR_CLS_MODEL`).
 
-`use_det=False, use_rec=False, use_cls=True` returns `TextClsOutput` (`img_list`, `cls_res`) as on main. The classifier runs on the CPU, hybrid and Metal backends; the strict Vulkan GPU-only graph and `model_type="lite"` do not classify (logged once).
+`use_det=False, use_rec=False, use_cls=True` returns `TextClsOutput` (`img_list`, `cls_res`) as on main. The classifier runs on the CPU, hybrid, Metal and strict Vulkan GPU-only backends; `model_type="lite"` and the legacy device routes (`PPOCR_*_DEVICE_FRONTEND=1`) do not classify (logged once).
 
 Speed: on the first 100 SWHL det pages (GitHub Actions runners, PP-OCRv6 small, per-page median of 3 interleaved runs) the classifier adds 9.1 ms per page on x86 AVX-512 (403.7 → 412.8 ms, +2.2%; AVX2 +12.2 ms, +3.1%) and 19.2 ms on macOS arm64 NEON (511.7 → 530.9 ms, +3.8%; the macOS runner is noisy); one classifier call on a single crop takes 2.10 ms (x86) / 3.19 ms (arm64). Before the classifier graph fusions the same runs measured +19.2 ms (x86) and 2.65 ms per rec crop (now 1.59 ms). On an Apple M4 (NEON) the classifier costs about 2.4–3.8 ms per page. Turn it off when your text is never upside down. Accuracy on the SWHL sets is identical to rapidocr main with cls on (det H-mean 0.8492; rec exact 0.8387, char 0.9516) and off (0.8492; 0.8419, 0.9515); cls labels match main on all 310 rec crops on AVX-512, AVX2 and scalar.
 
@@ -489,7 +489,7 @@ keep the same names. `result.txts`, `result.scores`, `result.boxes`, `result.ela
 | --- | --- |
 | ONNX Runtime, OpenVINO, Paddle, PyTorch, TensorRT, MNN | Built-in PP-OCRv6 interpreter. `EngineType.ONNXRUNTIME` and `EngineType.PPOCR_CPP` both select it. Other engine names raise `NotImplementedError`. |
 | PP-OCRv4 and PP-OCRv5 model zoo | PP-OCRv6 ONNX detector and recognizer. |
-| Angle classifier (`use_cls=True` by default) | Same: on by default, same model, preprocessing and threshold; output equals main on the accuracy sets (see `tools/cls_parity`). Not run by the strict Vulkan GPU-only graph or the lite model. |
+| Angle classifier (`use_cls=True` by default) | Same: on by default, same model, preprocessing and threshold; output equals main on the accuracy sets (see `tools/cls_parity`). Runs on CPU, hybrid, Metal and strict Vulkan GPU-only; not with the lite model or the legacy device routes. |
 | `use_det=False` or `use_rec=False` | Supported as on 3.x: `use_rec=False` returns `TextDetOutput` (boxes, DB scores); `use_det=False` returns `TextRecOutput` for the whole image. All three of use_det/use_cls/use_rec False raises `RapidOCRError`; use_cls alone returns `TextClsOutput`. These modes run on the CPU graph, also with `backend: metal` (Metal keeps the full pipeline); the strict Vulkan GPU backend rejects them. Per-call arguments are stored on the engine and stay in effect for later calls, as in rapidocr 3.x main. |
 | Word and character boxes | `return_word_box` / `return_single_char_box` give main's `word_results` (`(word, conf, box)` per line; one entry per character with `return_single_char_box`; `use_det=False` returns main's `WordInfo`). Same words and integer boxes as main on its word-box test pages and the SWHL sets (see `tools/word_parity`). Every backend computes them the same way (per-character CTC step and probability plus the crop geometry): CPU, hybrid, Metal and the strict Vulkan GPU-only graph match main (GPU backends checked to equal CPU exactly); the lite model (its own recognizer) is checked against CPU (see docs/API.md). `vis()` does not draw them. |
 | `elapse_list` is `[det, cls, rec]` | `[None, None, total]`. An empty page is `RapidOCROutput()` (`boxes` / `txts` / `img` are `None`). |
@@ -502,11 +502,10 @@ There is no 4.x tag in this repository. Details and the C ABI are in [`docs/API.
 
 ### ⚠️ Known limits
 
-- The orientation classifier does not run in the strict GPU-only (Vulkan) / Metal graphs or with `model_type="lite"`.
-- No per-word or per-character boxes. `word_results` stays empty.
-- The native engine runs PP-OCRv6 ONNX graphs. PP-OCRv4 / v5 files are not executed.
-- GPU-only mode has no CPU neural fallback. Hybrid stays on CPU unless `PPOCR_ENABLE_HYBRID_GPU_GRAPH` is set.
-- Published wheels do not contain Vulkan shaders.
+- `model_type="lite"` has no orientation classifier (`use_cls` is ignored, with a warning). The legacy all-device routes (`PPOCR_VULKAN_DEVICE_FRONTEND=1` / `PPOCR_METAL_DEVICE_FRONTEND=1`) skip it too; the default CPU, hybrid, Metal and strict Vulkan GPU-only paths run it.
+- Detection and recognition run PP-OCRv6 ONNX graphs only; `Det/Rec.ocr_version` other than PP-OCRv6 raises `NotImplementedError`. (The orientation classifier uses main's PP-OCRv4 / PP-OCRv5 cls models.)
+- Strict GPU-only (`gpu_only`) has no CPU neural fallback: Vulkan errors are raised, and `use_det=False` / `use_rec=False` are refused. Hybrid runs the networks on the CPU plus qualified Vulkan segments; the whole det/rec graph goes to Vulkan only with `PPOCR_ENABLE_HYBRID_GPU_GRAPH` set (and not while the classifier runs).
+- Linux wheels (x86_64, aarch64, loongarch64) are built without Vulkan shaders; Windows wheels embed them and macOS wheels embed Metal. For Vulkan on Linux, build from source or use the C/C++ SDK.
 
 ### 📚 Documentation
 
