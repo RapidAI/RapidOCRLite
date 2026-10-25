@@ -220,12 +220,21 @@ class RapidOCR:
             )
         full_tasks = _native.RPOCR_TASK_DET | _native.RPOCR_TASK_REC | cls_bit
         if want_words:
-            boxes, txts, scores, _ = engine.run_ex(prepared, full_tasks, chars)
+            boxes, txts, scores, cls = engine.run_ex(prepared, full_tasks, chars)
         else:
             boxes, txts, scores, _ = engine.run_ex(prepared, full_tasks)
         if want_words:
+            # main's get_rotated_180_flags (#747): which crops the classifier
+            # turned by 180 degrees before recognition (None without cls).
+            rotated = None
+            if use_cls and cls and len(cls) == len(txts):
+                rotated = [
+                    index >= 0 and "180" in label_of(index) and score > cls_thresh
+                    for index, score in cls
+                ]
             return self._word_box_output(
-                original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started
+                original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started,
+                rotated,
             )
         kept_boxes, kept_txts, kept_scores = filter_by_score(boxes, txts, scores, self.text_score)
         elapsed = time.perf_counter() - started
@@ -271,7 +280,8 @@ class RapidOCR:
             infos.append(build_word_info(txt, cols, probs, steps, crop_w * 1.0 / crop_h, max_wh))
         return infos
 
-    def _word_box_output(self, original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started):
+    def _word_box_output(self, original, boxes, txts, scores, chars, ratio_w, ratio_h, pad_top, started,
+                         rotated=None):
         """main's build_final_output with return_word_box=True (det + rec)."""
 
         from .cal_rec_boxes import CalRecBoxes
@@ -297,9 +307,11 @@ class RapidOCR:
         v_txts = tuple(txts[i] for i in valid)
         v_scores = tuple(float(scores[i]) for i in valid)
         v_infos = [infos[i] for i in valid]
+        v_rotated = [bool(rotated[i]) for i in valid] if rotated is not None else None
         word_results = v_infos
         if all(word_results):
-            lines = CalRecBoxes()(crop_sizes, v_boxes, v_txts, v_infos, bool(self.return_single_char_box))
+            lines = CalRecBoxes()(crop_sizes, v_boxes, v_txts, v_infos, bool(self.return_single_char_box),
+                                  v_rotated)
             origin_words = []
             for word_line in lines:
                 item = [(txt, score, bbox) for txt, score, bbox in word_line if bbox is not None]

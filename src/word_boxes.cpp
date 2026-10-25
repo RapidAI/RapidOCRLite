@@ -1,7 +1,7 @@
 // Word and character boxes (rapidocr main return_word_box), in C++ for the
 // C / C++ / Java APIs. A line-for-line port of python/src/rapidocr/
 // cal_rec_boxes.py (itself a port of main's CTCLabelDecode.get_word_info and
-// CalRecBoxes at RapidAI/RapidOCR 8ac45f4e) for one line, with the
+// CalRecBoxes at RapidAI/RapidOCR cee004f9, #747) for one line, with the
 // float32 / float64 / int steps numpy takes there; tools/word_parity/
 // c_words_check.py compares the two on every parity page.
 #include "rapidocrlite/rapidocrlite.hpp"
@@ -389,6 +389,17 @@ std::vector<Word> WordBoxesAt(const Result& line, const float box[4][2], bool si
       cur[2][0] -= distance / 2;
       nxt[0][0] += distance - distance / 2;
       nxt[3][0] += distance - distance / 2;
+    }
+  }
+  // rotate_boxes_180 (main #747): the line was recognized on the crop the
+  // classifier turned by 180 degrees, so map the boxes back onto the
+  // unrotated crop: (x, y) -> (w - x, h - y).
+  if (line.rotated_180) {
+    for (Quad& cell : boxes) {
+      for (auto& pt : cell) {
+        pt[0] = bp[2] - pt[0];
+        pt[1] = bp[3] - pt[1];
+      }
     }
   }
   // get_box_direction on the line box (float32)

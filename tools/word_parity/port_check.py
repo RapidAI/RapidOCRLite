@@ -65,14 +65,16 @@ for t in range(5000):
     box = (rng.random((4, 2)) * 1000).astype(np.float32)
     if t % 3 == 0:  # vertical crop
         box = np.array([[10, 10], [40, 10], [40, 400], [10, 400]], np.float32)
+    rotated = [bool(t % 5 == 2)]  # main #747: crop turned 180 by the classifier
     for single in (False, True):
         img = np.zeros((h, w, 3), np.uint8)
         try:
-            r = MainCal()([img], box[None], type("R", (), {"txts": (text,), "word_results": (ref,)})(), single).word_results
+            r = MainCal()([img], box[None], type("R", (), {"txts": (text,), "word_results": (ref,)})(), single,
+                          rotated).word_results
         except Exception as e:  # noqa: BLE001
             r = repr(e)
         try:
-            g = lite.CalRecBoxes()([(h, w)], box[None], (text,), [got], single)
+            g = lite.CalRecBoxes()([(h, w)], box[None], (text,), [got], single, rotated)
         except Exception as e:  # noqa: BLE001
             g = repr(e)
         if (r if isinstance(r, str) else [list(x) for x in r]) != (g if isinstance(g, str) else [list(x) for x in g]):

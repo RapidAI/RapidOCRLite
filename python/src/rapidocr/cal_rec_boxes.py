@@ -2,7 +2,7 @@
 
 A line-for-line port of rapidocr main's ``CTCLabelDecode.get_word_info``
 (ch_ppocr_rec/utils.py) and ``CalRecBoxes`` (cal_rec_boxes/main.py) at
-RapidAI/RapidOCR 8ac45f4e. The native engine supplies what main reads from
+RapidAI/RapidOCR cee004f9 (#747). The native engine supplies what main reads from
 the recognizer output (the time step and probability of every decoded
 character, the batch's time-step count and max_wh_ratio, and the crop size);
 everything after that is the same Python. The two OpenCV calls main makes,
@@ -214,7 +214,8 @@ class CalRecBoxes:
     """main's CalRecBoxes; ``crop_sizes`` stand in for the crop images (only
     their (h, w) is read)."""
 
-    def __call__(self, crop_sizes, dt_boxes, txts, word_infos, return_single_char_box=False):
+    def __call__(self, crop_sizes, dt_boxes, txts, word_infos, return_single_char_box=False,
+                 rotated_180=None):
         word_results = []
         for idx, ((h, w), box) in enumerate(zip(crop_sizes, dt_boxes)):
             if txts is None or h * w == 0 or word_infos is None:
@@ -224,10 +225,19 @@ class CalRecBoxes:
                 txts[idx], img_box, word_infos[idx], return_single_char_box
             )
             word_box_list = self.adjust_box_overlap(copy.deepcopy(word_box_list))
+            if rotated_180 is not None and rotated_180[idx]:
+                # main (#747): the line was recognized on the crop after the
+                # classifier turned it by 180 degrees, so map the boxes back
+                # onto the unrotated crop.
+                word_box_list = self.rotate_boxes_180(word_box_list, w, h)
             direction = self.get_box_direction(box)
             word_box_list = self.reverse_rotate_crop_image(copy.deepcopy(box), word_box_list, direction)
             word_results.append(list(zip(word_box_content_list, conf_list, word_box_list)))
         return tuple(word_results)
+
+    @staticmethod
+    def rotate_boxes_180(word_box_list, w, h):
+        return [[[w - x, h - y] for x, y in box] for box in word_box_list]
 
     @staticmethod
     def get_box_direction(box: np.ndarray) -> Direction:

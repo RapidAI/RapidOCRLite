@@ -187,7 +187,11 @@ The boxes themselves: `rpocr_result_words(result, i, single_char, &words)`
 (C) / `rpocr::WordBoxes(line, single_char)` (C++) run main's CalRecBoxes on
 the line box and that data (`src/word_boxes.cpp`, a port of the Python
 `cal_rec_boxes.py`); release with `rpocr_words_free`. `c_words_check.py`
-requires them to equal the Python port on every parity page. Java:
+requires them to equal the Python port on every parity page. A line the
+orientation classifier turned by 180 degrees before recognition
+(`Result::rotated_180`, carried inside the C result) has its boxes mapped back
+onto the unrotated line, as main does since RapidAI/RapidOCR#747, so the first
+character of upside-down text gets the box at the right end of the line. Java:
 `TextLine.words()` (return_word_box), `TextLine.charBoxes()`
 (return_single_char_box), `TextLine.words(boolean)` and the raw
 `recSteps()`, `charCols()`, `charProbs()`, `cropWidth()`, `cropHeight()`,

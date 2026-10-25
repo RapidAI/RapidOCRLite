@@ -1870,7 +1870,7 @@ void OCR::SetDetectionThresholds(float det_threshold, float det_box_threshold,
 namespace {
 // Packed-RGB crop owned by one recognition call.
 struct CropImage { std::vector<std::uint8_t> rgb; int w{}, h{}; };
-struct ClsOutcome { int label{-1}; float score{}; };
+struct ClsOutcome { int label{-1}; float score{}; bool rotated{false}; };
 
 // cv2.rotate(img, cv2.ROTATE_180) on packed RGB.
 void Rotate180(CropImage& crop) {
@@ -1981,8 +1981,9 @@ void ClassifyCrops(const detail::OnnxLite& cls, const Options& opt, std::vector<
       std::size_t best = 0;
       for (std::size_t c = 1; c < classes; ++c) if (row[c] > row[best]) best = c;  // np.argmax: first max
       const std::size_t index = order[first + k];
-      out[index] = {static_cast<int>(best), row[best]};
-      if (best == 1 && row[best] > opt.cls_thresh) Rotate180(crops[index]);
+      const bool rotate = best == 1 && row[best] > opt.cls_thresh;
+      out[index] = {static_cast<int>(best), row[best], rotate};
+      if (rotate) Rotate180(crops[index]);
     }
   }
 }
@@ -2306,6 +2307,7 @@ std::vector<Result> OCR::Impl::RecognizeCrops(const Image& image, const std::vec
   for (std::size_t i = 0; i < orientation.size(); ++i) {
     out[i].cls_label = orientation[i].label;
     out[i].cls_score = orientation[i].score;
+    out[i].rotated_180 = orientation[i].rotated;
   }
   return out;
 }
@@ -2377,6 +2379,7 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec,
     auto r = MakeResult(whole, std::string{}, 0.F);
     r.cls_label = orientation[0].label;
     r.cls_score = orientation[0].score;
+    r.rotated_180 = orientation[0].rotated;
     return {std::move(r)};
   }
   const bool classify = use_cls && impl_->cls_loaded;
@@ -2578,6 +2581,7 @@ std::vector<Result> OCR::Run(const Image& image, bool use_det, bool use_rec,
       for (std::size_t i = 0; i < detected.size(); ++i) {
         detected[i].cls_label = orientation[i].label;
         detected[i].cls_score = orientation[i].score;
+        detected[i].rotated_180 = orientation[i].rotated;
       }
     }
     ReclaimHostHeap();

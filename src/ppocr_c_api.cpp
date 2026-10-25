@@ -116,6 +116,7 @@ struct ClsTrailer {
   size_t char_count;
   int* char_cols;
   float* char_probs;
+  int rotated_180;  // Result::rotated_180 (crop turned 180 before recognition)
 };
 
 rpocr_text_box* AllocItems(std::size_t count) {
@@ -123,7 +124,7 @@ rpocr_text_box* AllocItems(std::size_t count) {
   auto* items = static_cast<rpocr_text_box*>(std::calloc(1, bytes));
   if (!items) return nullptr;
   auto* trailer = reinterpret_cast<ClsTrailer*>(items + count);
-  for (std::size_t i = 0; i < count; ++i) trailer[i] = {-1, 0.F, 0, 0, 0, 0.0, 0, nullptr, nullptr};
+  for (std::size_t i = 0; i < count; ++i) trailer[i] = {-1, 0.F, 0, 0, 0, 0.0, 0, nullptr, nullptr, 0};
   return items;
 }
 
@@ -152,7 +153,7 @@ int FillResult(const std::vector<rpocr::Result>& source, rpocr_result* result) {
   for (std::size_t i = 0; i < source.size(); ++i) {
     const auto& src = source[i];
     trailer[i] = {src.cls_label, src.cls_score, src.rec_steps, src.crop_width, src.crop_height,
-                  src.rec_max_wh_ratio, 0, nullptr, nullptr};
+                  src.rec_max_wh_ratio, 0, nullptr, nullptr, src.rotated_180 ? 1 : 0};
     bool chars_ok = true;
     const std::size_t n = std::min(src.char_cols.size(), src.char_probs.size());
     if (n > 0) {
@@ -527,6 +528,7 @@ int rpocr_result_words(const rpocr_result* result, size_t index, int single_char
   line.crop_width = t.crop_width;
   line.crop_height = t.crop_height;
   line.rec_max_wh_ratio = t.rec_max_wh_ratio;
+  line.rotated_180 = t.rotated_180 != 0;
   if (t.char_count) {
     line.char_cols.assign(t.char_cols, t.char_cols + t.char_count);
     line.char_probs.assign(t.char_probs, t.char_probs + t.char_count);

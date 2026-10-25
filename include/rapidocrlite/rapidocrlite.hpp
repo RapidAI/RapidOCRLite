@@ -44,6 +44,10 @@ struct Result {
   // cls_score > Options::cls_thresh.
   int cls_label = -1;
   float cls_score = 0.F;
+  // True when the pipeline turned this line's crop by 180 degrees before
+  // recognition (the rule above). WordBoxes maps the word boxes back onto
+  // the unrotated line, as rapidocr main's CalRecBoxes does since #747.
+  bool rotated_180 = false;
   // Per-character CTC data for word / character boxes (rapidocr main
   // return_word_box), filled by every recognition path (CPU, hybrid,
   // Metal, strict Vulkan GPU-only, lite model; see docs/API.md);
