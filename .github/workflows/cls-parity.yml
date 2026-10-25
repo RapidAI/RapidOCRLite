@@ -84,7 +84,7 @@ jobs:
           PPOCR_TEST_REC: ci-models/PP-OCRv6_rec_tiny.onnx
           PPOCR_TEST_DICT: ci-models/ppocrv6_tiny_dict.txt
           PPOCR_CLS_MODEL: ci-models/ch_ppocr_mobile_v2.0_cls_mobile.onnx
-        run: /tmp/lite/bin/python -m pytest -q python/tests/test_cls.py python/tests/test_main_compat.py
+        run: /tmp/lite/bin/python -m pytest -q python/tests/test_cls.py python/tests/test_main_compat.py python/tests/test_resize_ratio.py
 
       - name: rapidocr main reference (use_cls on / off)
         run: |

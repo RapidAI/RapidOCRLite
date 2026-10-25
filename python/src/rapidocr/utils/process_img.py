@@ -15,14 +15,15 @@ class ResizeImgError(Exception):
 def resize_image_within_bounds(
     img: np.ndarray, min_side_len: float, max_side_len: float
 ) -> Tuple[np.ndarray, float, float]:
-    height, width = img.shape[:2]
-    ratio_h = ratio_w = 1.0
-    if max(height, width) > max_side_len:
-        img, ratio_h, ratio_w = reduce_max_side(img, max_side_len)
+    # Ratios map the final image back to the original, so they are computed
+    # from both ends even when both size limits resize it (RapidOCR main #761).
+    original_h, original_w = img.shape[:2]
+    if max(original_h, original_w) > max_side_len:
+        img, _, _ = reduce_max_side(img, max_side_len)
     height, width = img.shape[:2]
     if min(height, width) < min_side_len:
-        img, ratio_h, ratio_w = increase_min_side(img, min_side_len)
-    return img, ratio_h, ratio_w
+        img, _, _ = increase_min_side(img, min_side_len)
+    return img, original_h / img.shape[0], original_w / img.shape[1]
 
 
 def reduce_max_side(img: np.ndarray, max_side_len: float = 2000) -> Tuple[np.ndarray, float, float]:
