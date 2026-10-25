@@ -57,10 +57,14 @@ for t in range(5000):
     conf = [round(c, 5) for c in probs] or [0]
     ref.line_txt_len = steps * wh / max_wh
     ref.confs = conf
+    # main #750's CTCLabelDecode.decode: each word's own character confs.
+    char_confs = iter(c for ch, c in zip(text, conf) if not ch.isspace())
+    ref.char_confs = [[next(char_confs) for _ in word] for word in ref.words]
     got = lite.build_word_info(text, cols, probs, steps, wh, max_wh)
     same = (ref.words == got.words and ref.word_cols == got.word_cols
             and [x.value for x in ref.word_types] == [x.value for x in got.word_types]
-            and ref.line_txt_len == got.line_txt_len and ref.confs == got.confs)
+            and ref.line_txt_len == got.line_txt_len and ref.confs == got.confs
+            and ref.char_confs == got.char_confs)
     h, w = int(rng.integers(8, 120)), int(rng.integers(8, 1500))
     box = (rng.random((4, 2)) * 1000).astype(np.float32)
     if t % 3 == 0:  # vertical crop

@@ -164,7 +164,11 @@ line of `(text, confidence, [[x, y] * 4])` items, English/number runs as
 words and CJK as single characters; `return_single_char_box=True` gives one
 box per character on every line. With `use_det=False` the result is main's
 `TextRecOutput` whose `word_results` holds a `WordInfo` per line (words,
-word_cols, word_types, line_txt_len, confs). The geometry is
+word_cols, word_types, line_txt_len, confs, char_confs). Each item's
+confidence comes from its own characters, as on main since
+RapidAI/RapidOCR#750: a single character keeps its `round(prob, 5)`, and a
+grouped English/number word gets the mean of its characters' values rounded
+to 5 decimals, like the line score (spaces score nothing). The geometry is
 `rapidocr/cal_rec_boxes.py`, a port of main's `CTCLabelDecode.get_word_info`
 and `CalRecBoxes` (with OpenCV's `getPerspectiveTransform` / `invert`
 reproduced bit for bit, so no OpenCV dependency); the

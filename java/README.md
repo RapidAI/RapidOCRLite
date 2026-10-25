@@ -92,7 +92,7 @@ RapidOcr.lastError();    // 最近一次引擎错误
 | `recognizePpm(path)` | 经 SDK `rpocr_load_ppm` 识别 P6 PPM |
 | `recognizeBatch(List<BufferedImage>)` | `rpocr_recognize_batch`，顺序保持 |
 | `TextLine` | 不可变结果行：`text()` / `confidence()` / `box()`(4×2) / `bboxX/Y/W/H()` / `clsLabel()` / `clsScore()`；单词框 `words()`（main `return_word_box`）、单字框 `charBoxes()`（`return_single_char_box`）、`words(boolean)`，以及逐字数据 `recSteps()` / `charCols()` / `charProbs()` / `cropWidth()` / `cropHeight()` / `recMaxWhRatio()` |
-| `Word` | 单词/单字框：`text()` / `confidence()`（main 的 `round(prob, 5)`）/ `box()`（4×2 整数角点），与 Python 绑定的 `word_results` 在相同像素上逐项一致 |
+| `Word` | 单词/单字框：`text()` / `confidence()`（与 main #750 相同：单字为 `round(prob, 5)`，英文/数字词为其各字符值的均值再保留 5 位小数）/ `box()`（4×2 整数角点），与 Python 绑定的 `word_results` 在相同像素上逐项一致 |
 | `OcrOptions.builder()` | `backend` / `detLimitSideLen` / `recParallelism` / `detThreshold` / `detBoxThreshold` / `detUnclipRatio` |
 | `RapidOcr.cpuInfo()` / `lastError()` | 静态工具 |
 | `close()` | 释放引擎句柄（`AutoCloseable`，幂等） |

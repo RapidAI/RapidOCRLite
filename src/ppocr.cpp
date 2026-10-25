@@ -804,9 +804,10 @@ bool TryHybridVulkanDetRgbConv0(const Image& image, const Options& opt,
   return true;
 }
 
-// rapidocr 3.10 DetPreProcess: cv2.resize (INTER_LINEAR) to the 32-snapped
-// size, then (float32(v) * float32(1/255) - mean) / std in float64, cast to
-// float32. Both steps are bit-exact (cv_compat + a per-value table).
+// rapidocr main DetPreProcess: cv2.resize (INTER_LINEAR) to the 32-snapped
+// size, then (float32(v) * float32(1/255) - mean) / std in float32 (main #756
+// keeps mean/std in float32). Both steps are bit-exact (cv_compat + a
+// per-value table).
 void WriteDetInput(float* output, const Image& image, int w, int h, const Options& opt) {
   thread_local std::vector<std::uint8_t> resized;
   resized.resize(std::size_t(w) * h * 3);

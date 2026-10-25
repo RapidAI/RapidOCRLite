@@ -78,6 +78,27 @@ def test_cal_rec_boxes_horizontal_line():
     assert [w for w, _, _ in chars] == ["a", "b", "c", "d"]
 
 
+@pytest.mark.parametrize(
+    "single,expected",
+    [
+        (False, [("ab", 0.85), ("cd", 0.65)]),
+        (True, [("a", 0.9), ("b", 0.8), ("c", 0.7), ("d", 0.6)]),
+    ],
+)
+def test_word_conf_from_own_chars(single, expected):
+    # main #750 (issue #749): a word is scored from its own characters (the
+    # mean for a grouped word), not from the line's n-th character; the space
+    # (0.99) scores nothing.
+    info = build_word_info("ab cd", [2, 3, 5, 8, 9], [0.9, 0.8, 0.99, 0.7, 0.6], 40, 10.0, 10.0)
+    assert info.char_confs == [[0.9, 0.8], [0.7, 0.6]]
+    box = np.array([[100, 50], [500, 50], [500, 90], [100, 90]], dtype=np.float32)
+    (line,) = CalRecBoxes()([(40, 400)], box[None], ("ab cd",), [info], single)
+    assert [(w, c) for w, c, _ in line] == expected
+    cn = build_word_info("中 文", [2, 5, 8], [0.9, 0.99, 0.6], 40, 10.0, 10.0)
+    (line,) = CalRecBoxes()([(40, 400)], box[None], ("中 文",), [cn], False)
+    assert [(w, c) for w, c, _ in line] == [("中", 0.9), ("文", 0.6)]
+
+
 def test_perspective_port_identity():
     src = np.array([[0, 0], [10, 0], [10, 5], [0, 5]], dtype=np.float32)
     m = get_perspective_transform(src, src)

@@ -2,7 +2,7 @@
 
 A line-for-line port of rapidocr main's ``CTCLabelDecode.get_word_info``
 (ch_ppocr_rec/utils.py) and ``CalRecBoxes`` (cal_rec_boxes/main.py) at
-RapidAI/RapidOCR cee004f9 (#747). The native engine supplies what main reads from
+RapidAI/RapidOCR 558f5660 (#756; word scores from #750). The native engine supplies what main reads from
 the recognizer output (the time step and probability of every decoded
 character, the batch's time-step count and max_wh_ratio, and the crop size);
 everything after that is the same Python. The two OpenCV calls main makes,
@@ -36,6 +36,7 @@ class WordInfo:
     word_types: List[WordType] = field(default_factory=list)
     line_txt_len: float = 0.0
     confs: List[float] = field(default_factory=list)
+    char_confs: List[List[float]] = field(default_factory=list)
 
 
 class Direction(Enum):
@@ -81,6 +82,10 @@ def build_word_info(
     info = get_word_info(text, selection)
     info.line_txt_len = int(steps) * wh_ratio / max_wh_ratio
     info.confs = conf_list
+
+    # main #750: words holds every character of text except spaces, in order.
+    char_confs = iter(conf for char, conf in zip(text, conf_list) if not char.isspace())
+    info.char_confs = [[next(char_confs) for _ in word] for word in info.words]
     return info
 
 
@@ -263,14 +268,23 @@ class CalRecBoxes:
 
         is_all_en_num = all(v is WordType.EN_NUM for v in word_info.word_types)
 
-        line_cols, char_widths, word_contents = [], [], []
-        for word, word_col in zip(word_info.words, word_info.word_cols):
+        # main #750: each word is scored from its own characters (a grouped
+        # word gets their mean, like the line score). A WordInfo built
+        # without char_confs gives every word the line's score.
+        char_confs_list = word_info.char_confs or [
+            [np.mean(word_info.confs).round(5).tolist()] * len(word) for word in word_info.words
+        ]
+
+        line_cols, char_widths, word_contents, word_confs = [], [], [], []
+        for word, word_col, char_confs in zip(word_info.words, word_info.word_cols, char_confs_list):
             if is_all_en_num and not return_single_char_box:
                 line_cols.append(word_col)
                 word_contents.append("".join(word))
+                word_confs.append(np.mean(char_confs).round(5).tolist())
             else:
                 line_cols.extend(word_col)
                 word_contents.extend(word)
+                word_confs.extend(char_confs)
 
             if len(word_col) == 1:
                 continue
@@ -286,7 +300,7 @@ class CalRecBoxes:
             word_boxes = self.calc_en_num_box(line_cols, avg_char_width, avg_col_width, bbox_points)
         else:
             word_boxes = self.calc_box(line_cols, avg_char_width, avg_col_width, bbox_points)
-        return word_contents, word_boxes, word_info.confs
+        return word_contents, word_boxes, word_confs
 
     def calc_en_num_box(self, line_cols, avg_char_width, avg_col_width, bbox_points):
         results = []

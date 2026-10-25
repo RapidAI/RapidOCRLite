@@ -1,7 +1,7 @@
 // Word and character boxes (rapidocr main return_word_box), in C++ for the
 // C / C++ / Java APIs. A line-for-line port of python/src/rapidocr/
 // cal_rec_boxes.py (itself a port of main's CTCLabelDecode.get_word_info and
-// CalRecBoxes at RapidAI/RapidOCR cee004f9, #747) for one line, with the
+// CalRecBoxes at RapidAI/RapidOCR 558f5660, #756; word scores from #750) for one line, with the
 // float32 / float64 / int steps numpy takes there; tools/word_parity/
 // c_words_check.py compares the two on every parity page.
 #include "rapidocrlite/rapidocrlite.hpp"
@@ -71,6 +71,39 @@ double PyRound(double x, int digits) {
   char buf[64];
   std::snprintf(buf, sizeof buf, "%.*f", digits, x);
   return std::strtod(buf, nullptr);
+}
+
+// numpy's float64 add.reduce over a contiguous array: pairwise_sum over all
+// elements (plain loop below 8, eight accumulators inside 128-element blocks,
+// halves split on multiples of 8 above that).
+double NpPairwiseSum(const double* a, std::size_t n) {
+  if (n < 8) {
+    double res = -0.0;
+    for (std::size_t i = 0; i < n; ++i) res += a[i];
+    return res;
+  }
+  if (n <= 128) {
+    double r[8];
+    for (int j = 0; j < 8; ++j) r[j] = a[j];
+    std::size_t i = 8;
+    for (; i < n - (n % 8); i += 8)
+      for (int j = 0; j < 8; ++j) r[j] += a[i + j];
+    double res = ((r[0] + r[1]) + (r[2] + r[3])) + ((r[4] + r[5]) + (r[6] + r[7]));
+    for (; i < n; ++i) res += a[i];
+    return res;
+  }
+  std::size_t n2 = n / 2;
+  n2 -= n2 % 8;
+  return NpPairwiseSum(a, n2) + NpPairwiseSum(a + n2, n - n2);
+}
+
+// np.mean(list_of_floats).round(5): float64 sum / count, then numpy's round
+// (multiply by 10**5, rint, divide), not Python's correctly rounded round().
+double NpMeanRound5(const std::vector<double>& v) {
+  if (v.empty()) return std::numeric_limits<double>::quiet_NaN();
+  const double sum = NpPairwiseSum(v.data(), v.size());
+  const double mean = sum / double(v.size());
+  return std::nearbyint(mean * 100000.0) / 100000.0;
 }
 
 enum class WType { cn, en_num };
@@ -337,6 +370,21 @@ std::vector<Word> WordBoxesAt(const Result& line, const float box[4][2], bool si
   info.line_txt_len = line.rec_steps * (line.crop_width * 1.0 / line.crop_height) / line.rec_max_wh_ratio;
   for (const float p : line.char_probs) info.confs.push_back(PyRound(static_cast<double>(p), 5));
   if (info.confs.empty()) info.confs.push_back(0.0);
+  // main #750 (WordInfo.char_confs): the words hold every character of the
+  // text except spaces, in order, so walk the non-space characters' confs.
+  std::vector<std::vector<double>> char_confs;
+  {
+    std::vector<double> kept;
+    const std::size_t m = std::min(text.size(), info.confs.size());
+    for (std::size_t k = 0; k < m; ++k)
+      if (!IsSpace(text[k])) kept.push_back(info.confs[k]);
+    std::size_t pos = 0;
+    for (const auto& w : info.words) {
+      std::vector<double> cc;
+      for (std::size_t k = 0; k < w.size(); ++k) cc.push_back(pos < kept.size() ? kept[pos++] : 0.0);
+      char_confs.push_back(std::move(cc));
+    }
+  }
   if (info.line_txt_len == 0) return out;
 
   // cal_ocr_word_box
@@ -349,14 +397,17 @@ std::vector<Word> WordBoxesAt(const Result& line, const float box[4][2], bool si
   std::vector<int> flat_cols;
   std::vector<std::string> contents;
   std::vector<double> char_widths;
+  std::vector<double> word_confs;  // main #750: each word scored from its own characters
   for (std::size_t w = 0; w < info.words.size(); ++w) {
     const auto& wc = info.cols[w];
     if (en_words) {
       word_cols.push_back(wc);
       contents.push_back(Utf32To8(info.words[w]));
+      word_confs.push_back(NpMeanRound5(char_confs[w]));
     } else {
       flat_cols.insert(flat_cols.end(), wc.begin(), wc.end());
       for (char32_t c : info.words[w]) contents.push_back(Utf32To8(std::u32string(1, c)));
+      word_confs.insert(word_confs.end(), char_confs[w].begin(), char_confs[w].end());
     }
     if (wc.size() == 1) continue;
     char_widths.push_back((wc.back() - wc.front()) * avg_col_width / double(wc.size() - 1));
@@ -424,7 +475,7 @@ std::vector<Word> WordBoxesAt(const Result& line, const float box[4][2], bool si
   Invert3(m, im);
   const double ang = -90.0 * (3.141592653589793 / 180.0);  // CPython math.radians(-90)
   const double ca = std::cos(ang), sa = std::sin(ang);
-  const std::size_t n = std::min({contents.size(), info.confs.size(), boxes.size()});
+  const std::size_t n = std::min({contents.size(), word_confs.size(), boxes.size()});
   for (std::size_t w = 0; w < n; ++w) {
     std::array<IPt, 4> pts{};
     for (int k = 0; k < 4; ++k) {
@@ -442,7 +493,7 @@ std::vector<Word> WordBoxesAt(const Result& line, const float box[4][2], bool si
     const auto ordered = OrderPoints(pts);
     Word word;
     word.text = contents[w];
-    word.confidence = info.confs[w];
+    word.confidence = word_confs[w];
     for (int k = 0; k < 4; ++k) word.box[k] = {int(ordered[k][0]), int(ordered[k][1])};
     out.push_back(std::move(word));
   }

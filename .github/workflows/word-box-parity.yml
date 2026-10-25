@@ -1,7 +1,7 @@
 name: word box parity
 
 # return_word_box / return_single_char_box parity with rapidocr main
-# (RapidAI/RapidOCR @ cee004f9, #747): build the CPU library, check the
+# (RapidAI/RapidOCR @ 558f5660, #756; word scores per #750): build the CPU library, check the
 # cal_rec_boxes port against main's code and OpenCV, then run RapidOCRLite
 # and pip-installed rapidocr main on main's word-box test pages
 # (python/tests/test_files), the SWHL text_det pages (word and single-char
@@ -22,7 +22,7 @@ permissions:
   contents: read
 
 env:
-  RAPIDOCR_MAIN_REF: cee004f994a32f6cbb860e8d3de846a729ecec64
+  RAPIDOCR_MAIN_REF: 558f56606960fb5ced10c759a6b01f796451e659
 
 jobs:
   parity:
@@ -114,7 +114,8 @@ jobs:
           # Lite forced-AVX2 vs main's AVX2-host result (live main on non-AVX-512
           # runners, else the pinned tools/word_parity/ref/main_avx2.json.gz from
           # an AMD EPYC 7763 run, moved to cee004f9 by applying main #747's
-          # word-box changes on its 70 cls-rotated lines). Native AVX-512
+          # word-box changes on its 70 cls-rotated lines, then to 558f5660 by
+          # applying main #750's per-word confidences). Native AVX-512
           # vs live main is reported, and only tolerates up to 2 det 1px pages.
           set -o pipefail
           REF=tools/word_parity/ref/main_avx2.json.gz

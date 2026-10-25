@@ -526,8 +526,14 @@ std::array<float, 256> DetNormalizeTable(float mean, float std) {
   std::array<float, 256> t{};
   const float scale = static_cast<float>(1 / 255.0);
   for (int v = 0; v < 256; ++v) {
+    // main #756 keeps DetPreProcess mean/std in float32, so the subtraction
+    // and the division each round to float32 (identical to the old float64
+    // path for the default 0.5 / 0.5). Each is done in double and rounded
+    // once to float, which equals the float32 operation and keeps the
+    // compiler from contracting the multiply and subtract into an FMA.
     const float scaled = static_cast<float>(v) * scale;
-    t[v] = static_cast<float>((static_cast<double>(scaled) - mean) / std);
+    const float centered = static_cast<float>(static_cast<double>(scaled) - static_cast<double>(mean));
+    t[v] = static_cast<float>(static_cast<double>(centered) / static_cast<double>(std));
   }
   return t;
 }
