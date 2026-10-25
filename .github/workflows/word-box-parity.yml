@@ -113,7 +113,8 @@ jobs:
           # (det/75). The hard gate therefore uses a CPU-independent reference:
           # Lite forced-AVX2 vs main's AVX2-host result (live main on non-AVX-512
           # runners, else the pinned tools/word_parity/ref/main_avx2.json.gz from
-          # an AMD EPYC 7763 run of the same RAPIDOCR_MAIN_REF). Native AVX-512
+          # an AMD EPYC 7763 run, moved to cee004f9 by applying main #747's
+          # word-box changes on its 70 cls-rotated lines). Native AVX-512
           # vs live main is reported, and only tolerates up to 2 det 1px pages.
           set -o pipefail
           REF=tools/word_parity/ref/main_avx2.json.gz
