@@ -126,7 +126,7 @@ choosing the file for your Python version and release tag:
 
 ```bash
 pip install numpy Pillow PyYAML requests tqdm
-pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a15/rapidocrlite-5.0.0a15-cp312-cp312-manylinux_2_38_loongarch64.whl
+pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a16/rapidocrlite-5.0.0a16-cp312-cp312-manylinux_2_38_loongarch64.whl
 ```
 
 `5.0.0a6` is a pre-release: `pip install --pre RapidOCRLite` or

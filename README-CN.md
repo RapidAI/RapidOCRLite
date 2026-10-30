@@ -601,7 +601,7 @@ from rapidocr import RapidOCR
 
 ```bash
 pip install numpy Pillow PyYAML requests tqdm   # 或用发行版的 python3-* 包
-pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a15/rapidocrlite-5.0.0a15-cp312-cp312-manylinux_2_38_loongarch64.whl
+pip install https://github.com/RapidAI/RapidOCRLite/releases/download/v5.0.0a16/rapidocrlite-5.0.0a16-cp312-cp312-manylinux_2_38_loongarch64.whl
 ```
 
 在本分支的检出目录安装（需要 CMake ≥ 3.20、C++20 编译器，以及 `pyproject.toml` 里的 Python 依赖）：

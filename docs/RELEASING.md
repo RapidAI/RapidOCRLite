@@ -120,8 +120,8 @@ Set the version in `pyproject.toml`, push it to `main`, wait for CI to be
 green, then push an annotated tag:
 
 ```bash
-git tag -a v5.0.0a15 -m "v5.0.0a15"
-git push origin v5.0.0a15
+git tag -a v5.0.0a16 -m "v5.0.0a16"
+git push origin v5.0.0a16
 ```
 
 That one tag builds everything and publishes: wheels and sdist to PyPI, and
