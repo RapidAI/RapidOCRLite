@@ -1,5 +1,10 @@
 // warpAffine linear kernel (included by imgproc.cpp, and by imgproc_avx2.cpp for an AVX2+FMA build).
 // Requires -ffp-contract=off: all FMAs are explicit, so every build gives the same bits.
+// A toolchain whose default -march already has AVX2+FMA (e.g. GCC 15 on Ubuntu 26.04) takes the
+// SIMD path in imgproc.cpp too, so pull in the intrinsics here instead of relying on the includer.
+#if defined(__AVX2__) && defined(__FMA__)
+#include <immintrin.h>
+#endif
 namespace IMG_NS {
 inline int rne_w(float v) { return (int)std::nearbyint(v); }
 inline uint8_t sat_u8f_w(float v) { int i = rne_w(v); return (uint8_t)(i < 0 ? 0 : i > 255 ? 255 : i); }
