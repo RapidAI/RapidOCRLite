@@ -58,6 +58,12 @@ jobs:
         run: |
           git worktree add ../base "$BASE_REF"
           (cd ../base && git submodule update --init --recursive)
+          # Older baselines predate d720b19: a toolchain whose default -march has AVX2+FMA
+          # (GCC 15 / ubuntu-26.04) needs <immintrin.h> in imgproc_warp.inc. Backport it.
+          w=../base/src/indra/imgproc_warp.inc
+          if [ "$RUNNER_OS" = Linux ] && [ -f "$w" ] && ! grep -q immintrin "$w"; then
+            sed -i.bak '0,/^namespace IMG_NS {/s//#if defined(__AVX2__) \&\& defined(__FMA__)\n#include <immintrin.h>\n#endif\nnamespace IMG_NS {/' "$w" && rm -f "$w.bak"
+          fi
           NJ=$( (nproc || sysctl -n hw.ncpu) 2>/dev/null )
           for d in "$PWD" "$PWD/../base"; do
             cmake -S "$d" -B "$d/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
