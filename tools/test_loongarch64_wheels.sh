@@ -7,7 +7,8 @@
 # Debian loong64 ships numpy & co. only for its default python3 (3.14 in
 # forky), so the OCR runs on the test retag of the very same payload
 # (build_loongarch64_wheels.sh asserts the payloads are identical); the
-# cp313 release wheel is install-checked with python3.13 (pip tag check).
+# cp313 release wheel is install-checked by pip's tag check for cp313 (forky
+# dropped python3.13, so the check runs from python3 with --python-version).
 # ci-models/ must already hold the tiny models (fetch_ci_models.py on the host).
 set -euo pipefail
 
@@ -19,15 +20,17 @@ uname -m
 test "$(uname -m)" = loongarch64
 
 export DEBIAN_FRONTEND=noninteractive PIP_BREAK_SYSTEM_PACKAGES=1 PIP_ROOT_USER_ACTION=ignore
-if ! command -v python3.13 >/dev/null; then
+if ! python3 -c "import numpy, PIL, yaml, requests, tqdm" 2>/dev/null; then
   for i in 1 2 3 4 5; do apt-get update -qq && break; sleep 20; done
-  apt-get install -y -qq --no-install-recommends python3 python3.13 python3-pip python3-numpy \
+  apt-get install -y -qq --no-install-recommends python3 python3-pip python3-numpy \
     python3-pil python3-yaml python3-requests python3-tqdm >/dev/null
 fi
 python3 --version
 
 # Release wheel: pip accepts the cp313 manylinux_2_38_loongarch64 tag here.
-python3.13 -m pip install -q --no-deps --target /tmp/rapidocr-cp313 "$REL"/*-cp313-cp313-*.whl
+python3 -m pip install -q --no-deps --target /tmp/rapidocr-cp313 \
+  --python-version 3.13 --implementation cp --abi cp313 --platform manylinux_2_38_loongarch64 \
+  --only-binary=:all: "$REL"/*-cp313-cp313-*.whl
 ls /tmp/rapidocr-cp313/rapidocr/librapidocrlite.so
 echo "cp313_install_ok"
 
