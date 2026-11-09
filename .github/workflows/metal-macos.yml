@@ -18,8 +18,8 @@ permissions:
 
 jobs:
   metal:
-    name: macos-14 Metal
-    runs-on: macos-14
+    name: macos-15 Metal
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:

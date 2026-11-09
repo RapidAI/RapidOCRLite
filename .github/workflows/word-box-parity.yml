@@ -290,8 +290,8 @@ jobs:
           path: parity/
 
   metal:
-    name: return_word_box on Metal (macos-14) vs CPU
-    runs-on: macos-14
+    name: return_word_box on Metal (macos-15) vs CPU
+    runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
