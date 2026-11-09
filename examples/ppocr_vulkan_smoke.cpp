@@ -3568,4 +3568,8 @@ int main() {
   std::cout << "hybrid_gemm_swish_policy gpu_ms=" << gemm_swish_gpu_ms
             << " cpu_ms=" << gemm_swish_cpu_ms
             << " selects_gpu=" << hybrid_gemm_swish_selects_gpu << '\n';
+  // Tear Vulkan down while the validation layer is still alive so its
+  // object-leak checks run (the at-exit destructor skips teardown then).
+  rpocr::detail::VulkanShutdown();
+  return 0;
 }

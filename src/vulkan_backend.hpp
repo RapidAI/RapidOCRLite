@@ -37,6 +37,12 @@ bool RequestMetalDriver() noexcept;
 // ERROR-severity messages from VK_LAYER_KHRONOS_validation since process
 // start. The layer is installed only when PPOCR_VULKAN_VALIDATION=1.
 [[nodiscard]] int VulkanValidationErrorCount() noexcept;
+// Tear down the process-wide Vulkan runtime now (waits for the queue, destroys
+// every object, the device and the instance). The next Vulkan call
+// re-initializes. The at-exit destructor skips teardown under the validation
+// layer and on NVIDIA, so tests call this before returning to keep the
+// layer's object-leak checks.
+void VulkanShutdown() noexcept;
 // A cheap process-local hybrid admission epoch. It includes the selected
 // adapter identity and changes after Vulkan device-loss recovery; unlike a
 // full backend probe it is safe to query at every hybrid operator boundary.

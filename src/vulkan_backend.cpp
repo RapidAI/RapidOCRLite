@@ -275,13 +275,20 @@ class VulkanBinaryRuntime {
     // driver (vendor 0x10DE, including GB10's libGLX_nvidia.so.0) has already
     // destroyed its own static state by then and faults inside vkQueueWaitIdle
     // and the subsequent vkDestroy* calls. The process is exiting and the OS
-    // reclaims the device. Other drivers, including lavapipe with the
-    // validation layer enabled, still tear down so object leaks stay visible.
-    if (vendor_id_ == 0x10DEu) return;
+    // reclaims the device. The same applies whenever VK_LAYER_KHRONOS_validation
+    // is enabled: the layer's own statics were constructed after this object
+    // (the loader dlopens it in Initialize), so they are destroyed first, and
+    // VVL 1.4.341 (Ubuntu 26.04) then segfaults in vkQueueWaitIdle looking up
+    // the destroyed dispatch map ("The VkDevice dispatch handle was not found
+    // ... not call any Vulkan calls in your atexit()"). Tests that want the
+    // layer's leak report call VulkanShutdown() while the process is alive.
+    if (vendor_id_ == 0x10DEu || validation_enabled_) return;
     Cleanup();
   }
   VulkanBinaryRuntime(const VulkanBinaryRuntime&) = delete;
   VulkanBinaryRuntime& operator=(const VulkanBinaryRuntime&) = delete;
+  // Explicit in-process teardown for VulkanShutdown().
+  void Shutdown() noexcept { Cleanup(); }
 
   bool Initialize() noexcept {
     if (restart_required_.exchange(false, std::memory_order_acq_rel)) {
@@ -345,6 +352,7 @@ class VulkanBinaryRuntime {
         }
       }
     }
+    validation_enabled_ = enable_validation;
     if (enable_validation) {
       instance_info.enabledLayerCount = 1;
       instance_info.ppEnabledLayerNames = &validation_layer;
@@ -6314,6 +6322,7 @@ class VulkanBinaryRuntime {
   VkPhysicalDeviceMemoryProperties memory_properties_{};
   std::string device_name_;
   std::uint32_t vendor_id_{};
+  bool validation_enabled_{};
   VkDescriptorSetLayout descriptor_layout_{};
   VkPipelineLayout pipeline_layout_{};
   VkShaderModule shader_{};
@@ -7599,6 +7608,12 @@ BackendInfo QueryVulkanBackendInfo() {
   // falling back to CPU activation execution.
   result.full_graph_gpu_available = result.vulkan_compute_available;
   return result;
+}
+
+void VulkanShutdown() noexcept {
+#if defined(PPOCR_HAS_VULKAN_HEADERS) && defined(PPOCR_HAS_VULKAN_KERNELS) && defined(_WIN32)
+  Runtime().Shutdown();
+#endif
 }
 
 int VulkanValidationErrorCount() noexcept {
