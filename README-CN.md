@@ -652,6 +652,27 @@ target_link_libraries(ocr_app PRIVATE RapidOCRLite::rapidocrlite)
 
 安装前缀里有 `librapidocrlite.so`（SONAME `librapidocrlite.so.5`）、`include/rapidocrlite/` 下的头文件，以及 `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`。静态库目标是 `RapidOCRLite::static`（`librapidocrlite.a`）。旧的 `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` 仍可用（兼容包装）。运行时动态加载器必须能找到 `librapidocrlite.so.5`（`LD_LIBRARY_PATH` 或 rpath）。
 
+### 🤖 Agent Skill（Claude Code、Cursor、Codex 等）
+
+[`skills/rapidocrlite`](skills/rapidocrlite) 是一个 [Agent Skill](https://agentskills.io)：`SKILL.md` 加 `scripts/ocr.py`。脚本对图片、文件夹、URL 或 PDF 页做 OCR，输出 JSON（每行的文字、置信度和四点框；`--word-box` 另给单词框）。支持 Skill 的 agent 在需要读取图片或扫描件中的文字时会自动调用它。
+
+```bash
+pip install --pre rapidocrlite
+rapidocr skill install     # 安装到 ~/.agents/skills（Codex、Cursor、Gemini CLI、Copilot 等），检测到 Claude Code 时同时装到 ~/.claude/skills
+```
+
+`--agent claude-code`（可重复；`rapidocr skill agents` 列出可用名称）只装到指定 agent；`--project [DIR]` 装到 `DIR/.agents/skills`（`DIR/.claude` 存在时也装到 `DIR/.claude/skills`）；`--target DIR` 装到任意 skills 目录。`rapidocr skill uninstall` 删除已安装的副本；`python -m rapidocr.skill` 与之等价。升级 rapidocrlite 后重新执行一次 `install`。`skill` 命令从 5.0.0a16 之后的第一个版本开始提供。
+
+不用 `skill` 命令时，可以直接获取这两个文件（脚本运行仍需 `pip install --pre rapidocrlite`）：
+
+```bash
+npx skills add RapidAI/RapidOCRLite
+# 或
+d=~/.claude/skills/rapidocrlite && mkdir -p $d/scripts \
+  && curl -fsSL https://raw.githubusercontent.com/RapidAI/RapidOCRLite/main/skills/rapidocrlite/SKILL.md -o $d/SKILL.md \
+  && curl -fsSL https://raw.githubusercontent.com/RapidAI/RapidOCRLite/main/skills/rapidocrlite/scripts/ocr.py -o $d/scripts/ocr.py
+```
+
 ### 📋 使用
 
 #### Python

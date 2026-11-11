@@ -600,4 +600,10 @@ else()
       LIBRARY DESTINATION "${SKBUILD_PLATLIB_DIR}/rapidocr"
       RUNTIME DESTINATION "${SKBUILD_PLATLIB_DIR}/rapidocr"
       ARCHIVE DESTINATION "${SKBUILD_PLATLIB_DIR}/rapidocr")
+  # Agent Skill (SKILL.md + scripts/ocr.py) for `rapidocr skill install`.
+  install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/skills/rapidocrlite"
+      DESTINATION "${SKBUILD_PLATLIB_DIR}/rapidocr/_skills"
+      USE_SOURCE_PERMISSIONS
+      PATTERN "__pycache__" EXCLUDE
+      PATTERN "*.pyc" EXCLUDE)
 endif()

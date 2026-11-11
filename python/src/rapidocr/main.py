@@ -13,6 +13,7 @@ engine records each decoded character's CTC time step and probability, and
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -753,6 +754,15 @@ def parse_args(arg_list: Optional[list] = None):
 
 
 def main(arg_list: Optional[list] = None) -> None:
+    argv = sys.argv[1:] if arg_list is None else list(arg_list)
+    if argv and argv[0] == "skill" and not Path("skill").exists():
+        # ``rapidocr skill install``: set up the bundled Agent Skill (see rapidocr/skill.py).
+        from .skill import main as skill_main
+
+        code = skill_main(argv[1:])
+        if code:
+            raise SystemExit(code)
+        return
     args = parse_args(arg_list)
 
     if args.list_langs:

@@ -44,6 +44,21 @@ points CMake at the parent tree. It does not produce a self-contained sdist.
 The binding is ctypes over the C ABI (`include/rapidocrlite/rapidocrlite.h`), so the wheel
 ships `librapidocrlite` and does not add a second C++ wrapper.
 
+## Agent Skill
+
+The wheel bundles an [Agent Skill](https://agentskills.io) (`SKILL.md` plus
+`scripts/ocr.py`, JSON OCR output for images, folders, URLs and PDF pages) for
+Claude Code, Cursor, Codex and other agents:
+
+```bash
+rapidocr skill install            # ~/.agents/skills, + ~/.claude/skills if Claude Code is installed
+rapidocr skill install --project  # ./.agents/skills (+ ./.claude/skills)
+rapidocr skill agents             # known agents; pick some with --agent NAME
+```
+
+`--target DIR` installs into any skills folder, `rapidocr skill uninstall`
+removes the copies, and `python -m rapidocr.skill` is the same command.
+
 ## Vulkan
 
 Wheels are built with `-DPPOCR_ENABLE_VULKAN=OFF`. They do not contain the

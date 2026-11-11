@@ -255,6 +255,27 @@ target_link_libraries(ocr_app PRIVATE RapidOCRLite::rapidocrlite)
 
 The install prefix contains `librapidocrlite.so` (SONAME `librapidocrlite.so.5`), headers under `include/rapidocrlite/`, and `lib/cmake/RapidOCRLite/RapidOCRLiteConfig.cmake`. Link `RapidOCRLite::static` (`librapidocrlite.a`) for the static library. The old `find_package(ppocr)` / `ppocr::ppocr` / `ppocr::static` names still work as compatibility wrappers. At run time the dynamic loader has to see `librapidocrlite.so.5` (`LD_LIBRARY_PATH` or an rpath).
 
+### 🤖 Agent Skill (Claude Code, Cursor, Codex, ...)
+
+[`skills/rapidocrlite`](skills/rapidocrlite) is an [Agent Skill](https://agentskills.io): `SKILL.md` plus `scripts/ocr.py`, which OCRs images, folders, URLs or PDF pages and prints JSON (text, score and 4-point box per line; word boxes with `--word-box`). Agents that support skills use it when asked to read text from an image or a scan.
+
+```bash
+pip install --pre rapidocrlite
+rapidocr skill install     # ~/.agents/skills (Codex, Cursor, Gemini CLI, Copilot, ...) + ~/.claude/skills if Claude Code is installed
+```
+
+`--agent claude-code` (repeatable; `rapidocr skill agents` lists the names) installs for chosen agents only, `--project [DIR]` installs into `DIR/.agents/skills` (and `DIR/.claude/skills` when `DIR/.claude` exists), `--target DIR` into any skills folder. `rapidocr skill uninstall` removes the copies; `python -m rapidocr.skill` is the same command. Run `install` again after upgrading. The `skill` command ships in the first release after 5.0.0a16.
+
+Without the `skill` command, fetch the two files directly (the script still needs `pip install --pre rapidocrlite`):
+
+```bash
+npx skills add RapidAI/RapidOCRLite
+# or
+d=~/.claude/skills/rapidocrlite && mkdir -p $d/scripts \
+  && curl -fsSL https://raw.githubusercontent.com/RapidAI/RapidOCRLite/main/skills/rapidocrlite/SKILL.md -o $d/SKILL.md \
+  && curl -fsSL https://raw.githubusercontent.com/RapidAI/RapidOCRLite/main/skills/rapidocrlite/scripts/ocr.py -o $d/scripts/ocr.py
+```
+
 ### 📋 Usage
 
 #### Python
