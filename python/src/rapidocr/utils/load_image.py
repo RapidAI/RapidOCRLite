@@ -93,11 +93,7 @@ class LoadImage:
         if isinstance(img, np.ndarray):
             return img
         if isinstance(img, Image.Image):
-            image = img
-            if image.mode == "1":
-                image = image.convert("L")
-            image = ImageOps.exif_transpose(image) or image
-            return np.asarray(image)
+            return self._pil_to_ndarray(img)
         if isinstance(img, MemoryImage):
             try:
                 return self._load_memory(img)
@@ -153,6 +149,23 @@ class LoadImage:
             pixels = pixels[:, :, ::-1]
         return np.ascontiguousarray(pixels)
 
+    @staticmethod
+    def _pil_to_ndarray(image: Image.Image) -> np.ndarray:
+        """Decode a PIL image to an array. P and CMYK must be converted first
+        (main #773): their raw arrays hold palette indices or ink values, not
+        the colours later steps expect. P goes to RGBA so palette transparency
+        is kept for the existing alpha handling; CMYK goes to RGB.
+        """
+
+        image = ImageOps.exif_transpose(image) or image
+        if image.mode == "1":
+            image = image.convert("L")
+        elif image.mode == "P":
+            image = image.convert("RGBA")
+        elif image.mode == "CMYK":
+            image = image.convert("RGB")
+        return np.asarray(image)
+
     def convert_img(self, img: np.ndarray, origin: type) -> np.ndarray:
         """Return packed RGB. The native engine swaps that to planar BGR.
 
@@ -191,11 +204,7 @@ class LoadImage:
 
     def _decode_bytes(self, data: bytes) -> np.ndarray:
         try:
-            image = Image.open(BytesIO(data))
-            if image.mode == "1":
-                image = image.convert("L")
-            image = ImageOps.exif_transpose(image) or image
-            return np.asarray(image)
+            return self._pil_to_ndarray(Image.open(BytesIO(data)))
         except UnidentifiedImageError as exc:
             raise LoadImageError("cannot identify image file") from exc
 

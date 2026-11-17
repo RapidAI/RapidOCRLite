@@ -158,6 +158,66 @@ def test_load_image_types_and_memory_image(tmp_path: Path):
     assert loader(mode_one).shape == (8, 8, 3)
 
 
+@pytest.mark.parametrize("input_type", ["path", "bytes", "pil"])
+def test_palette_img_loads_palette_colors(tmp_path: Path, input_type):
+    # main #773. LoadImage returns packed RGB here (main returns BGR).
+    img = Image.new("P", (3, 1))
+    img.putpalette([255, 255, 255, 0, 0, 0, 200, 30, 10])
+    img.putdata([0, 1, 2])
+    path = tmp_path / "palette.png"
+    img.save(path)
+    inputs = {"path": path, "bytes": path.read_bytes(), "pil": img}
+
+    result = LoadImage()(inputs[input_type])
+
+    expected = np.array([[[255, 255, 255], [0, 0, 0], [200, 30, 10]]], dtype=np.uint8)
+    np.testing.assert_array_equal(result, expected)
+
+
+def test_palette_img_with_transparency_uses_alpha():
+    img = Image.new("P", (2, 1))
+    img.putpalette([0, 0, 0, 0, 0, 0])
+    img.putdata([0, 1])
+    img.info["transparency"] = 0
+
+    result = LoadImage()(img)
+
+    expected = np.array([[[255, 255, 255], [0, 0, 0]]], dtype=np.uint8)
+    np.testing.assert_array_equal(result, expected)
+
+
+@pytest.mark.parametrize("input_type", ["path", "bytes", "pil"])
+def test_cmyk_img_loads_as_rgb(tmp_path: Path, input_type):
+    # main #773. LoadImage returns packed RGB here (main returns BGR).
+    img = Image.new("CMYK", (3, 1))
+    img.putdata([(0, 0, 0, 0), (0, 0, 0, 255), (0, 255, 255, 0)])
+    path = tmp_path / "cmyk.tif"
+    img.save(path)
+    inputs = {"path": path, "bytes": path.read_bytes(), "pil": img}
+
+    result = LoadImage()(inputs[input_type])
+
+    expected = np.array([[[255, 255, 255], [0, 0, 0], [255, 0, 0]]], dtype=np.uint8)
+    np.testing.assert_array_equal(result, expected)
+
+
+def test_palette_img(tmp_path: Path):
+    if not _models_ready():
+        pytest.skip("set PPOCR_TEST_DET/REC/DICT to run native OCR checks")
+    sample = Path(__file__).resolve().parent / "data" / "hello.png"
+    if not sample.is_file():
+        pytest.skip("hello.png is missing")
+    gray = np.asarray(Image.open(sample).convert("L"))
+    img = Image.new("P", (gray.shape[1], gray.shape[0]))
+    img.putpalette([255, 255, 255, 0, 0, 0])
+    img.putdata((gray < 128).astype(np.uint8).flatten().tolist())
+    path = tmp_path / "palette.png"
+    img.save(path)
+
+    result = RapidOCR(params=_model_params())(path)
+    assert len(result) > 0
+
+
 def test_load_image_from_http_url(tmp_path: Path):
     from functools import partial
     from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer

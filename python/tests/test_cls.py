@@ -89,9 +89,10 @@ def test_cls_only_returns_cls_output():
 
 
 def test_ppocrv4_cls_long_line():
-    # main #748: a long line is classified on its centre at the model aspect
-    # ratio instead of being squeezed into 192x48.
-    engine = _engine()
+    # main #748 / #775: a long line is classified on its centre at the model
+    # aspect ratio instead of being squeezed into 192x48. Pinned to PP-OCRv4
+    # so that a change of the default classifier cannot bypass the crop.
+    engine = _engine(**{"Cls.ocr_version": OCRVersion.PPOCRV4})
     img = _bgr("test_letterbox_like.jpg")
     thresh = engine.cfg.Cls.cls_thresh
 
